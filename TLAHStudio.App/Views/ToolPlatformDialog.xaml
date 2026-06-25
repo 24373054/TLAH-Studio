@@ -1,0 +1,320 @@
+<ContentDialog
+    x:Class="TLAHStudio.App.Views.ToolPlatformDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:TLAHStudio.Core.Models"
+    Title="Tools &amp; Security"
+    PrimaryButtonText="Save all changes"
+    PrimaryButtonClick="PrimaryButton_Click"
+    CloseButtonText="Close"
+    DefaultButton="Primary">
+
+    <ContentDialog.Resources>
+        <x:Double x:Key="ContentDialogMaxWidth">1280</x:Double>
+        <x:Double x:Key="ContentDialogMaxHeight">1000</x:Double>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}" />
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+            <Setter Property="Margin" Value="0,8,0,4" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <Grid
+        x:Name="ToolRoot"
+        Width="1120"
+        MaxWidth="1120"
+        Height="710">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Padding="0,0,16,12" Spacing="18">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Execution &amp; resource policy" Style="{StaticResource SectionTitle}" />
+                    <TextBlock
+                        Text="Every terminal and network action passes through these limits before it reaches an execution backend."
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <TextBlock Text="Default backend" Style="{StaticResource FieldLabel}" />
+                    <ComboBox
+                        ItemsSource="{Binding BackendOptions}"
+                        SelectedItem="{Binding SelectedBackend, Mode=TwoWay}"
+                        MinWidth="260"
+                        AutomationProperties.Name="Default execution backend" />
+                    <TextBlock
+                        Text="{Binding BackendAvailability}"
+                        TextWrapping="Wrap"
+                        FontFamily="Cascadia Mono"
+                        FontSize="11"
+                        Foreground="{ThemeResource TextMutedBrush}" />
+
+                    <Grid x:Name="ExecutionLimitsGrid" ColumnSpacing="12" RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="RuntimeColumn" Width="*" />
+                            <ColumnDefinition x:Name="OutputColumn" Width="*" />
+                            <ColumnDefinition x:Name="FileSizeColumn" Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel x:Name="RuntimePanel">
+                            <TextBlock Text="Runtime seconds" Style="{StaticResource FieldLabel}" />
+                            <NumberBox Value="{Binding MaxRuntimeSeconds, Mode=TwoWay}" Minimum="1" Maximum="600" SpinButtonPlacementMode="Compact" />
+                        </StackPanel>
+                        <StackPanel x:Name="OutputPanel" Grid.Column="1">
+                            <TextBlock Text="Output characters" Style="{StaticResource FieldLabel}" />
+                            <NumberBox Value="{Binding MaxOutputChars, Mode=TwoWay}" Minimum="1000" Maximum="200000" SpinButtonPlacementMode="Compact" />
+                        </StackPanel>
+                        <StackPanel x:Name="FileSizePanel" Grid.Column="2">
+                            <TextBlock Text="File size MB" Style="{StaticResource FieldLabel}" />
+                            <NumberBox Value="{Binding MaxFileMegabytes, Mode=TwoWay}" Minimum="1" Maximum="100" SpinButtonPlacementMode="Compact" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid x:Name="BackendOptionsGrid" ColumnSpacing="12" RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="WslColumn" Width="*" />
+                            <ColumnDefinition x:Name="DockerColumn" Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel x:Name="WslPanel">
+                            <TextBlock Text="Memory MB" Style="{StaticResource FieldLabel}" />
+                            <NumberBox Value="{Binding MaxMemoryMb, Mode=TwoWay}" Minimum="128" Maximum="8192" SpinButtonPlacementMode="Compact" />
+                        </StackPanel>
+                        <StackPanel x:Name="DockerPanel" Grid.Column="1">
+                            <TextBlock Text="Process limit" Style="{StaticResource FieldLabel}" />
+                            <NumberBox Value="{Binding MaxProcesses, Mode=TwoWay}" Minimum="1" Maximum="64" SpinButtonPlacementMode="Compact" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="Network domain allowlist" Style="{StaticResource FieldLabel}" />
+                    <TextBox
+                        Text="{Binding NetworkAllowlist, Mode=TwoWay}"
+                        AcceptsReturn="True"
+                        MinHeight="90"
+                        FontFamily="Cascadia Mono"
+                        PlaceholderText="One exact domain or *.domain per line"
+                        AutomationProperties.Name="Network domain allowlist" />
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="WSL distribution" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding WslDistribution, Mode=TwoWay}" PlaceholderText="Optional, for example Ubuntu" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Docker image" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding DockerImage, Mode=TwoWay}" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="Remote sandbox endpoint" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding RemoteEndpoint, Mode=TwoWay}" PlaceholderText="https://sandbox.example.com/v1/execute" />
+                    <TextBlock Text="Remote credential name" Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding RemoteCredentialName, Mode=TwoWay}" PlaceholderText="Credential broker entry" />
+                    <Button
+                        Content="Save security settings"
+                        Click="SaveSettings_Click"
+                        HorizontalAlignment="Left"
+                        AutomationProperties.Name="Save tool security settings" />
+                </StackPanel>
+
+                <Rectangle Height="1" Fill="{ThemeResource BorderSubtleBrush}" />
+
+                <StackPanel Spacing="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="MCP servers" Style="{StaticResource SectionTitle}" />
+                        <Button Grid.Column="1" Content="New server" Click="NewMcp_Click" />
+                    </Grid>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox
+                            ItemsSource="{Binding McpExamples}"
+                            SelectedItem="{Binding SelectedMcpExample, Mode=TwoWay}"
+                            DisplayMemberPath="Name"
+                            PlaceholderText="Choose an MCP example"
+                            AutomationProperties.Name="MCP configuration examples" />
+                        <Button
+                            Grid.Column="1"
+                            Content="Load example"
+                            Click="ApplyMcpExample_Click"
+                            AutomationProperties.Name="Load selected MCP example" />
+                    </Grid>
+                    <Grid x:Name="McpLayoutGrid" ColumnSpacing="14" RowSpacing="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="McpListColumn" Width="250" />
+                            <ColumnDefinition x:Name="McpEditorColumn" Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ListView
+                            x:Name="McpServerList"
+                            ItemsSource="{Binding McpServers}"
+                            SelectedItem="{Binding SelectedMcpServer, Mode=TwoWay}"
+                            DisplayMemberPath="Name"
+                            MinHeight="250"
+                            AutomationProperties.Name="MCP servers" />
+                        <StackPanel x:Name="McpEditorPanel" Grid.Column="1">
+                            <TextBlock Text="Name" Style="{StaticResource FieldLabel}" />
+                            <TextBox
+                                Text="{Binding SelectedMcpServer.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                AutomationProperties.Name="MCP server name" />
+                            <TextBlock Text="Transport" Style="{StaticResource FieldLabel}" />
+                            <ComboBox
+                                ItemsSource="{Binding TransportOptions}"
+                                SelectedItem="{Binding SelectedMcpServer.Transport, Mode=TwoWay}"
+                                AutomationProperties.Name="MCP transport" />
+                            <TextBlock Text="STDIO command" Style="{StaticResource FieldLabel}" />
+                            <TextBox
+                                Text="{Binding SelectedMcpServer.Command, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                PlaceholderText="Executable path or command name"
+                                AutomationProperties.Name="MCP STDIO command" />
+                            <TextBlock Text="STDIO arguments JSON" Style="{StaticResource FieldLabel}" />
+                            <TextBox
+                                Text="{Binding SelectedMcpServer.ArgumentsJson, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                FontFamily="Cascadia Mono"
+                                AutomationProperties.Name="MCP STDIO arguments JSON" />
+                            <TextBlock Text="Streamable HTTP endpoint" Style="{StaticResource FieldLabel}" />
+                            <TextBox
+                                Text="{Binding SelectedMcpServer.Endpoint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                PlaceholderText="https://mcp.example.com/mcp"
+                                AutomationProperties.Name="MCP Streamable HTTP endpoint" />
+                            <TextBlock Text="Headers JSON" Style="{StaticResource FieldLabel}" />
+                            <TextBox
+                                Text="{Binding SelectedMcpServer.HeadersJson, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                FontFamily="Cascadia Mono"
+                                AutomationProperties.Name="MCP headers JSON"
+                                PlaceholderText="{}{&quot;Authorization&quot;:&quot;Bearer ${credential:name}&quot;}" />
+                            <TextBlock Text="Environment JSON" Style="{StaticResource FieldLabel}" />
+                            <TextBox
+                                Text="{Binding SelectedMcpServer.EnvironmentJson, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                FontFamily="Cascadia Mono"
+                                AutomationProperties.Name="MCP environment JSON"
+                                PlaceholderText="{}{&quot;TOKEN&quot;:&quot;${credential:name}&quot;}" />
+                            <CheckBox Content="Enabled" IsChecked="{Binding SelectedMcpServer.Enabled, Mode=TwoWay}" Margin="0,10,0,0" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,10,0,0">
+                                <Button Content="Save server" Click="SaveMcp_Click" AutomationProperties.Name="Save MCP server" />
+                                <Button Content="Test connection" Click="TestMcp_Click" AutomationProperties.Name="Test MCP connection" />
+                                <Button Content="Delete" Click="DeleteMcp_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+
+                <Rectangle Height="1" Fill="{ThemeResource BorderSubtleBrush}" />
+
+                <StackPanel Spacing="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Credential broker" Style="{StaticResource SectionTitle}" />
+                        <Button Grid.Column="1" Content="New credential" Click="NewCredential_Click" />
+                    </Grid>
+                    <TextBlock
+                        Text="Secrets are protected with Windows DPAPI. Tools receive them only when both the tool and domain rules match."
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <Grid x:Name="CredentialLayoutGrid" ColumnSpacing="14" RowSpacing="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="CredentialListColumn" Width="250" />
+                            <ColumnDefinition x:Name="CredentialEditorColumn" Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ListView
+                            x:Name="CredentialList"
+                            ItemsSource="{Binding Credentials}"
+                            SelectedItem="{Binding SelectedCredential, Mode=TwoWay}"
+                            DisplayMemberPath="Name"
+                            MinHeight="200"
+                            AutomationProperties.Name="Credential entries" />
+                        <StackPanel x:Name="CredentialEditorPanel" Grid.Column="1">
+                            <TextBlock Text="Name" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding CredentialName, Mode=TwoWay}" />
+                            <TextBlock Text="Secret" Style="{StaticResource FieldLabel}" />
+                            <PasswordBox
+                                x:Name="CredentialSecretBox"
+                                PasswordChanged="CredentialSecretBox_PasswordChanged"
+                                PlaceholderText="Leave blank to keep the existing secret" />
+                            <TextBlock Text="Allowed domains" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding CredentialDomains, Mode=TwoWay}" AcceptsReturn="True" MinHeight="65" PlaceholderText="api.example.com or *" />
+                            <TextBlock Text="Allowed tools" Style="{StaticResource FieldLabel}" />
+                            <TextBox Text="{Binding CredentialTools, Mode=TwoWay}" PlaceholderText="http_request, mcp_call, terminal_exec or *" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,10,0,0">
+                                <Button Content="Save credential" Click="SaveCredential_Click" />
+                                <Button Content="Delete" Click="DeleteCredential_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+
+                <Rectangle Height="1" Fill="{ThemeResource BorderSubtleBrush}" />
+
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Permission rules" Style="{StaticResource SectionTitle}" />
+                    <TextBlock
+                        Text="Project approvals and permanent denials created by agent approval prompts appear here."
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <ListView ItemsSource="{Binding Policies}" AutomationProperties.Name="Tool permission rules">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="models:ToolPolicyRule">
+                                <Grid Padding="8" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="{x:Bind ToolName}" FontFamily="Cascadia Mono" />
+                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <TextBlock Text="{x:Bind Scope}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                            <TextBlock Text="{x:Bind Decision}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                            <TextBlock Text="{x:Bind UpdatedAt}" Foreground="{ThemeResource TextMutedBrush}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <Button
+                                        Grid.Column="1"
+                                        Content="Remove"
+                                        Tag="{x:Bind Id}"
+                                        Click="DeletePolicy_Click"
+                                        AutomationProperties.Name="Remove permission rule" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <TextBlock
+            Grid.Row="1"
+            Text="{Binding StatusMessage}"
+            Margin="0,8,0,0"
+            Foreground="{ThemeResource AccentBrush}"
+            TextWrapping="Wrap" />
+    </Grid>
+</ContentDialog>

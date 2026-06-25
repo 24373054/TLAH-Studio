@@ -1,0 +1,290 @@
+<ContentDialog
+    x:Class="TLAHStudio.App.Views.SettingsContentDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Settings"
+    PrimaryButtonText="Save"
+    CloseButtonText="Cancel"
+    PrimaryButtonClick="Save_Click"
+    Background="{ThemeResource DialogSurfaceBrush}"
+    Width="700"
+    MaxHeight="760">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="14" Padding="8,4,8,8">
+            <Border
+                HorizontalAlignment="Left"
+                Padding="3"
+                Background="{ThemeResource PanelAltBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel Orientation="Horizontal" Spacing="3">
+                    <Button
+                        x:Name="GlobalTabButton"
+                        Tag="global"
+                        Click="Scope_Click"
+                        Content="All Chats"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="6"
+                        Padding="16,8" />
+                    <Button
+                        x:Name="ChatTabButton"
+                        Tag="chat"
+                        Click="Scope_Click"
+                        Content="This Chat"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="6"
+                        Padding="16,8" />
+                </StackPanel>
+            </Border>
+
+            <Border
+                Padding="12,10"
+                Background="{ThemeResource AccentSoftBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <TextBlock
+                x:Name="ScopeHint"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                TextWrapping="Wrap" />
+            </Border>
+
+            <Border
+                x:Name="GlobalForm"
+                Padding="14"
+                Background="{ThemeResource SurfaceBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Connection defaults" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                    <TextBlock Text="Used by every chat unless a chat-level override is set." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="Provider" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <ComboBox
+                    x:Name="ProviderCombo"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8"
+                    DisplayMemberPath="Name" />
+
+                <TextBlock Text="API Key" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <PasswordBox
+                        x:Name="ApiKeyBox"
+                        PasswordRevealMode="Peek"
+                        Grid.Column="0"
+                        PlaceholderText="sk-..."
+                        Background="{ThemeResource InputBackgroundBrush}"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        CornerRadius="8" />
+                    <Button
+                        Grid.Column="1"
+                        Click="TestGlobal_Click"
+                        Padding="10,7"
+                        CornerRadius="8"
+                        ToolTipService.ToolTip="Test connection">
+                        <SymbolIcon Symbol="Sync" />
+                    </Button>
+                    <Button
+                        Grid.Column="2"
+                        Click="ClearGlobalKey_Click"
+                        Padding="10,7"
+                        CornerRadius="8"
+                        ToolTipService.ToolTip="Clear saved API key">
+                        <SymbolIcon Symbol="Cancel" />
+                    </Button>
+                </Grid>
+
+                <TextBlock Text="Base URL" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="BaseUrlBox"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="Model" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="ModelBox"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="Temperature" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <Slider
+                    x:Name="TempSlider"
+                    Minimum="0"
+                    Maximum="2"
+                    StepFrequency="0.1" />
+
+                <TextBlock Text="Max Tokens" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <NumberBox
+                    x:Name="MaxTokensBox"
+                    Minimum="1"
+                    Maximum="128000" />
+
+                <TextBlock Text="System Prompt" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="SysPromptBox"
+                    AcceptsReturn="True"
+                    MinHeight="96"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="User Role" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="UserRoleBox"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+                </StackPanel>
+            </Border>
+
+            <Border
+                x:Name="ChatForm"
+                Padding="14"
+                Background="{ThemeResource SurfaceBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="Collapsed">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Chat overrides" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                    <TextBlock Text="Leave a value empty to inherit the corresponding global setting." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="Provider Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ComboBox
+                        x:Name="ChatProviderCombo"
+                        Grid.Column="0"
+                        Background="{ThemeResource InputBackgroundBrush}"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        CornerRadius="8"
+                        DisplayMemberPath="Name"
+                        PlaceholderText="Use global provider" />
+                    <Button
+                        Grid.Column="1"
+                        Click="ClearChatProvider_Click"
+                        Background="Transparent"
+                        Foreground="{ThemeResource TextMutedBrush}"
+                        BorderThickness="0"
+                        Padding="8,6"
+                        ToolTipService.ToolTip="Use global provider">
+                        <SymbolIcon Symbol="Cancel" />
+                    </Button>
+                </Grid>
+
+                <TextBlock Text="API Key Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <PasswordBox
+                        x:Name="ChatApiKeyBox"
+                        PasswordRevealMode="Peek"
+                        Grid.Column="0"
+                        PlaceholderText="Leave blank to inherit"
+                        Background="{ThemeResource InputBackgroundBrush}"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        CornerRadius="8" />
+                    <Button
+                        Grid.Column="1"
+                        Click="TestChat_Click"
+                        Padding="10,7"
+                        CornerRadius="8"
+                        ToolTipService.ToolTip="Test chat connection">
+                        <SymbolIcon Symbol="Sync" />
+                    </Button>
+                    <Button
+                        Grid.Column="2"
+                        Click="ClearChatKey_Click"
+                        Padding="10,7"
+                        CornerRadius="8"
+                        ToolTipService.ToolTip="Clear chat API key override">
+                        <SymbolIcon Symbol="Cancel" />
+                    </Button>
+                </Grid>
+
+                <TextBlock Text="Base URL Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="ChatBaseUrlBox"
+                    PlaceholderText="Leave blank to inherit"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="Model Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="ChatModelBox"
+                    PlaceholderText="Leave blank to inherit"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="Temperature Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="ChatTempBox"
+                    PlaceholderText="Leave blank to inherit"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="Max Tokens Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="ChatMaxTokensBox"
+                    PlaceholderText="Leave blank to inherit"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="User Role Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="ChatUserRoleBox"
+                    PlaceholderText="Leave blank to inherit"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock
+                x:Name="TestText"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                TextWrapping="Wrap"
+                Visibility="Collapsed" />
+
+            <TextBlock
+                x:Name="ErrorText"
+                Foreground="{ThemeResource DangerBrush}"
+                TextWrapping="Wrap"
+                Visibility="Collapsed" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

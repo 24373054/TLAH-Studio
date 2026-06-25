@@ -1,0 +1,203 @@
+<UserControl
+    x:Class="TLAHStudio.App.Views.DebugPanelControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Name="Root"
+    Width="0"
+    Visibility="Collapsed">
+
+    <Border
+        Background="{ThemeResource DialogSurfaceBrush}"
+        BorderBrush="{ThemeResource BorderSubtleBrush}"
+        BorderThickness="1,0,0,0">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid
+            Grid.Row="0"
+            Padding="20,16"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="0,0,0,1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+                Text="Raw API Inspector"
+                FontSize="17"
+                FontWeight="SemiBold"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                VerticalAlignment="Center" />
+            <Button
+                Grid.Column="1"
+                Click="Close_Click"
+                Background="Transparent"
+                Foreground="{ThemeResource TextMutedBrush}"
+                BorderThickness="0"
+                Width="36"
+                Height="36"
+                Padding="0"
+                CornerRadius="8"
+                ToolTipService.ToolTip="Close inspector"
+                AutomationProperties.Name="Close inspector">
+                <SymbolIcon Symbol="Cancel" />
+            </Button>
+        </Grid>
+
+        <ScrollViewer
+            Grid.Row="1"
+            HorizontalScrollBarVisibility="Auto"
+            HorizontalScrollMode="Enabled"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Padding="18,10" Spacing="6">
+                <Button x:Name="ReqTab" Click="Tab_Click" Content="Request" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource AccentBrush}" BorderThickness="0" AutomationProperties.Name="Show raw request" />
+                <Button x:Name="RespTab" Click="Tab_Click" Content="Response" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show raw response" />
+                <Button x:Name="ContextTab" Click="Tab_Click" Content="Context" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show context" />
+                <Button x:Name="TokensTab" Click="Tab_Click" Content="Tokens" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show token usage" />
+                <Button x:Name="TimingTab" Click="Tab_Click" Content="Timing" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show timing" />
+                <Button x:Name="ErrorsTab" Click="Tab_Click" Content="Errors" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show errors" />
+                <Button x:Name="HistoryTab" Click="Tab_Click" Content="History" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show prompt history" />
+                <Button x:Name="CompareTab" Click="Tab_Click" Content="Compare" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Compare turns" />
+                <Button x:Name="DiffTab" Click="Tab_Click" Content="Diff" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show context diff" />
+                <Button x:Name="CostTab" Click="Tab_Click" Content="Cost" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show token and cost summary" />
+                <Button x:Name="ReplayTab" Click="Tab_Click" Content="Replay" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show replay payload" />
+                <Button x:Name="AbTab" Click="Tab_Click" Content="A/B" Padding="12,6" CornerRadius="8" Background="Transparent" Foreground="{ThemeResource TextMutedBrush}" BorderThickness="0" AutomationProperties.Name="Show A B comparison pack" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border
+            Grid.Row="2"
+            Padding="16,8"
+            Background="{ThemeResource PanelAltBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="0,0,0,1">
+            <TextBlock
+                x:Name="MetaSummaryText"
+                FontFamily="Consolas"
+                FontSize="11.5"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                TextWrapping="Wrap" />
+        </Border>
+
+        <Grid Grid.Row="3">
+            <ScrollViewer
+                x:Name="JsonScrollViewer"
+                Padding="18,14"
+                VerticalScrollBarVisibility="Auto"
+                VerticalScrollMode="Enabled"
+                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled">
+                <StackPanel
+                    x:Name="JsonStack"
+                    Spacing="2" />
+            </ScrollViewer>
+            <Border
+                x:Name="StatusLayer"
+                Visibility="Collapsed"
+                Padding="28"
+                Background="{ThemeResource DialogSurfaceBrush}">
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="8">
+                    <ProgressRing
+                        x:Name="StatusRing"
+                        Width="28"
+                        Height="28"
+                        IsActive="False"
+                        Visibility="Collapsed" />
+                    <TextBlock
+                        x:Name="StatusText"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap"
+                        MaxWidth="380"
+                        Foreground="{ThemeResource TextSecondaryBrush}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <StackPanel
+            Grid.Row="4"
+            Padding="18,14"
+            Orientation="Horizontal"
+            Spacing="8"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="0,1,0,0">
+            <Button
+                Click="Copy_Click"
+                Background="{ThemeResource AccentBrush}"
+                Foreground="{ThemeResource AccentTextBrush}"
+                CornerRadius="8"
+                Padding="16,8"
+                AutomationProperties.Name="Copy current inspector JSON">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <SymbolIcon Symbol="Copy" />
+                    <TextBlock Text="Copy JSON" />
+                </StackPanel>
+            </Button>
+            <Button
+                Click="CopyCurl_Click"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="12,8"
+                ToolTipService.ToolTip="Copy cURL command"
+                AutomationProperties.Name="Copy cURL command">
+                <SymbolIcon Symbol="Link" />
+            </Button>
+            <Button
+                Click="CopyPrompt_Click"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="12,8"
+                ToolTipService.ToolTip="Copy prompt only"
+                AutomationProperties.Name="Copy prompt only">
+                <SymbolIcon Symbol="Page" />
+            </Button>
+            <Button
+                Click="Replay_Click"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="12,8"
+                ToolTipService.ToolTip="Replay this turn"
+                AutomationProperties.Name="Replay this turn">
+                <SymbolIcon Symbol="Refresh" />
+            </Button>
+            <Button
+                Click="CopyAb_Click"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="12,8"
+                ToolTipService.ToolTip="Copy A/B comparison pack"
+                AutomationProperties.Name="Copy A B comparison pack">
+                <SymbolIcon Symbol="Switch" />
+            </Button>
+            <Button
+                Click="ExportBundle_Click"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="12,8"
+                ToolTipService.ToolTip="Export debug bundle"
+                AutomationProperties.Name="Export debug bundle">
+                <SymbolIcon Symbol="Save" />
+            </Button>
+        </StackPanel>
+    </Grid>
+    </Border>
+</UserControl>

@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TLAHStudio.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <SelfContained>true</SelfContained>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <Product>TLAH Studio</Product>
+    <Description>TLAH Studio native Windows client</Description>
+    <Company>Beijing Ke Entropy Technology Co., Ltd.</Company>
+    <Copyright>Copyright (C) 2026 Beijing Ke Entropy Technology Co., Ltd.</Copyright>
+    <Version>1.4.3</Version>
+    <FileVersion>1.4.3.0</FileVersion>
+    <AssemblyVersion>1.4.3.0</AssemblyVersion>
+    <InformationalVersion>1.4.3</InformationalVersion>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.1.3" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="System.Security.Permissions" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TLAHStudio.Core\TLAHStudio.Core.csproj" />
+    <ProjectReference Include="..\TLAHStudio.Data\TLAHStudio.Data.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <!--
+    Extra guard for self-contained publish: copy generated XAML binaries if
+    the SDK leaves them in the intermediate output instead of PublishDir.
+  -->
+  <Target Name="CopyXamlResources" AfterTargets="Publish">
+    <ItemGroup>
+      <XamlFiles Include="$(OutputPath)**\*.xbf" Exclude="$(PublishDir)**\*.xbf" />
+      <PriFiles Include="$(OutputPath)**\*.pri" Exclude="$(PublishDir)**\*.pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(XamlFiles)" DestinationFiles="@(XamlFiles-&gt;'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PriFiles)" DestinationFiles="@(PriFiles-&gt;'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copied generated XAML resources to publish output." />
+  </Target>
+</Project>

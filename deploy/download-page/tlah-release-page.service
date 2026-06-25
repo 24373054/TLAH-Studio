@@ -1,0 +1,21 @@
+[Unit]
+Description=TLAH Studio release page
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/yz/download
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3131
+Environment=RELEASE_DIR=/var/www/download/tlah/windows
+ExecStart=/usr/bin/node /home/ubuntu/yz/download/server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,166 @@
+<ContentDialog
+    x:Class="TLAHStudio.App.Views.AboutReleaseDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="About TLAH Studio"
+    CloseButtonText="Close"
+    Background="{ThemeResource DialogSurfaceBrush}"
+    Width="620">
+
+    <ScrollViewer
+        MaxHeight="520"
+        VerticalScrollBarVisibility="Auto"
+        HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="14" Padding="2">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border
+                    Width="48"
+                    Height="48"
+                    Background="{ThemeResource SurfaceElevatedBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Image
+                        Source="ms-appx:///Assets/logo.png"
+                        Width="34"
+                        Height="34"
+                        Stretch="Uniform"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1" Spacing="3">
+                    <TextBlock
+                        Text="TLAH Studio"
+                        FontSize="20"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource TextPrimaryBrush}" />
+                    <TextBlock
+                        Text="Native Windows client by Beijing Ke Entropy Technology Co., Ltd."
+                        Foreground="{ThemeResource TextSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+
+            <Border
+                Padding="14"
+                Background="{ThemeResource SurfaceBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <Grid RowSpacing="9" ColumnSpacing="14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="Current version" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock x:Name="CurrentVersionText" Grid.Column="1" Foreground="{ThemeResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="1" Text="Latest manifest" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock x:Name="LatestVersionText" Grid.Row="1" Grid.Column="1" Foreground="{ThemeResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="2" Text="Channel" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock x:Name="ChannelText" Grid.Row="2" Grid.Column="1" Foreground="{ThemeResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="3" Text="Installer size" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock x:Name="SizeText" Grid.Row="3" Grid.Column="1" Foreground="{ThemeResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="4" Text="SHA256" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock
+                        x:Name="ShaText"
+                        Grid.Row="4"
+                        Grid.Column="1"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        TextWrapping="Wrap"
+                        Foreground="{ThemeResource TextPrimaryBrush}" />
+
+                    <TextBlock Grid.Row="5" Text="Signature" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock x:Name="SignatureText" Grid.Row="5" Grid.Column="1" Foreground="{ThemeResource TextPrimaryBrush}" TextWrapping="Wrap" />
+
+                    <TextBlock Grid.Row="6" Text="Certificate" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock
+                        x:Name="CertificateText"
+                        Grid.Row="6"
+                        Grid.Column="1"
+                        Foreground="{ThemeResource TextSecondaryBrush}"
+                        TextWrapping="Wrap" />
+
+                    <TextBlock Grid.Row="7" Text="Logs" Foreground="{ThemeResource TextMutedBrush}" />
+                    <TextBlock
+                        x:Name="LogsText"
+                        Grid.Row="7"
+                        Grid.Column="1"
+                        Foreground="{ThemeResource TextSecondaryBrush}"
+                        TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button
+                    Click="Copy_Click"
+                    Background="{ThemeResource AccentBrush}"
+                    Foreground="{ThemeResource AccentTextBrush}"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    Padding="12,8">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <SymbolIcon Symbol="Copy" />
+                        <TextBlock Text="Copy release info" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Click="ExportDiagnostics_Click"
+                    Background="{ThemeResource SurfaceElevatedBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8"
+                    Padding="12,8">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <SymbolIcon Symbol="Save" />
+                        <TextBlock Text="Export diagnostics" />
+                    </StackPanel>
+                </Button>
+                <Button
+                    Click="OpenDownloadPage_Click"
+                    Background="{ThemeResource SurfaceElevatedBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8"
+                    Padding="12,8"
+                    ToolTipService.ToolTip="Open download page">
+                    <SymbolIcon Symbol="Link" />
+                </Button>
+                <Button
+                    Click="OpenLogs_Click"
+                    Background="{ThemeResource SurfaceElevatedBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8"
+                    Padding="12,8"
+                    ToolTipService.ToolTip="Open logs folder">
+                    <SymbolIcon Symbol="Folder" />
+                </Button>
+            </StackPanel>
+
+            <TextBlock
+                x:Name="StatusText"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

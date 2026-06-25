@@ -1,0 +1,112 @@
+<ContentDialog
+    x:Class="TLAHStudio.App.Views.FirstRunSetupDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Set up TLAH Studio"
+    PrimaryButtonText="Save"
+    SecondaryButtonText="Test"
+    PrimaryButtonClick="Save_Click"
+    SecondaryButtonClick="Test_Click"
+    Background="{ThemeResource DialogSurfaceBrush}"
+    Width="560">
+
+    <StackPanel Spacing="16" Padding="4,2,4,4">
+        <Border
+            Padding="14"
+            Background="{ThemeResource AccentSoftBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border
+                    Width="40"
+                    Height="40"
+                    Background="{ThemeResource SurfaceBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Image Source="ms-appx:///Assets/logo.png" Width="26" Height="26" Stretch="Uniform" />
+                </Border>
+                <StackPanel Grid.Column="1" Spacing="3">
+                    <TextBlock Text="Connect a model provider" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                    <TextBlock Text="Your API key is protected locally by Windows and is never included in exports." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border
+            Padding="16"
+            Background="{ThemeResource SurfaceBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <StackPanel Spacing="12">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Provider" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <ComboBox
+                            x:Name="ProviderCombo"
+                            MinHeight="40"
+                            DisplayMemberPath="Name"
+                            Background="{ThemeResource InputBackgroundBrush}"
+                            Foreground="{ThemeResource TextPrimaryBrush}"
+                            BorderBrush="{ThemeResource BorderSubtleBrush}"
+                            CornerRadius="8" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="6">
+                        <TextBlock Text="Model" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBox
+                            x:Name="ModelBox"
+                            MinHeight="40"
+                            Background="{ThemeResource InputBackgroundBrush}"
+                            Foreground="{ThemeResource TextPrimaryBrush}"
+                            BorderBrush="{ThemeResource BorderSubtleBrush}"
+                            CornerRadius="8" />
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock Text="Base URL" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBox
+                    x:Name="BaseUrlBox"
+                    MinHeight="40"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+
+                <TextBlock Text="API Key" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <PasswordBox
+                    x:Name="ApiKeyBox"
+                    MinHeight="40"
+                    PlaceholderText="sk-..."
+                    PasswordRevealMode="Peek"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
+            </StackPanel>
+        </Border>
+
+        <Border
+            x:Name="StatusCard"
+            Visibility="Collapsed"
+            Padding="12,10"
+            Background="{ThemeResource PanelAltBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <TextBlock
+                x:Name="StatusText"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                TextWrapping="Wrap" />
+        </Border>
+    </StackPanel>
+</ContentDialog>

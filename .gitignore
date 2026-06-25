@@ -1,0 +1,62 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.DotSettings.user
+.vs/
+*.cache
+
+# Build outputs
+**/publish/
+**/AppPackages/
+artifacts/
+TLAHStudio.Installer/output/
+TLAHStudio.Installer/assets/*.exe
+TLAHStudioSetup-*.exe
+TestResults/
+*.trx
+coverage/
+coverage.*
+
+# NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TLAH Studio runtime
+.pids/
+logs/
+data/
+cache/
+SERVER-AGENT-PROMPT.md
+
+# Environment
+.env
+appsettings.Development.json
+
+# Crypto keys (DO NOT COMMIT)
+tools/private_key.txt
+*.pem
+*.key
+*.pfx
+*.p12

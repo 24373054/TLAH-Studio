@@ -1,0 +1,14 @@
+{
+  "version": "1.4.3",
+  "channel": "stable",
+  "platform": "windows",
+  "arch": "x64",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.4.3.exe",
+  "sha256": "92fab5933827c020399dd6b3e338f80db863c055a12a03259ee040f12821904a",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+  "releaseNotes": "MCP persistence and interoperability update.\n\nFixes:\n- Save all changes now persists the active MCP server configuration\n- MCP JSON fields update immediately and are reloaded from local storage after save\n- STDIO uses UTF-8 without BOM and applies Python UTF-8 compatibility settings\n- Timeouts and startup failures now show actionable MCP diagnostics\n- Added a direct Test connection action that reports discovered tool names\n- Added ready-to-edit Python, Filesystem npx, and Streamable HTTP examples\n- Validates argument, header, and environment JSON shapes before saving",
+  "forceUpdate": true,
+  "minSupportedVersion": "1.4.3",
+  "rolloutPercent": 100,
+  "installerSizeBytes": 96799032
+}

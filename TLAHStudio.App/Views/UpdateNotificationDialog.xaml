@@ -1,0 +1,107 @@
+<ContentDialog
+    x:Class="TLAHStudio.App.Views.UpdateNotificationDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Update Available"
+    PrimaryButtonText="Download"
+    CloseButtonText="Later"
+    PrimaryButtonClick="Download_Click"
+    CloseButtonClick="Later_Click"
+    Background="{ThemeResource DialogSurfaceBrush}"
+    Width="520">
+
+    <StackPanel Spacing="14" Padding="6,2,6,6">
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border
+                Width="42"
+                Height="42"
+                Background="{ThemeResource AccentSoftBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <SymbolIcon Symbol="Download" Foreground="{ThemeResource AccentBrush}" />
+            </Border>
+            <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                <TextBlock
+                    x:Name="VersionText"
+                    FontSize="16"
+                    FontWeight="SemiBold"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    TextWrapping="Wrap" />
+                <TextBlock Text="Windows x64 release" FontSize="12" Foreground="{ThemeResource TextMutedBrush}" />
+            </StackPanel>
+        </Grid>
+        <Border
+            x:Name="ForceNotice"
+            Visibility="Collapsed"
+            Background="{ThemeResource AccentSoftBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="12,10">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <SymbolIcon Symbol="Important" Foreground="{ThemeResource AccentBrush}" />
+                <TextBlock
+                    Text="This update is required before continuing."
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+        <Border
+            Padding="10,8"
+            Background="{ThemeResource SurfaceBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <TextBlock
+                x:Name="PackageInfoText"
+                FontFamily="Consolas"
+                FontSize="12"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                TextWrapping="Wrap" />
+        </Border>
+        <Border
+            Background="{ThemeResource SurfaceBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="14,12">
+            <StackPanel Spacing="8">
+                <TextBlock Text="Release Notes" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <ScrollViewer MaxHeight="210" VerticalScrollBarVisibility="Auto">
+                    <TextBlock
+                        x:Name="NotesText"
+                        FontSize="13"
+                        LineHeight="20"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        TextWrapping="Wrap" />
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+        <StackPanel
+            x:Name="DownloadPanel"
+            Visibility="Collapsed"
+            Spacing="6">
+            <ProgressBar
+                x:Name="DownloadProgressBar"
+                Height="4"
+                Minimum="0"
+                Maximum="100"
+                Value="0" />
+            <TextBlock
+                x:Name="DownloadStatusText"
+                FontSize="12"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                TextWrapping="Wrap" />
+        </StackPanel>
+        <TextBlock
+            x:Name="ErrorText"
+            Visibility="Collapsed"
+            Foreground="{ThemeResource DangerBrush}"
+            TextWrapping="Wrap" />
+    </StackPanel>
+</ContentDialog>

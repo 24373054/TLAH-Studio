@@ -1,0 +1,115 @@
+<UserControl
+    x:Class="TLAHStudio.App.Views.MessageInputControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid
+        x:Name="InputRoot"
+        Padding="20,14"
+        Background="{ThemeResource AppChromeBrush}"
+        BorderBrush="{ThemeResource BorderSubtleBrush}"
+        BorderThickness="0,1,0,0">
+        <Grid.ChildrenTransitions>
+            <TransitionCollection>
+                <RepositionThemeTransition />
+            </TransitionCollection>
+        </Grid.ChildrenTransitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <ComboBox
+            x:Name="RoleCombo"
+            Grid.Column="0"
+            Width="124"
+            MinHeight="44"
+            Margin="0,0,12,0"
+            Background="{ThemeResource InputBackgroundBrush}"
+            Foreground="{ThemeResource TextPrimaryBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            CornerRadius="8"
+            SelectedIndex="0"
+            TabIndex="10"
+            ToolTipService.ToolTip="Message role"
+                AutomationProperties.Name="Message role" />
+
+        <ToggleButton
+            x:Name="AgentModeToggle"
+            Grid.Column="1"
+            MinWidth="82"
+            MinHeight="44"
+            Margin="0,0,12,0"
+            Background="{ThemeResource InputBackgroundBrush}"
+            Foreground="{ThemeResource TextPrimaryBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            CornerRadius="8"
+            TabIndex="11"
+            ToolTipService.ToolTip="Agent mode runs approved sandbox commands for multi-step tasks"
+            AutomationProperties.Name="Agent mode">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <SymbolIcon Symbol="Play" />
+                <TextBlock Text="Agent" />
+            </StackPanel>
+        </ToggleButton>
+
+        <TextBox
+            x:Name="InputBox"
+            Grid.Column="2"
+            MinHeight="44"
+            MaxHeight="160"
+            AcceptsReturn="True"
+            TextWrapping="Wrap"
+            ScrollViewer.VerticalScrollBarVisibility="Auto"
+            PlaceholderText="Type a message..."
+            Background="{ThemeResource InputBackgroundBrush}"
+            Foreground="{ThemeResource TextPrimaryBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            CornerRadius="8"
+            Padding="14,10"
+            TabIndex="12"
+            AutomationProperties.Name="Message input" />
+
+        <Grid x:Name="ActionGrid" Grid.Column="3" Margin="12,0,0,0">
+            <Button
+                x:Name="SendBtn"
+                Click="Send_Click"
+                Background="{ThemeResource AccentBrush}"
+                Foreground="{ThemeResource AccentTextBrush}"
+                CornerRadius="8"
+                MinWidth="54"
+                MinHeight="44"
+                Padding="14,8"
+                TabIndex="13"
+                ToolTipService.ToolTip="Send"
+                AutomationProperties.Name="Send message">
+                <SymbolIcon Symbol="Send" />
+            </Button>
+            <ProgressRing
+                x:Name="SendingRing"
+                Width="24"
+                Height="24"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Visibility="Collapsed" />
+            <Button
+                x:Name="StopBtn"
+                Click="Stop_Click"
+                Visibility="Collapsed"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource DangerBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                MinWidth="54"
+                MinHeight="44"
+                Padding="14,8"
+                ToolTipService.ToolTip="Stop"
+                TabIndex="13"
+                AutomationProperties.Name="Stop generation">
+                <SymbolIcon Symbol="Stop" />
+            </Button>
+        </Grid>
+    </Grid>
+</UserControl>
