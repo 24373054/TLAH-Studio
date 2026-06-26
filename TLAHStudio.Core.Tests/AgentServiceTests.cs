@@ -63,6 +63,11 @@ public class AgentServiceTests
         Assert.Single(await db.Set<ToolInvocation>().ToListAsync());
         Assert.NotEmpty(await db.Set<AgentCheckpoint>().ToListAsync());
         Assert.Contains(await db.Set<AgentArtifact>().ToListAsync(), a => a.RelativePath == "note.txt");
+        var events = await db.Set<AgentEvent>().OrderBy(e => e.SequenceNumber).ToListAsync();
+        Assert.Contains(events, e => e.EventType == AgentEventTypes.ModelRequest);
+        Assert.Contains(events, e => e.EventType == AgentEventTypes.ToolRequest);
+        Assert.Contains(events, e => e.EventType == AgentEventTypes.ToolResult);
+        Assert.Contains(events, e => e.EventType == AgentEventTypes.RunCompleted);
     }
 
     [Fact]
@@ -161,5 +166,54 @@ public class AgentServiceTests
         var step = Assert.Single(await db.Set<AgentStep>().ToListAsync());
         Assert.Equal("provider_error", step.Kind);
         Assert.Equal(AgentStepStatuses.Failed, step.Status);
+        Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.Error);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_RequiresManualApprovalForHighRiskToolsEvenWhenAutoApproveIsEnabled()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai",
+            ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com",
+            Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("High risk approval");
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
+        {
+          "choices": [{
+            "message": {
+              "content": null,
+              "tool_calls": [{
+                "id": "call-risky",
+                "type": "function",
+                "function": {
+                  "name": "terminal_exec",
+                  "arguments": "{\"command\":\"git reset --hard\",\"reason\":\"Reset the sandbox repository.\"}"
+                }
+              }]
+            }
+          }]
+        }
+        """));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Reset the repo.",
+            options: new AgentRunOptions(MaxSteps: 3, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.NotNull(result.AgentRun.PendingApproval);
+        Assert.Equal("terminal_exec", result.AgentRun.PendingApproval!.ToolName);
+        var invocation = Assert.Single(await db.Set<ToolInvocation>().ToListAsync());
+        Assert.Equal(ToolSafetyLevels.High, invocation.SafetyLevel);
+        Assert.Equal(ToolInvocationStatuses.AwaitingApproval, invocation.Status);
+        Assert.Single(handler.Requests);
+        Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.ApprovalRequested);
     }
 }

@@ -1,14 +1,14 @@
 {
-  "version": "1.4.3",
+  "version": "1.6.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.4.3.exe",
-  "sha256": "92fab5933827c020399dd6b3e338f80db863c055a12a03259ee040f12821904a",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.6.0.exe",
+  "sha256": "48ccd02b63829b7f98415c411e49f6e85801d8468ca25e2fc8c65f37510cc9d1",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "MCP persistence and interoperability update.\n\nFixes:\n- Save all changes now persists the active MCP server configuration\n- MCP JSON fields update immediately and are reloaded from local storage after save\n- STDIO uses UTF-8 without BOM and applies Python UTF-8 compatibility settings\n- Timeouts and startup failures now show actionable MCP diagnostics\n- Added a direct Test connection action that reports discovered tool names\n- Added ready-to-edit Python, Filesystem npx, and Streamable HTTP examples\n- Validates argument, header, and environment JSON shapes before saving",
+  "releaseNotes": "Agent Event Log v2 and tool safety kernel release.\n\nHighlights:\n- Added AgentEvent event log for model calls, protocol repairs, tool requests, approvals, tool results, errors, resume, pause, and completion\n- Added ToolProtocolGuard to repair or reject invalid provider-bound tool message structures before model calls\n- Added semantic tool safety assessment for terminal, PowerShell, Git, file, HTTP, browser, search, and MCP tools\n- File writes now include a bounded diff preview and path-boundary validation\n- High-risk tool actions require explicit approval unless allowed by chat/project/global policy\n- Added regression tests for event logging, protocol repair, safety classification, and high-risk approval behavior",
   "forceUpdate": true,
-  "minSupportedVersion": "1.4.3",
+  "minSupportedVersion": "1.6.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96799032
+  "installerSizeBytes": 96819800
 }

@@ -33,6 +33,32 @@ public static class ToolInvocationStatuses
     public const string Failed = "failed";
 }
 
+public static class AgentEventTypes
+{
+    public const string RunStarted = "run_started";
+    public const string Resume = "resume";
+    public const string ModelRequest = "model_request";
+    public const string ModelResponse = "model_response";
+    public const string ProtocolRepair = "protocol_repair";
+    public const string ToolRequest = "tool_request";
+    public const string ApprovalRequested = "approval_requested";
+    public const string ApprovalGranted = "approval_granted";
+    public const string ApprovalDenied = "approval_denied";
+    public const string ToolStarted = "tool_started";
+    public const string ToolResult = "tool_result";
+    public const string Error = "error";
+    public const string RunCompleted = "run_completed";
+    public const string RunPaused = "run_paused";
+    public const string RunCancelled = "run_cancelled";
+}
+
+public static class AgentEventSeverities
+{
+    public const string Info = "info";
+    public const string Warning = "warning";
+    public const string Error = "error";
+}
+
 public class AgentRun
 {
     [Key]
@@ -62,6 +88,7 @@ public class AgentRun
     public ICollection<ToolInvocation> ToolInvocations { get; set; } = new List<ToolInvocation>();
     public ICollection<AgentCheckpoint> Checkpoints { get; set; } = new List<AgentCheckpoint>();
     public ICollection<AgentArtifact> Artifacts { get; set; } = new List<AgentArtifact>();
+    public ICollection<AgentEvent> Events { get; set; } = new List<AgentEvent>();
 }
 
 public class AgentStep
@@ -108,6 +135,12 @@ public class ToolInvocation
     public string ResultJson { get; set; } = "{}";
 
     [MaxLength(40)]
+    public string SafetyLevel { get; set; } = "unknown";
+
+    public string SafetySummary { get; set; } = string.Empty;
+    public string SafetyJson { get; set; } = "{}";
+
+    [MaxLength(40)]
     public string Status { get; set; } = ToolInvocationStatuses.Pending;
 
     public bool RequiresApproval { get; set; }
@@ -122,6 +155,37 @@ public class ToolInvocation
 
     [ForeignKey(nameof(AgentStepId))]
     public AgentStep AgentStep { get; set; } = null!;
+}
+
+public class AgentEvent
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid AgentRunId { get; set; }
+    public Guid? AgentStepId { get; set; }
+    public Guid? ToolInvocationId { get; set; }
+
+    public int SequenceNumber { get; set; }
+
+    [MaxLength(80)]
+    public string EventType { get; set; } = AgentEventTypes.ModelRequest;
+
+    [MaxLength(40)]
+    public string Severity { get; set; } = AgentEventSeverities.Info;
+
+    public string Summary { get; set; } = string.Empty;
+    public string DataJson { get; set; } = "{}";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    [ForeignKey(nameof(AgentRunId))]
+    public AgentRun AgentRun { get; set; } = null!;
+
+    [ForeignKey(nameof(AgentStepId))]
+    public AgentStep? AgentStep { get; set; }
+
+    [ForeignKey(nameof(ToolInvocationId))]
+    public ToolInvocation? ToolInvocation { get; set; }
 }
 
 public class AgentCheckpoint

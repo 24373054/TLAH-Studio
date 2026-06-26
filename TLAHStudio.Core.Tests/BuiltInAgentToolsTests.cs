@@ -1,6 +1,7 @@
 using System.Net;
 using System.Diagnostics;
 using System.Text.Json;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 
 namespace TLAHStudio.Core.Tests;
@@ -55,6 +56,78 @@ public class BuiltInAgentToolsTests
         Assert.All(registry.Definitions, definition =>
             Assert.Matches("^[a-zA-Z0-9_-]+$", definition.Name));
         Assert.True(registry.TryGet("sandbox.exec", out _));
+    }
+
+    [Fact]
+    public void ToolProtocolGuardRepairsLegacyNamesAndOrphanToolResults()
+    {
+        var messages = new List<MessagePayload>
+        {
+            new("assistant", "", ToolCalls:
+            [
+                new LlmToolCall("call-1", AgentToolNames.LegacySandboxExec, """{"command":"Get-ChildItem"}""")
+            ]),
+            new("tool", "orphaned result", "missing-call"),
+            new("system", "inline system")
+        };
+
+        var result = ToolProtocolGuard.RepairForProvider(messages, []);
+
+        Assert.False(result.IsRejected);
+        Assert.Equal(AgentToolNames.SandboxExec, result.Messages[0].ToolCalls![0].Name);
+        Assert.Equal("user", result.Messages[1].Role);
+        Assert.Contains("[tool result]", result.Messages[1].Content);
+        Assert.Equal("user", result.Messages[2].Role);
+        Assert.Contains("tool_name_normalized", result.Issues.Select(i => i.Code));
+        Assert.Contains("orphan_tool_result", result.Issues.Select(i => i.Code));
+    }
+
+    [Fact]
+    public async Task ToolSafetyKernelClassifiesFileWriteAndBlocksEscapingPaths()
+    {
+        await using var db = TestDb.Create();
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Safety.Tests", Guid.NewGuid().ToString("N")));
+        var chatId = Guid.NewGuid();
+        var root = sandbox.GetSandboxRoot(chatId);
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "notes.txt"), "old");
+
+        var safe = ToolSafetyKernel.Assess(
+            sandbox,
+            chatId,
+            AgentToolNames.FileWrite,
+            """{"path":"notes.txt","content":"new"}""");
+        Assert.Equal(ToolSafetyLevels.Medium, safe.Level);
+        Assert.True(safe.IsWriteOperation);
+        using (var preview = JsonDocument.Parse(safe.PreviewJson))
+        {
+            var diff = preview.RootElement.GetProperty("diff").GetString() ?? string.Empty;
+            Assert.Contains("- old", diff);
+            Assert.Contains("+ new", diff);
+        }
+
+        var blocked = ToolSafetyKernel.Assess(
+            sandbox,
+            chatId,
+            AgentToolNames.FileWrite,
+            """{"path":"../outside.txt","content":"bad"}""");
+        Assert.True(blocked.IsBlocked);
+        Assert.Equal(ToolSafetyLevels.Blocked, blocked.Level);
+    }
+
+    [Fact]
+    public void ToolSafetyKernelRequiresApprovalForDangerousTerminalCommands()
+    {
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Safety.Tests", Guid.NewGuid().ToString("N")));
+        var assessment = ToolSafetyKernel.Assess(
+            sandbox,
+            Guid.NewGuid(),
+            AgentToolNames.TerminalExec,
+            """{"command":"git reset --hard","reason":"Reset state."}""");
+
+        Assert.Equal(ToolSafetyLevels.High, assessment.Level);
+        Assert.True(assessment.RequiresExplicitApproval);
+        Assert.False(assessment.IsBlocked);
     }
 
     [Theory]

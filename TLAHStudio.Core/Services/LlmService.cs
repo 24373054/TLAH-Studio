@@ -260,6 +260,12 @@ public class LlmService : ILlmService
         };
         _db.Set<AgentRun>().Add(run);
         await _db.SaveChangesAsync(ct);
+        await LogAgentEventAsync(
+            run,
+            AgentEventTypes.RunStarted,
+            "Agent run started.",
+            new { run.MaxSteps, role = msgRole },
+            ct: ct);
 
         var state = new AgentExecutionState(
             priorMessages
@@ -304,6 +310,12 @@ public class LlmService : ILlmService
         run.ErrorMessage = null;
         run.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+        await LogAgentEventAsync(
+            run,
+            AgentEventTypes.Resume,
+            "Agent run resumed from the latest checkpoint.",
+            new { run.CurrentStep, run.MaxSteps },
+            ct: ct);
 
         return await ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, ct);
     }
@@ -360,6 +372,14 @@ public class LlmService : ILlmService
         }
 
         await _db.SaveChangesAsync(ct);
+        await LogAgentEventAsync(
+            invocation.AgentRun,
+            approved ? AgentEventTypes.ApprovalGranted : AgentEventTypes.ApprovalDenied,
+            approved ? "User approved an agent tool invocation." : "User denied an agent tool invocation.",
+            new { invocation.ToolName, policyScope },
+            toolInvocationId: invocation.Id,
+            severity: approved ? AgentEventSeverities.Info : AgentEventSeverities.Warning,
+            ct: ct);
     }
 
     public async Task CancelAgentRunAsync(Guid agentRunId, CancellationToken ct = default)
@@ -373,6 +393,13 @@ public class LlmService : ILlmService
         run.UpdatedAt = DateTime.UtcNow;
         run.CompletedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
+        await LogAgentEventAsync(
+            run,
+            AgentEventTypes.RunCancelled,
+            "Agent run cancelled.",
+            new { run.CurrentStep, run.MaxSteps },
+            severity: AgentEventSeverities.Warning,
+            ct: ct);
     }
 
     private async Task<SendMessageResult> ContinueAgentRunInternalAsync(
@@ -434,14 +461,87 @@ public class LlmService : ILlmService
                 _db.Set<AgentStep>().Add(step);
                 await _db.SaveChangesAsync(ct);
 
+                var guard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
+                if (guard.HasRepairs)
+                {
+                    state.Messages = guard.Messages.ToList();
+                    step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.ProtocolRepair,
+                        "Tool protocol guard repaired provider-bound messages.",
+                        new { issues = guard.Issues },
+                        step.Id,
+                        severity: guard.IsRejected ? AgentEventSeverities.Error : AgentEventSeverities.Warning,
+                        ct: ct);
+                }
+
+                if (guard.IsRejected)
+                {
+                    step.Kind = "protocol_error";
+                    step.Status = AgentStepStatuses.Failed;
+                    step.Summary = guard.RejectionReason!;
+                    step.CompletedAt = DateTime.UtcNow;
+                    run.CurrentStep = stepNumber;
+                    run.Status = AgentRunStatuses.Failed;
+                    run.ErrorMessage = guard.RejectionReason;
+                    run.CompletedAt = DateTime.UtcNow;
+                    run.UpdatedAt = DateTime.UtcNow;
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.Error,
+                        guard.RejectionReason!,
+                        new { guard.Issues },
+                        step.Id,
+                        severity: AgentEventSeverities.Error,
+                        ct: ct);
+                    lastAssistantMessage = await AddAgentStatusMessageAsync(
+                        run,
+                        turn,
+                        state,
+                        $"Agent stopped because the tool protocol state is invalid: {guard.RejectionReason}",
+                        ct);
+                    break;
+                }
+
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.ModelRequest,
+                    "Sending agent context to the model.",
+                    new
+                    {
+                        stepNumber,
+                        messageCount = guard.Messages.Count,
+                        toolCount = guard.Tools.Count,
+                        provider = provider.ProviderName
+                    },
+                    step.Id,
+                    ct: ct);
                 lastResponse = await provider.ChatAsync(
-                    messages: state.Messages,
+                    messages: guard.Messages.ToList(),
                     systemPrompt: systemPrompt,
                     temperature: effective.Temperature,
                     maxTokens: effective.MaxTokens,
-                    tools: _agentTools.Definitions,
+                    tools: guard.Tools,
                     ct: ct);
                 step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(lastResponse.RawResponse));
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.ModelResponse,
+                    $"Model returned HTTP {lastResponse.HttpStatus}.",
+                    new
+                    {
+                        stepNumber,
+                        lastResponse.HttpStatus,
+                        lastResponse.LatencyMs,
+                        toolCallCount = lastResponse.ToolCalls?.Count ?? 0,
+                        hasError = !string.IsNullOrWhiteSpace(lastResponse.Error)
+                    },
+                    step.Id,
+                    severity: lastResponse.HttpStatus is >= 200 and < 300 && string.IsNullOrWhiteSpace(lastResponse.Error)
+                        ? AgentEventSeverities.Info
+                        : AgentEventSeverities.Error,
+                    ct: ct);
 
                 if (lastResponse.HttpStatus is < 200 or >= 300 ||
                     !string.IsNullOrWhiteSpace(lastResponse.Error))
@@ -455,6 +555,14 @@ public class LlmService : ILlmService
                     run.ErrorMessage = SecretRedactor.RedactText(step.Summary);
                     run.CompletedAt = DateTime.UtcNow;
                     run.UpdatedAt = DateTime.UtcNow;
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.Error,
+                        SecretRedactor.RedactText(step.Summary),
+                        new { lastResponse.HttpStatus, lastResponse.LatencyMs },
+                        step.Id,
+                        severity: AgentEventSeverities.Error,
+                        ct: ct);
                     lastAssistantMessage = await AddAgentStatusMessageAsync(
                         run,
                         turn,
@@ -488,6 +596,13 @@ public class LlmService : ILlmService
                     run.Status = AgentRunStatuses.Completed;
                     run.CompletedAt = DateTime.UtcNow;
                     run.UpdatedAt = DateTime.UtcNow;
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.RunCompleted,
+                        "Agent completed the task.",
+                        new { run.CurrentStep, run.MaxSteps },
+                        step.Id,
+                        ct: ct);
                     lastAssistantMessage = new Message
                     {
                         ChatId = run.ChatId,
@@ -503,6 +618,47 @@ public class LlmService : ILlmService
                     break;
                 }
 
+                var toolIssues = new List<ToolProtocolGuardIssue>();
+                var safeToolCall = ToolProtocolGuard.SanitizeToolCall(toolCall, toolIssues);
+                if (toolIssues.Count > 0)
+                {
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.ProtocolRepair,
+                        "Tool protocol guard repaired a model tool request.",
+                        new { issues = toolIssues },
+                        step.Id,
+                        severity: safeToolCall == null ? AgentEventSeverities.Error : AgentEventSeverities.Warning,
+                        ct: ct);
+                }
+
+                if (safeToolCall == null)
+                {
+                    step.Status = AgentStepStatuses.Failed;
+                    step.Summary = $"Invalid tool request: {toolCall.Name}";
+                    step.CompletedAt = DateTime.UtcNow;
+                    run.Status = AgentRunStatuses.Failed;
+                    run.ErrorMessage = step.Summary;
+                    run.UpdatedAt = DateTime.UtcNow;
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.Error,
+                        step.Summary,
+                        new { toolCall.Name, toolCall.ArgumentsJson },
+                        step.Id,
+                        severity: AgentEventSeverities.Error,
+                        ct: ct);
+                    await _db.SaveChangesAsync(ct);
+                    lastAssistantMessage = await AddAgentStatusMessageAsync(
+                        run,
+                        turn,
+                        state,
+                        $"Agent stopped because the model requested an invalid tool: {toolCall.Name}.",
+                        ct);
+                    break;
+                }
+
+                toolCall = safeToolCall;
                 if (!_agentTools.TryGet(toolCall.Name, out var tool))
                 {
                     step.Status = AgentStepStatuses.Failed;
@@ -511,6 +667,14 @@ public class LlmService : ILlmService
                     run.Status = AgentRunStatuses.Failed;
                     run.ErrorMessage = step.Summary;
                     run.UpdatedAt = DateTime.UtcNow;
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.Error,
+                        step.Summary,
+                        new { toolCall.Name },
+                        step.Id,
+                        severity: AgentEventSeverities.Error,
+                        ct: ct);
                     await _db.SaveChangesAsync(ct);
                     lastAssistantMessage = await AddAgentStatusMessageAsync(
                         run,
@@ -523,6 +687,11 @@ public class LlmService : ILlmService
 
                 step.Kind = toolCall.Name;
                 step.Summary = ReadToolReason(toolCall.ArgumentsJson) ?? $"Run {toolCall.Name}.";
+                var safety = ToolSafetyKernel.Assess(
+                    _sandboxCommandService,
+                    run.ChatId,
+                    toolCall.Name,
+                    toolCall.ArgumentsJson);
                 var invocation = new ToolInvocation
                 {
                     AgentRunId = run.Id,
@@ -530,6 +699,9 @@ public class LlmService : ILlmService
                     ToolName = toolCall.Name,
                     ProviderCallId = toolCall.Id,
                     ArgumentsJson = SecretRedactor.RedactJson(toolCall.ArgumentsJson),
+                    SafetyLevel = safety.Level,
+                    SafetySummary = safety.Summary,
+                    SafetyJson = SecretRedactor.RedactJson(safety.PreviewJson),
                     RequiresApproval = tool.RequiresApproval
                 };
                 _db.Set<ToolInvocation>().Add(invocation);
@@ -538,7 +710,7 @@ public class LlmService : ILlmService
                 {
                     ChatId = run.ChatId,
                     Role = "assistant",
-                    Content = FormatToolRequestMessage(stepNumber, toolCall),
+                    Content = FormatToolRequestMessage(stepNumber, toolCall, safety),
                     TurnId = turn.Id,
                     SequenceNum = state.SequenceNum++
                 };
@@ -550,6 +722,25 @@ public class LlmService : ILlmService
                     ToolCalls: [toolCall]));
                 run.CurrentStep = stepNumber;
                 run.UpdatedAt = DateTime.UtcNow;
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.ToolRequest,
+                    $"Model requested {toolCall.Name}.",
+                    new
+                    {
+                        toolCall.Name,
+                        reason = ReadToolReason(toolCall.ArgumentsJson),
+                        safety.Level,
+                        safety.Category,
+                        safety.IsReadOnly,
+                        safety.IsWriteOperation,
+                        safety.RequiresExplicitApproval,
+                        safety.IsBlocked
+                    },
+                    step.Id,
+                    invocation.Id,
+                    severity: safety.Level == ToolSafetyLevels.Low ? AgentEventSeverities.Info : AgentEventSeverities.Warning,
+                    ct: ct);
 
                 var policy = await _toolPlatform.EvaluatePolicyAsync(
                     run.ChatId, toolCall.Name, ct);
@@ -559,17 +750,74 @@ public class LlmService : ILlmService
                     invocation.ApprovedAt = DateTime.UtcNow;
                     invocation.Status = ToolInvocationStatuses.Denied;
                     await _db.SaveChangesAsync(ct);
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.ApprovalDenied,
+                        "Tool invocation denied by policy.",
+                        new { toolCall.Name, policy.Scope },
+                        step.Id,
+                        invocation.Id,
+                        severity: AgentEventSeverities.Warning,
+                        ct: ct);
                     await ExecuteOrDenyInvocationAsync(run, invocation, state, options, ct);
                     continue;
                 }
 
-                if (tool.RequiresApproval && !options.AutoApproveTools && !policy.IsAllowed)
+                if (safety.IsBlocked)
+                {
+                    invocation.Approved = false;
+                    invocation.ApprovedAt = DateTime.UtcNow;
+                    invocation.Status = ToolInvocationStatuses.Failed;
+                    step.Status = AgentStepStatuses.Failed;
+                    await _db.SaveChangesAsync(ct);
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.Error,
+                        $"Safety policy blocked {toolCall.Name}: {safety.Summary}",
+                        new { safety.Warning, safety.PreviewJson },
+                        step.Id,
+                        invocation.Id,
+                        severity: AgentEventSeverities.Warning,
+                        ct: ct);
+                    await CompleteInvocationWithResultAsync(
+                        run,
+                        invocation,
+                        step,
+                        new AgentToolResult(
+                            false,
+                            string.Empty,
+                            $"Safety policy blocked this tool call. {safety.Warning ?? safety.Summary}"),
+                        state,
+                        ct);
+                    continue;
+                }
+
+                var requiresManualApproval =
+                    (tool.RequiresApproval && !options.AutoApproveTools && !policy.IsAllowed) ||
+                    (safety.RequiresExplicitApproval && !policy.IsAllowed);
+                if (requiresManualApproval)
                 {
                     invocation.Status = ToolInvocationStatuses.AwaitingApproval;
                     step.Status = AgentStepStatuses.AwaitingApproval;
                     run.Status = AgentRunStatuses.AwaitingApproval;
                     await SaveCheckpointAsync(run, state, ct);
                     await _db.SaveChangesAsync(ct);
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.ApprovalRequested,
+                        $"Waiting for user approval to run {toolCall.Name}.",
+                        new
+                        {
+                            toolCall.Name,
+                            safety.Level,
+                            safety.Warning,
+                            autoApproveRequested = options.AutoApproveTools,
+                            policy.Scope
+                        },
+                        step.Id,
+                        invocation.Id,
+                        severity: safety.RequiresExplicitApproval ? AgentEventSeverities.Warning : AgentEventSeverities.Info,
+                        ct: ct);
                     return await BuildAgentResultAsync(
                         run, turn, sentMessage, requestMessage, provider, lastResponse, effective.ApiKey, ct);
                 }
@@ -578,6 +826,14 @@ public class LlmService : ILlmService
                 invocation.ApprovedAt = DateTime.UtcNow;
                 invocation.Status = ToolInvocationStatuses.Approved;
                 await _db.SaveChangesAsync(ct);
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.ApprovalGranted,
+                    $"Tool invocation approved automatically for {toolCall.Name}.",
+                    new { toolCall.Name, policy.Scope, safety.Level },
+                    step.Id,
+                    invocation.Id,
+                    ct: ct);
                 await ExecuteOrDenyInvocationAsync(run, invocation, state, options, ct);
             }
 
@@ -585,6 +841,13 @@ public class LlmService : ILlmService
             {
                 run.Status = AgentRunStatuses.Paused;
                 run.UpdatedAt = DateTime.UtcNow;
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.RunPaused,
+                    "Agent reached the step budget and paused.",
+                    new { run.CurrentStep, run.MaxSteps },
+                    severity: AgentEventSeverities.Warning,
+                    ct: ct);
                 lastAssistantMessage = await AddAgentStatusMessageAsync(
                     run,
                     turn,
@@ -611,6 +874,13 @@ public class LlmService : ILlmService
             run.ErrorMessage = "Stopped by the user.";
             await SaveCheckpointAsync(run, state, CancellationToken.None);
             await _db.SaveChangesAsync(CancellationToken.None);
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.RunCancelled,
+                "Agent run cancelled by cancellation token.",
+                new { run.CurrentStep, run.MaxSteps },
+                severity: AgentEventSeverities.Warning,
+                ct: CancellationToken.None);
             throw;
         }
         catch (Exception ex)
@@ -620,6 +890,13 @@ public class LlmService : ILlmService
             run.ErrorMessage = SecretRedactor.RedactText(ex.Message);
             await SaveCheckpointAsync(run, state, CancellationToken.None);
             await _db.SaveChangesAsync(CancellationToken.None);
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.Error,
+                run.ErrorMessage,
+                new { exceptionType = ex.GetType().Name },
+                severity: AgentEventSeverities.Error,
+                ct: CancellationToken.None);
             throw;
         }
     }
@@ -639,6 +916,15 @@ public class LlmService : ILlmService
             result = new AgentToolResult(false, string.Empty, "The user denied this tool invocation.");
             invocation.Status = ToolInvocationStatuses.Denied;
             step.Status = AgentStepStatuses.Denied;
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.ApprovalDenied,
+                $"Tool invocation denied: {invocation.ToolName}.",
+                new { invocation.ToolName },
+                step.Id,
+                invocation.Id,
+                severity: AgentEventSeverities.Warning,
+                ct: ct);
         }
         else if (!_agentTools.TryGet(invocation.ToolName, out var tool))
         {
@@ -648,10 +934,54 @@ public class LlmService : ILlmService
         }
         else
         {
+            var safety = ToolSafetyKernel.Assess(
+                _sandboxCommandService,
+                run.ChatId,
+                invocation.ToolName,
+                invocation.ArgumentsJson);
+            invocation.SafetyLevel = safety.Level;
+            invocation.SafetySummary = safety.Summary;
+            invocation.SafetyJson = SecretRedactor.RedactJson(safety.PreviewJson);
+            if (safety.IsBlocked)
+            {
+                result = new AgentToolResult(
+                    false,
+                    string.Empty,
+                    $"Safety policy blocked this tool call. {safety.Warning ?? safety.Summary}");
+                invocation.Status = ToolInvocationStatuses.Failed;
+                step.Status = AgentStepStatuses.Failed;
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.Error,
+                    $"Safety policy blocked {invocation.ToolName}: {safety.Summary}",
+                    new { safety.Warning, safety.PreviewJson },
+                    step.Id,
+                    invocation.Id,
+                    severity: AgentEventSeverities.Warning,
+                    ct: ct);
+                await CompleteInvocationWithResultAsync(run, invocation, step, result, state, ct);
+                return;
+            }
+
             invocation.Status = ToolInvocationStatuses.Running;
             invocation.StartedAt = DateTime.UtcNow;
             run.Status = AgentRunStatuses.Running;
             await _db.SaveChangesAsync(ct);
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.ToolStarted,
+                $"Running tool {invocation.ToolName}.",
+                new
+                {
+                    invocation.ToolName,
+                    safety.Level,
+                    safety.Category,
+                    safety.IsReadOnly,
+                    safety.IsWriteOperation
+                },
+                step.Id,
+                invocation.Id,
+                ct: ct);
             result = await tool.ExecuteAsync(
                 new AgentToolExecutionContext(
                     run.ChatId,
@@ -664,6 +994,31 @@ public class LlmService : ILlmService
             invocation.Status = result.Success
                 ? ToolInvocationStatuses.Completed
                 : ToolInvocationStatuses.Failed;
+            step.Status = result.Success
+                ? AgentStepStatuses.Completed
+                : AgentStepStatuses.Failed;
+        }
+
+        await CompleteInvocationWithResultAsync(run, invocation, step, result, state, ct);
+    }
+
+    private async Task CompleteInvocationWithResultAsync(
+        AgentRun run,
+        ToolInvocation invocation,
+        AgentStep step,
+        AgentToolResult result,
+        AgentExecutionState state,
+        CancellationToken ct)
+    {
+        if (invocation.Status != ToolInvocationStatuses.Denied)
+        {
+            invocation.Status = result.Success
+                ? ToolInvocationStatuses.Completed
+                : ToolInvocationStatuses.Failed;
+        }
+
+        if (step.Status != AgentStepStatuses.Denied)
+        {
             step.Status = result.Success
                 ? AgentStepStatuses.Completed
                 : AgentStepStatuses.Failed;
@@ -690,6 +1045,23 @@ public class LlmService : ILlmService
         await UpsertArtifactsAsync(run.Id, result.Artifacts, ct);
         await SaveCheckpointAsync(run, state, ct);
         await _db.SaveChangesAsync(ct);
+        await LogAgentEventAsync(
+            run,
+            AgentEventTypes.ToolResult,
+            result.Success
+                ? $"Tool {invocation.ToolName} completed."
+                : $"Tool {invocation.ToolName} failed.",
+            new
+            {
+                invocation.ToolName,
+                result.Success,
+                error = result.Error,
+                artifactCount = result.Artifacts?.Count ?? 0
+            },
+            step.Id,
+            invocation.Id,
+            severity: result.Success ? AgentEventSeverities.Info : AgentEventSeverities.Error,
+            ct: ct);
     }
 
     private async Task<Message> AddAgentStatusMessageAsync(
@@ -1187,6 +1559,38 @@ public class LlmService : ILlmService
         await _db.SaveChangesAsync(ct);
     }
 
+    private async Task LogAgentEventAsync(
+        AgentRun run,
+        string eventType,
+        string summary,
+        object? data = null,
+        Guid? stepId = null,
+        Guid? toolInvocationId = null,
+        string severity = AgentEventSeverities.Info,
+        CancellationToken ct = default)
+    {
+        var sequenceNumber = await _db.Set<AgentEvent>()
+            .Where(e => e.AgentRunId == run.Id)
+            .Select(e => (int?)e.SequenceNumber)
+            .MaxAsync(ct) ?? 0;
+        var dataJson = data == null
+            ? "{}"
+            : SecretRedactor.RedactJson(JsonSerializer.Serialize(data));
+        _db.Set<AgentEvent>().Add(new AgentEvent
+        {
+            AgentRunId = run.Id,
+            AgentStepId = stepId,
+            ToolInvocationId = toolInvocationId,
+            SequenceNumber = sequenceNumber + 1,
+            EventType = eventType,
+            Severity = severity,
+            Summary = SecretRedactor.RedactText(summary),
+            DataJson = dataJson,
+            CreatedAt = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
     private static MessagePayload ToProviderMessage(Message message)
     {
         var role = NormalizeProviderRole(message.Role);
@@ -1239,7 +1643,10 @@ public class LlmService : ILlmService
         """;
     }
 
-    private static string FormatToolRequestMessage(int step, LlmToolCall request)
+    private static string FormatToolRequestMessage(
+        int step,
+        LlmToolCall request,
+        ToolSafetyAssessment? safety = null)
     {
         var reason = ReadToolReason(request.ArgumentsJson) ?? "No reason provided.";
         var details = request.ArgumentsJson;
@@ -1254,7 +1661,8 @@ public class LlmService : ILlmService
         {
         }
 
-        return $"""
+        var sb = new StringBuilder();
+        sb.AppendLine($"""
         Agent tool request #{step}
         Tool: {request.Name}
         Reason: {reason}
@@ -1262,7 +1670,27 @@ public class LlmService : ILlmService
         ```json
         {details}
         ```
-        """;
+        """);
+        if (safety != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Safety: {safety.Level} / {safety.Category}");
+            sb.AppendLine($"Mode: {(safety.IsReadOnly ? "read-only" : safety.IsWriteOperation ? "write/action" : "unknown")}");
+            sb.AppendLine(safety.Summary);
+            if (!string.IsNullOrWhiteSpace(safety.Warning))
+                sb.AppendLine($"Warning: {safety.Warning}");
+            if (!string.IsNullOrWhiteSpace(safety.PreviewJson) &&
+                safety.PreviewJson.Trim() != "{}")
+            {
+                sb.AppendLine();
+                sb.AppendLine("Preview:");
+                sb.AppendLine("```json");
+                sb.AppendLine(safety.PreviewJson);
+                sb.AppendLine("```");
+            }
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
     private static string FormatToolResultMessage(int step, SandboxCommandResult result)

@@ -138,10 +138,47 @@ try {
         }
     }
 
-    Invoke-Native dotnet @("build", $appProject, "-c", "Release", "-p:Platform=x64", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
-    Invoke-Native dotnet @("build", $updaterProject, "-c", "Release", "-p:Platform=x64", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
-    Invoke-Native dotnet @("publish", $appProject, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-p:Platform=x64", "-p:WindowsAppSDKSelfContained=true", "-p:PublishSingleFile=false", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
-    Invoke-Native dotnet @("publish", $updaterProject, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-p:Platform=x64", "-p:PublishSingleFile=true", "-p:IncludeNativeLibrariesForSelfExtract=true", "-p:EnableCompressionInSingleFile=true", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
+    function Clear-ProjectArtifacts {
+        param([Parameter(Mandatory = $true)][string]$ProjectDir)
+
+        foreach ($name in @("obj", "bin")) {
+            $path = Join-Path $ProjectDir $name
+            if (-not (Test-Path -LiteralPath $path)) {
+                continue
+            }
+            $resolved = (Resolve-Path -LiteralPath $path).Path
+            if (-not $resolved.StartsWith($repo.Path, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to delete outside repo: $resolved"
+            }
+            Remove-Item -LiteralPath $resolved -Recurse -Force
+        }
+    }
+
+    function Invoke-DotnetWithRetry {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string[]]$Arguments,
+
+            [Parameter(Mandatory = $true)]
+            [string]$ProjectDir
+        )
+
+        try {
+            Invoke-Native dotnet $Arguments
+        }
+        catch {
+            Write-Warning "dotnet $($Arguments -join ' ') failed once; cleaning $ProjectDir artifacts and retrying."
+            & dotnet build-server shutdown
+            Clear-ProjectArtifacts -ProjectDir $ProjectDir
+            Start-Sleep -Seconds 2
+            Invoke-Native dotnet $Arguments
+        }
+    }
+
+    Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.App" -Arguments @("build", $appProject, "-c", "Release", "-p:Platform=x64", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
+    Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.Updater" -Arguments @("build", $updaterProject, "-c", "Release", "-p:Platform=x64", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
+    Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.App" -Arguments @("publish", $appProject, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-p:Platform=x64", "-p:WindowsAppSDKSelfContained=true", "-p:PublishSingleFile=false", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
+    Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.Updater" -Arguments @("publish", $updaterProject, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-p:Platform=x64", "-p:PublishSingleFile=true", "-p:IncludeNativeLibrariesForSelfExtract=true", "-p:EnableCompressionInSingleFile=true", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
 
     $hasCertificate = $CertificatePath -or $CertificateThumbprint
     if ($hasCertificate) {

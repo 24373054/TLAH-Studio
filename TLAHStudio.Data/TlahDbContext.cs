@@ -24,6 +24,7 @@ public class TlahDbContext : DbContext
     public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
     public DbSet<AgentStep> AgentSteps => Set<AgentStep>();
     public DbSet<ToolInvocation> ToolInvocations => Set<ToolInvocation>();
+    public DbSet<AgentEvent> AgentEvents => Set<AgentEvent>();
     public DbSet<AgentCheckpoint> AgentCheckpoints => Set<AgentCheckpoint>();
     public DbSet<AgentArtifact> AgentArtifacts => Set<AgentArtifact>();
     public DbSet<ToolPermission> ToolPermissions => Set<ToolPermission>();
@@ -222,6 +223,25 @@ public class TlahDbContext : DbContext
                   .WithMany(s => s.ToolInvocations)
                   .HasForeignKey(i => i.AgentStepId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentEvent>(entity =>
+        {
+            entity.HasIndex(e => new { e.AgentRunId, e.SequenceNumber }).IsUnique();
+            entity.HasIndex(e => e.EventType);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasOne(e => e.AgentRun)
+                  .WithMany(r => r.Events)
+                  .HasForeignKey(e => e.AgentRunId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.AgentStep)
+                  .WithMany()
+                  .HasForeignKey(e => e.AgentStepId)
+                  .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(e => e.ToolInvocation)
+                  .WithMany()
+                  .HasForeignKey(e => e.ToolInvocationId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<AgentCheckpoint>(entity =>
@@ -429,6 +449,9 @@ public class TlahDbContext : DbContext
                 CONSTRAINT "FK_ToolInvocations_AgentSteps_AgentStepId" FOREIGN KEY ("AgentStepId") REFERENCES "AgentSteps" ("Id") ON DELETE CASCADE
             );
             """);
+        AddColumnIfMissing(connection, "ToolInvocations", "SafetyLevel", "TEXT NOT NULL DEFAULT 'unknown'");
+        AddColumnIfMissing(connection, "ToolInvocations", "SafetySummary", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "ToolInvocations", "SafetyJson", "TEXT NOT NULL DEFAULT '{}'");
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "AgentCheckpoints" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_AgentCheckpoints" PRIMARY KEY,
@@ -452,6 +475,23 @@ public class TlahDbContext : DbContext
             );
             """);
         ExecuteNonQuery(connection, """
+            CREATE TABLE IF NOT EXISTS "AgentEvents" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_AgentEvents" PRIMARY KEY,
+                "AgentRunId" TEXT NOT NULL,
+                "AgentStepId" TEXT NULL,
+                "ToolInvocationId" TEXT NULL,
+                "SequenceNumber" INTEGER NOT NULL,
+                "EventType" TEXT NOT NULL,
+                "Severity" TEXT NOT NULL,
+                "Summary" TEXT NOT NULL,
+                "DataJson" TEXT NOT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                CONSTRAINT "FK_AgentEvents_AgentRuns_AgentRunId" FOREIGN KEY ("AgentRunId") REFERENCES "AgentRuns" ("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_AgentEvents_AgentSteps_AgentStepId" FOREIGN KEY ("AgentStepId") REFERENCES "AgentSteps" ("Id") ON DELETE SET NULL,
+                CONSTRAINT "FK_AgentEvents_ToolInvocations_ToolInvocationId" FOREIGN KEY ("ToolInvocationId") REFERENCES "ToolInvocations" ("Id") ON DELETE SET NULL
+            );
+            """);
+        ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "ToolPermissions" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_ToolPermissions" PRIMARY KEY,
                 "ChatId" TEXT NOT NULL,
@@ -471,6 +511,9 @@ public class TlahDbContext : DbContext
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_ToolInvocations_Status\" ON \"ToolInvocations\" (\"Status\");");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentCheckpoints_AgentRunId_StepNumber\" ON \"AgentCheckpoints\" (\"AgentRunId\", \"StepNumber\");");
         ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_AgentArtifacts_AgentRunId_RelativePath\" ON \"AgentArtifacts\" (\"AgentRunId\", \"RelativePath\");");
+        ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_AgentEvents_AgentRunId_SequenceNumber\" ON \"AgentEvents\" (\"AgentRunId\", \"SequenceNumber\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentEvents_EventType\" ON \"AgentEvents\" (\"EventType\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentEvents_CreatedAt\" ON \"AgentEvents\" (\"CreatedAt\");");
         ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_ToolPermissions_ChatId_ToolName\" ON \"ToolPermissions\" (\"ChatId\", \"ToolName\");");
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "ToolPlatformSettings" (
