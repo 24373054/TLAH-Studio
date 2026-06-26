@@ -124,6 +124,8 @@ public sealed partial class FirstRunSetupDialog : ContentDialog
     {
         if (_isPopulating || ModelPicker.SelectedItem is not string model)
             return;
+        if (HasLongContextSuffix(model))
+            DeepSeekLongContextCheckBox.IsChecked = true;
         ModelBox.Text = SettingsDialogViewModel.ApplyLongContextSuffix(
             model,
             SettingsDialogViewModel.IsDeepSeekProvider((ProviderCombo.SelectedItem as ProviderInfo)?.Key) &&
@@ -148,9 +150,16 @@ public sealed partial class FirstRunSetupDialog : ContentDialog
 
     private static string? FindModelOption(IEnumerable<string> models, string value)
     {
+        var exact = models.FirstOrDefault(m => string.Equals(m, value, StringComparison.OrdinalIgnoreCase));
+        if (exact != null)
+            return exact;
+
         var normalized = RemoveLongContextSuffix(value);
         return models.FirstOrDefault(m => string.Equals(m, normalized, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool HasLongContextSuffix(string? value) =>
+        (value ?? string.Empty).Trim().EndsWith("[1m]", StringComparison.OrdinalIgnoreCase);
 
     private static string RemoveLongContextSuffix(string? value)
     {

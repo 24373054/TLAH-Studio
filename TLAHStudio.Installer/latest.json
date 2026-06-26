@@ -1,14 +1,14 @@
 {
-  "version": "1.7.2",
+  "version": "1.7.3",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.2.exe",
-  "sha256": "46749538f1f90ded2786f77097fb6d09bd69f95aa06e501f227b0d475164c3d0",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.3.exe",
+  "sha256": "965b481be6f9e5301762d5b745135dfb9a7c3b7bd913b901924812fba7164eb9",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Streaming UX and DeepSeek setup release.\n\nFixes:\n- Assistant replies now render through a live character-level draft instead of appearing only after completion\n- OpenAI-compatible and Anthropic streaming now surface reasoning/thinking deltas separately from final text\n- Thinking output is shown while the model is reasoning and automatically collapses when final text starts\n- DeepSeek is now available as a first-class default provider with https://api.deepseek.com and model presets\n- Settings and first-run setup can fetch provider model lists and toggle DeepSeek 1M context suffix ([1m])\n- Agent step budget is increased for longer multi-tool tasks while preserving resumable runs",
+  "releaseNotes": "Streaming transcript reliability update.\n\nFixes:\n- Normal and agent responses wait for live text drain before reloading saved messages, so replies type out instead of appearing all at once\n- Model thinking is saved as collapsible chat content, stays in the transcript, and is stripped before provider calls\n- DeepSeek long-context selection keeps valid deepseek-v4-pro[1m] and deepseek-v4-flash[1m] model names",
   "forceUpdate": true,
-  "minSupportedVersion": "1.7.2",
+  "minSupportedVersion": "1.7.3",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96838248
+  "installerSizeBytes": 96838400
 }

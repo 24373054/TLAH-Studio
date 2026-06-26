@@ -187,7 +187,7 @@ public class LlmService : ILlmService
         _db.Set<RawResponse>().Add(rawResponse);
 
         // 14. Save assistant message
-        var assistantContent = llmResult.AssistantText;
+        var assistantContent = FormatAssistantContent(llmResult);
         var assistantMessage = new Message
         {
             ChatId = chatId,
@@ -614,7 +614,7 @@ public class LlmService : ILlmService
                     {
                         ChatId = run.ChatId,
                         Role = "assistant",
-                        Content = lastResponse.AssistantText,
+                        Content = FormatAssistantContent(lastResponse),
                         TurnId = turn.Id,
                         SequenceNum = state.SequenceNum++
                     };
@@ -717,7 +717,9 @@ public class LlmService : ILlmService
                 {
                     ChatId = run.ChatId,
                     Role = "assistant",
-                    Content = FormatToolRequestMessage(stepNumber, toolCall, safety),
+                    Content = AssistantContentFormatter.Compose(
+                        FormatToolRequestMessage(stepNumber, toolCall, safety),
+                        lastResponse.ReasoningText),
                     TurnId = turn.Id,
                     SequenceNum = state.SequenceNum++
                 };
@@ -1017,7 +1019,9 @@ public class LlmService : ILlmService
             {
                 ChatId = run.ChatId,
                 Role = "assistant",
-                Content = assistantText,
+                Content = AssistantContentFormatter.Compose(
+                    assistantText,
+                    response.ReasoningText),
                 TurnId = turn.Id,
                 SequenceNum = state.SequenceNum++
             };
@@ -1535,7 +1539,7 @@ public class LlmService : ILlmService
         {
             ChatId = sourceTurn.ChatId,
             Role = "assistant",
-            Content = llmResult.AssistantText,
+            Content = FormatAssistantContent(llmResult),
             TurnId = newTurn.Id,
             SequenceNum = seq + 1
         };
@@ -1725,7 +1729,7 @@ public class LlmService : ILlmService
         {
             ChatId = chatId,
             Role = "assistant",
-            Content = llmResult.AssistantText,
+            Content = FormatAssistantContent(llmResult),
             TurnId = turn.Id,
             SequenceNum = assistantSequence
         };
@@ -1844,11 +1848,15 @@ public class LlmService : ILlmService
     private static MessagePayload ToProviderMessage(Message message)
     {
         var role = NormalizeProviderRole(message.Role);
+        var messageContent = AssistantContentFormatter.StripThinking(message.Content);
         var content = string.Equals(role, message.Role, StringComparison.OrdinalIgnoreCase)
-            ? message.Content
-            : $"[{message.Role}]\n{message.Content}";
+            ? messageContent
+            : $"[{message.Role}]\n{messageContent}";
         return new MessagePayload(role, content);
     }
+
+    private static string FormatAssistantContent(LlmResponse response) =>
+        AssistantContentFormatter.Compose(response.AssistantText, response.ReasoningText);
 
     private static string NormalizeProviderRole(string role)
     {
@@ -2101,9 +2109,10 @@ public class LlmService : ILlmService
     private static MessagePayload ToProviderMessage(string role, string content)
     {
         var normalized = NormalizeProviderRole(role);
+        var messageContent = AssistantContentFormatter.StripThinking(content);
         var safeContent = string.Equals(normalized, role, StringComparison.OrdinalIgnoreCase)
-            ? content
-            : $"[{role}]\n{content}";
+            ? messageContent
+            : $"[{role}]\n{messageContent}";
         return new MessagePayload(normalized, safeContent);
     }
 }

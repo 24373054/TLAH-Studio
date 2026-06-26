@@ -39,6 +39,8 @@ public static class ProviderModelCatalog
             [
                 "deepseek-v4-pro",
                 "deepseek-v4-flash",
+                "deepseek-v4-pro[1m]",
+                "deepseek-v4-flash[1m]",
                 "deepseek-v3.1",
                 "deepseek-v3.1-terminus",
                 "deepseek-chat",

@@ -270,7 +270,12 @@ public partial class SettingsDialogViewModel : ObservableObject
         if (string.IsNullOrEmpty(trimmed))
             return trimmed;
         var withoutSuffix = RemoveLongContextSuffix(trimmed);
-        return enabled ? $"{withoutSuffix}[1m]" : withoutSuffix;
+        if (!enabled)
+            return withoutSuffix;
+
+        return IsSupportedDeepSeekLongContextModel(withoutSuffix)
+            ? $"{withoutSuffix}[1m]"
+            : "deepseek-v4-pro[1m]";
     }
 
     [RelayCommand]
@@ -351,6 +356,10 @@ public partial class SettingsDialogViewModel : ObservableObject
         model.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase)
             ? model[..^4]
             : model;
+
+    private static bool IsSupportedDeepSeekLongContextModel(string model) =>
+        string.Equals(model, "deepseek-v4-pro", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(model, "deepseek-v4-flash", StringComparison.OrdinalIgnoreCase);
 
     private static void LoadFallbackModelOptions(ObservableCollection<string> target, string? provider) =>
         ReplaceModels(target, ProviderModelCatalog.FallbackModels(provider ?? "openai"));

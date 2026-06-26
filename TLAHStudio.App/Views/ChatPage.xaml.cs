@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Automation;
 using Windows.UI;
 using TLAHStudio.App.ViewModels;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -302,7 +303,7 @@ public sealed partial class ChatPage : UserControl
         var stack = new StackPanel { Spacing = 7 };
         stack.Children.Add(new TextBlock
         {
-            Text = isDraft ? "assistant · live preview" : isSystem ? "system" : isUser ? "you" : isTool ? "sandbox" : "assistant",
+            Text = isSystem ? "system" : isUser ? "you" : isTool ? "sandbox" : "assistant",
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = isUser ? AccentTextBrush() : TextMutedBrush()
@@ -339,7 +340,7 @@ public sealed partial class ChatPage : UserControl
 
     private UIElement BuildMessageBody(Message message, bool isDraft, bool isUser)
     {
-        if (isDraft && TryParseLiveStreamContent(message.Content, out var thinking, out var answer, out var isExpanded))
+        if (AssistantContentFormatter.TryParse(message.Content, out var thinking, out var answer, out var isExpanded))
             return BuildLiveStreamBody(thinking, answer, isExpanded);
 
         return new TextBlock
@@ -361,16 +362,32 @@ public sealed partial class ChatPage : UserControl
     private UIElement BuildLiveStreamBody(string thinking, string answer, bool isExpanded)
     {
         var panel = new StackPanel { Spacing = 8 };
+        var header = new StackPanel { Spacing = 2 };
+        header.Children.Add(new TextBlock
+        {
+            Text = isExpanded ? "Thinking..." : $"Thinking collapsed · {thinking.Length} chars",
+            Foreground = TextSecondaryBrush(),
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        var preview = AssistantContentFormatter.Preview(thinking);
+        if (!isExpanded && !string.IsNullOrWhiteSpace(preview))
+        {
+            header.Children.Add(new TextBlock
+            {
+                Text = preview,
+                Foreground = TextMutedBrush(),
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextWrapping = TextWrapping.NoWrap,
+                MaxWidth = IsCompactDensity() ? 640 : 720
+            });
+        }
+
         var thinkingBox = new Expander
         {
             IsExpanded = isExpanded,
-            Header = new TextBlock
-            {
-                Text = isExpanded ? "Thinking..." : $"Thinking collapsed · {thinking.Length} chars",
-                Foreground = TextSecondaryBrush(),
-                FontSize = 12,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-            },
+            Header = header,
             Background = ThemeBrush(
                 Color.FromArgb(0xAA, 0xF3, 0xF7, 0xFD),
                 Color.FromArgb(0x8A, 0x0E, 0x17, 0x25)),
@@ -406,39 +423,6 @@ public sealed partial class ChatPage : UserControl
         }
 
         return panel;
-    }
-
-    private static bool TryParseLiveStreamContent(
-        string content,
-        out string thinking,
-        out string answer,
-        out bool isExpanded)
-    {
-        thinking = string.Empty;
-        answer = string.Empty;
-        isExpanded = false;
-        if (string.IsNullOrEmpty(content))
-            return false;
-
-        if (content.StartsWith(LiveStreamContentMarkers.ThinkingExpanded, StringComparison.Ordinal))
-            isExpanded = true;
-        else if (!content.StartsWith(LiveStreamContentMarkers.ThinkingCollapsed, StringComparison.Ordinal))
-            return false;
-
-        var firstLineEnd = content.IndexOf('\n');
-        if (firstLineEnd < 0)
-            return false;
-
-        var end = content.IndexOf(
-            LiveStreamContentMarkers.ThinkingEnd,
-            firstLineEnd + 1,
-            StringComparison.Ordinal);
-        if (end < 0)
-            return false;
-
-        thinking = content[(firstLineEnd + 1)..end].Trim();
-        answer = content[(end + LiveStreamContentMarkers.ThinkingEnd.Length)..].TrimStart('\r', '\n');
-        return true;
     }
 
     private UIElement BuildAgentLiveCard()
@@ -560,7 +544,7 @@ public sealed partial class ChatPage : UserControl
     private static void CopyMessage(Message message)
     {
         var package = new DataPackage();
-        package.SetText(message.Content);
+        package.SetText(AssistantContentFormatter.StripThinking(message.Content));
         Clipboard.SetContent(package);
     }
 
@@ -584,7 +568,7 @@ public sealed partial class ChatPage : UserControl
 
         var box = new TextBox
         {
-            Text = message.Content,
+            Text = AssistantContentFormatter.StripThinking(message.Content),
             AcceptsReturn = true,
             MinHeight = 140,
             Width = 460,
@@ -661,8 +645,8 @@ public sealed partial class ChatPage : UserControl
     }
 
     private static bool IsApiError(Message message) =>
-        message.Content.StartsWith("[API Error", StringComparison.OrdinalIgnoreCase) ||
-        message.Content.StartsWith("[Error", StringComparison.OrdinalIgnoreCase);
+        AssistantContentFormatter.StripThinking(message.Content).StartsWith("[API Error", StringComparison.OrdinalIgnoreCase) ||
+        AssistantContentFormatter.StripThinking(message.Content).StartsWith("[Error", StringComparison.OrdinalIgnoreCase);
 
     private SolidColorBrush MessageBrush(string role)
     {

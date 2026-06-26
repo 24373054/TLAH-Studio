@@ -164,7 +164,9 @@ public partial class ChatPageViewModel : ObservableObject
             if (IsAgentModeEnabled)
                 result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
 
-            // Reload so agent tool-request and sandbox-result messages appear in order.
+            await stream.WaitForFinalDrainAsync(_sendCts.Token);
+
+            // Reload so persisted assistant thinking blocks, agent tool requests, and sandbox results appear in order.
             await ReloadCurrentChatAsync();
 
             // Notify debug panel of the new turn
@@ -221,6 +223,7 @@ public partial class ChatPageViewModel : ObservableObject
                 new AgentRunOptions(OutputStream: stream.Progress, Progress: agentProgress),
                 _sendCts.Token);
             result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
+            await stream.WaitForFinalDrainAsync(_sendCts.Token);
             await ReloadCurrentChatAsync();
             TurnCreated?.Invoke(this, result.Turn.Id);
         }
@@ -487,6 +490,7 @@ public partial class ChatPageViewModel : ObservableObject
 
             if (update.IsFinal)
             {
+                stream.FinalReceived = true;
                 stream.FinalSnapshot = update.Snapshot;
                 QueueMissingFinalText(stream, update.Snapshot);
             }
@@ -557,6 +561,10 @@ public partial class ChatPageViewModel : ObservableObject
                 {
                     stream.IsDraining = true;
                     shouldRestart = true;
+                }
+                else
+                {
+                    stream.TryCompleteFinalDrainLocked();
                 }
             }
 
@@ -750,28 +758,49 @@ internal sealed class AssistantStreamState(
         if (ThinkingBuilder.Length == 0)
             return TextBuilder.ToString();
 
-        var marker = IsThinkingCollapsed
-            ? LiveStreamContentMarkers.ThinkingCollapsed
-            : LiveStreamContentMarkers.ThinkingExpanded;
-        var builder = new StringBuilder();
-        builder.AppendLine(marker);
-        builder.AppendLine(ThinkingBuilder.ToString());
-        builder.AppendLine(LiveStreamContentMarkers.ThinkingEnd);
-        builder.Append(TextBuilder);
-        return builder.ToString();
+        return AssistantContentFormatter.Compose(
+            TextBuilder.ToString(),
+            ThinkingBuilder.ToString(),
+            isThinkingExpanded: !IsThinkingCollapsed);
+    }
+
+    public bool FinalReceived { get; set; }
+    public TaskCompletionSource FinalDrainCompletion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public void TryCompleteFinalDrainLocked()
+    {
+        if (FinalReceived &&
+            PendingThinkingChars.Count == 0 &&
+            PendingTextChars.Count == 0)
+        {
+            FinalDrainCompletion.TrySetResult();
+        }
+    }
+
+    public async Task WaitForFinalDrainAsync(CancellationToken ct)
+    {
+        Task task;
+        lock (Gate)
+        {
+            if (!FinalReceived)
+                return;
+
+            TryCompleteFinalDrainLocked();
+            task = FinalDrainCompletion.Task;
+        }
+
+        using var registration = ct.Register(static state =>
+        {
+            ((TaskCompletionSource)state!).TrySetCanceled();
+        }, FinalDrainCompletion);
+        await task;
     }
 }
 
 internal sealed class InlineLlmStreamProgress(Action<LlmStreamUpdate> onUpdate) : IProgress<LlmStreamUpdate>
 {
     public void Report(LlmStreamUpdate value) => onUpdate(value);
-}
-
-public static class LiveStreamContentMarkers
-{
-    public const string ThinkingExpanded = "<tlah-thinking expanded>";
-    public const string ThinkingCollapsed = "<tlah-thinking collapsed>";
-    public const string ThinkingEnd = "</tlah-thinking>";
 }
 
 public sealed record AgentProgressLine(
