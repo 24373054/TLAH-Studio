@@ -18,17 +18,24 @@ public class OpenAICompatibleProvider : ILlmProvider
     private readonly string _apiKey;
     private readonly string _baseUrl;
     private readonly string _model;
+    private readonly string _providerName;
 
-    public string ProviderName => "openai_compat";
+    public string ProviderName => _providerName;
 
     public string EndpointUrl => $"{_baseUrl}/v1/chat/completions";
 
-    public OpenAICompatibleProvider(HttpClient http, string apiKey, string baseUrl, string model)
+    public OpenAICompatibleProvider(
+        HttpClient http,
+        string apiKey,
+        string baseUrl,
+        string model,
+        string providerName = "openai_compat")
     {
         _http = http;
         _apiKey = apiKey;
         _baseUrl = baseUrl.TrimEnd('/');
         _model = model;
+        _providerName = string.IsNullOrWhiteSpace(providerName) ? "openai_compat" : providerName;
     }
 
     public async Task<LlmResponse> ChatAsync(
@@ -101,6 +108,7 @@ public class OpenAICompatibleProvider : ILlmProvider
 
         // Extract assistant text from choices[0].message.content
         string assistantText = "";
+        string? reasoningText = null;
         Dictionary<string, int>? tokenUsage = null;
         string? error = null;
         var toolCalls = new List<LlmToolCall>();
@@ -121,6 +129,9 @@ public class OpenAICompatibleProvider : ILlmProvider
                         {
                             assistantText = content.GetString() ?? "";
                         }
+                        if (first.TryGetProperty("message", out msg))
+                            reasoningText = ExtractReasoning(msg);
+
                         if (first.TryGetProperty("message", out msg) &&
                             msg.TryGetProperty("tool_calls", out var toolCallsElement) &&
                             toolCallsElement.ValueKind == JsonValueKind.Array)
@@ -175,7 +186,8 @@ public class OpenAICompatibleProvider : ILlmProvider
             AssistantText: assistantText,
             TokenUsage: tokenUsage,
             Error: error,
-            ToolCalls: toolCalls
+            ToolCalls: toolCalls,
+            ReasoningText: reasoningText
         );
     }
 
@@ -211,8 +223,10 @@ public class OpenAICompatibleProvider : ILlmProvider
 
         var chunks = new List<string>();
         var text = new StringBuilder();
+        var thinking = new StringBuilder();
         var toolBuilders = new Dictionary<int, OpenAIToolCallBuilder>();
         Dictionary<string, int>? tokenUsage = null;
+        var textStarted = false;
 
         await using var streamBody = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(streamBody);
@@ -251,9 +265,30 @@ public class OpenAICompatibleProvider : ILlmProvider
                         var part = content.GetString();
                         if (!string.IsNullOrEmpty(part))
                         {
+                            if (!textStarted)
+                            {
+                                textStarted = true;
+                                stream.Report(new LlmStreamUpdate(
+                                    string.Empty,
+                                    text.ToString(),
+                                    LlmStreamEventTypes.TextStarted));
+                            }
                             text.Append(part);
-                            stream.Report(new LlmStreamUpdate(part, text.ToString()));
+                            stream.Report(new LlmStreamUpdate(
+                                part,
+                                text.ToString(),
+                                LlmStreamEventTypes.TextDelta));
                         }
+                    }
+
+                    var reasoningPart = ExtractReasoning(delta);
+                    if (!string.IsNullOrEmpty(reasoningPart))
+                    {
+                        thinking.Append(reasoningPart);
+                        stream.Report(new LlmStreamUpdate(
+                            reasoningPart,
+                            thinking.ToString(),
+                            LlmStreamEventTypes.ThinkingDelta));
                     }
 
                     if (delta.TryGetProperty("tool_calls", out var toolCalls) &&
@@ -295,13 +330,19 @@ public class OpenAICompatibleProvider : ILlmProvider
         }
         sw.Stop();
 
-        stream.Report(new LlmStreamUpdate(string.Empty, text.ToString(), IsFinal: true));
+        stream.Report(new LlmStreamUpdate(
+            string.Empty,
+            text.ToString(),
+            LlmStreamEventTypes.TextDelta,
+            IsFinal: true));
         var rawResponse = new Dictionary<string, object>
         {
             ["stream"] = true,
             ["chunks"] = chunks,
             ["assistant_text"] = text.ToString()
         };
+        if (thinking.Length > 0)
+            rawResponse["reasoning_text"] = thinking.ToString();
         if (tokenUsage != null)
             rawResponse["usage"] = tokenUsage;
 
@@ -318,24 +359,28 @@ public class OpenAICompatibleProvider : ILlmProvider
             (int)sw.ElapsedMilliseconds,
             text.ToString(),
             tokenUsage,
-            ToolCalls: toolCallsResult);
+            ToolCalls: toolCallsResult,
+            ReasoningText: thinking.Length == 0 ? null : thinking.ToString());
     }
 
     private static object BuildMessage(MessagePayload message)
     {
         if (message.ToolCalls is { Count: > 0 })
         {
-            return new
+            var assistantMessage = new Dictionary<string, object?>
             {
-                role = "assistant",
-                content = string.IsNullOrWhiteSpace(message.Content) ? null : message.Content,
-                tool_calls = message.ToolCalls.Select(t => new
+                ["role"] = "assistant",
+                ["content"] = string.IsNullOrWhiteSpace(message.Content) ? null : message.Content,
+                ["tool_calls"] = message.ToolCalls.Select(t => new
                 {
                     id = t.Id,
                     type = "function",
                     function = new { name = t.Name, arguments = t.ArgumentsJson }
                 }).ToArray()
             };
+            if (!string.IsNullOrWhiteSpace(message.ReasoningContent))
+                assistantMessage["reasoning_content"] = message.ReasoningContent;
+            return assistantMessage;
         }
 
         if (string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase))
@@ -349,6 +394,18 @@ public class OpenAICompatibleProvider : ILlmProvider
         }
 
         return new { role = message.Role, content = message.Content };
+    }
+
+    private static string? ExtractReasoning(JsonElement element)
+    {
+        foreach (var name in new[] { "reasoning_content", "reasoning", "thinking" })
+        {
+            if (element.TryGetProperty(name, out var value) &&
+                value.ValueKind == JsonValueKind.String)
+                return value.GetString();
+        }
+
+        return null;
     }
 
     private static Dictionary<string, int> ParseUsage(JsonElement usageElement)

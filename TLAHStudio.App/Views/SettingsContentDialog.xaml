@@ -115,12 +115,43 @@
                     CornerRadius="8" />
 
                 <TextBlock Text="Model" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="ModelBox"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="220" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox
+                        x:Name="ModelBox"
+                        Grid.Column="0"
+                        Background="{ThemeResource InputBackgroundBrush}"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        CornerRadius="8" />
+                    <ComboBox
+                        x:Name="ModelPicker"
+                        Grid.Column="1"
+                        PlaceholderText="Detected models"
+                        SelectionChanged="ModelPicker_SelectionChanged"
+                        Background="{ThemeResource InputBackgroundBrush}"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        CornerRadius="8" />
+                    <Button
+                        Grid.Column="2"
+                        Click="RefreshGlobalModels_Click"
+                        Padding="10,7"
+                        CornerRadius="8"
+                        ToolTipService.ToolTip="Refresh model list">
+                        <SymbolIcon Symbol="Sync" />
+                    </Button>
+                </Grid>
+                <CheckBox
+                    x:Name="DeepSeekLongContextCheckBox"
+                    Content="Use 1M context ([1m])"
+                    Checked="DeepSeekLongContext_Changed"
+                    Unchecked="DeepSeekLongContext_Changed"
+                    Foreground="{ThemeResource TextSecondaryBrush}" />
 
                 <TextBlock Text="Temperature" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <Slider
@@ -237,13 +268,44 @@
                     CornerRadius="8" />
 
                 <TextBlock Text="Model Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="ChatModelBox"
-                    PlaceholderText="Leave blank to inherit"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="220" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox
+                        x:Name="ChatModelBox"
+                        Grid.Column="0"
+                        PlaceholderText="Leave blank to inherit"
+                        Background="{ThemeResource InputBackgroundBrush}"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        CornerRadius="8" />
+                    <ComboBox
+                        x:Name="ChatModelPicker"
+                        Grid.Column="1"
+                        PlaceholderText="Detected models"
+                        SelectionChanged="ChatModelPicker_SelectionChanged"
+                        Background="{ThemeResource InputBackgroundBrush}"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        CornerRadius="8" />
+                    <Button
+                        Grid.Column="2"
+                        Click="RefreshChatModels_Click"
+                        Padding="10,7"
+                        CornerRadius="8"
+                        ToolTipService.ToolTip="Refresh chat model list">
+                        <SymbolIcon Symbol="Sync" />
+                    </Button>
+                </Grid>
+                <CheckBox
+                    x:Name="ChatDeepSeekLongContextCheckBox"
+                    Content="Use 1M context ([1m])"
+                    Checked="ChatDeepSeekLongContext_Changed"
+                    Unchecked="ChatDeepSeekLongContext_Changed"
+                    Foreground="{ThemeResource TextSecondaryBrush}" />
 
                 <TextBlock Text="Temperature Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <TextBox

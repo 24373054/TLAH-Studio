@@ -27,12 +27,27 @@ public static class LlmProviderFactory
                 baseUrl ?? "https://api.anthropic.com",
                 model ?? "claude-sonnet-4-6"),
 
-            // openai, deepseek, openai_compat, or any OpenAI-compatible API
+            "deepseek" => new OpenAICompatibleProvider(
+                httpClient,
+                apiKey,
+                baseUrl ?? "https://api.deepseek.com",
+                model ?? "deepseek-v4-pro",
+                "deepseek"),
+
+            "openai" => new OpenAICompatibleProvider(
+                httpClient,
+                apiKey,
+                baseUrl ?? "https://api.openai.com",
+                model ?? "gpt-4o",
+                "openai"),
+
+            // openai_compat, or any provider implementing the OpenAI API shape.
             _ => new OpenAICompatibleProvider(
                 httpClient,
                 apiKey,
                 baseUrl ?? "https://api.openai.com",
-                model ?? "gpt-4o")
+                model ?? "gpt-4o",
+                providerName)
         };
     }
 }

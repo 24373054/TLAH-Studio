@@ -8,7 +8,8 @@ public record MessagePayload(
     string Role,
     string Content,
     string? ToolCallId = null,
-    IReadOnlyList<LlmToolCall>? ToolCalls = null);
+    IReadOnlyList<LlmToolCall>? ToolCalls = null,
+    string? ReasoningContent = null);
 
 public sealed record LlmToolDefinition(
     string Name,
@@ -26,6 +27,13 @@ public sealed record LlmStreamUpdate(
     string EventType = "text_delta",
     bool IsFinal = false);
 
+public static class LlmStreamEventTypes
+{
+    public const string TextDelta = "text_delta";
+    public const string ThinkingDelta = "thinking_delta";
+    public const string TextStarted = "text_started";
+}
+
 /// <summary>
 /// The complete result of an LLM API call — everything needed for debugging.
 /// Maps 1:1 from LLMResponse dataclass in llm/base.py.
@@ -38,5 +46,6 @@ public record LlmResponse(
     string AssistantText,                         // Extracted assistant message content
     Dictionary<string, int>? TokenUsage = null,    // Parsed token usage
     string? Error = null,                          // Error message if call failed
-    IReadOnlyList<LlmToolCall>? ToolCalls = null
+    IReadOnlyList<LlmToolCall>? ToolCalls = null,
+    string? ReasoningText = null
 );

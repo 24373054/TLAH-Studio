@@ -153,6 +153,40 @@ public class LlmProviderTests
     }
 
     [Fact]
+    public async Task OpenAICompatibleProvider_StreamsReasoningBeforeText()
+    {
+        var handler = new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            data: {"choices":[{"delta":{"reasoning_content":"想"}}]}
+
+            data: {"choices":[{"delta":{"reasoning_content":"一想"}}]}
+
+            data: {"choices":[{"delta":{"content":"答"}}]}
+
+            data: {"choices":[{"delta":{"content":"案"}}]}
+
+            data: [DONE]
+
+            """, System.Text.Encoding.UTF8, "text/event-stream")
+        });
+        using var client = new HttpClient(handler);
+        var provider = new OpenAICompatibleProvider(client, "sk-test", "https://api.example.com", "model-a");
+        var stream = new CollectingStreamProgress();
+
+        var result = await provider.ChatAsync(
+            [new MessagePayload("user", "hi")],
+            "system",
+            stream: stream);
+
+        Assert.Equal("答案", result.AssistantText);
+        Assert.Equal("想一想", result.ReasoningText);
+        Assert.Equal(["想", "一想"], stream.ThinkingDeltas);
+        Assert.Equal(["答", "案"], stream.TextDeltas);
+        Assert.Contains(stream.Updates, u => u.EventType == LlmStreamEventTypes.TextStarted);
+    }
+
+    [Fact]
     public async Task AnthropicProvider_ExtractsNativeToolUse()
     {
         var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
@@ -218,16 +252,58 @@ public class LlmProviderTests
         Assert.Contains("\"stream\":true", body);
     }
 
+    [Fact]
+    public async Task AnthropicProvider_StreamsThinkingBeforeText()
+    {
+        var handler = new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"先"}}
+
+            data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"想"}}
+
+            data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"回"}}
+
+            data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"答"}}
+
+            data: {"type":"message_stop"}
+
+            """, System.Text.Encoding.UTF8, "text/event-stream")
+        });
+        using var client = new HttpClient(handler);
+        var provider = new AnthropicProvider(client, "sk-test", "https://anthropic.example.com", "claude-test");
+        var stream = new CollectingStreamProgress();
+
+        var result = await provider.ChatAsync(
+            [new MessagePayload("user", "hi")],
+            "system",
+            stream: stream);
+
+        Assert.Equal("回答", result.AssistantText);
+        Assert.Equal("先想", result.ReasoningText);
+        Assert.Equal(["先", "想"], stream.ThinkingDeltas);
+        Assert.Equal(["回", "答"], stream.TextDeltas);
+        Assert.Contains(stream.Updates, u => u.EventType == LlmStreamEventTypes.TextStarted);
+    }
+
     private sealed class CollectingStreamProgress : IProgress<LlmStreamUpdate>
     {
         public List<LlmStreamUpdate> Updates { get; } = [];
         public List<string> Deltas { get; } = [];
+        public List<string> TextDeltas { get; } = [];
+        public List<string> ThinkingDeltas { get; } = [];
 
         public void Report(LlmStreamUpdate value)
         {
             Updates.Add(value);
             if (!string.IsNullOrEmpty(value.Delta))
+            {
                 Deltas.Add(value.Delta);
+                if (value.EventType == LlmStreamEventTypes.ThinkingDelta)
+                    ThinkingDeltas.Add(value.Delta);
+                else if (value.EventType == LlmStreamEventTypes.TextDelta)
+                    TextDeltas.Add(value.Delta);
+            }
         }
     }
 }

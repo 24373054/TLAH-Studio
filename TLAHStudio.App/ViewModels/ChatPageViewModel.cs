@@ -22,7 +22,6 @@ public partial class ChatPageViewModel : ObservableObject
     private CancellationTokenSource? _sendCts;
     private IProgress<AgentProgressUpdate>? _activeAgentProgress;
     private AssistantStreamState? _activeStream;
-    private bool _isDrainingStream;
 
     public ObservableCollection<Message> Messages { get; } = new();
     public ObservableCollection<AgentProgressLine> AgentProgressLines { get; } = new();
@@ -450,7 +449,7 @@ public partial class ChatPageViewModel : ObservableObject
         Messages.Add(message);
         _activeStream = new AssistantStreamState(
             message,
-            new Progress<LlmStreamUpdate>(OnAssistantStream));
+            new InlineLlmStreamProgress(OnAssistantStream));
         return _activeStream;
     }
 
@@ -462,53 +461,125 @@ public partial class ChatPageViewModel : ObservableObject
 
     private void OnAssistantStream(LlmStreamUpdate update)
     {
-        if (_activeStream == null)
+        var stream = _activeStream;
+        if (stream == null)
             return;
 
-        if (!string.IsNullOrEmpty(update.Delta))
+        var shouldStartDrain = false;
+        lock (stream.Gate)
         {
-            foreach (var ch in update.Delta)
-                _activeStream.PendingChars.Enqueue(ch);
-        }
+            if (update.EventType == LlmStreamEventTypes.TextStarted)
+                stream.IsThinkingCollapsed = true;
 
-        if (update.IsFinal)
-            _activeStream.FinalSnapshot = update.Snapshot;
-
-        if (!_isDrainingStream)
-            _ = DrainAssistantStreamAsync();
-    }
-
-    private async Task DrainAssistantStreamAsync()
-    {
-        if (_activeStream == null)
-            return;
-
-        _isDrainingStream = true;
-        try
-        {
-            while (_activeStream != null && _activeStream.PendingChars.Count > 0)
+            if (!string.IsNullOrEmpty(update.Delta))
             {
-                var batchSize = _activeStream.PendingChars.Count > 80 ? 3 : 1;
-                for (var i = 0; i < batchSize && _activeStream.PendingChars.Count > 0; i++)
-                    _activeStream.Builder.Append(_activeStream.PendingChars.Dequeue());
-                _activeStream.Message.Content = _activeStream.Builder.ToString();
-                StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
-                await Task.Delay(10);
+                var target = update.EventType == LlmStreamEventTypes.ThinkingDelta
+                    ? stream.PendingThinkingChars
+                    : stream.PendingTextChars;
+                foreach (var ch in update.Delta)
+                    target.Enqueue(ch);
+
+                if (update.EventType == LlmStreamEventTypes.TextDelta &&
+                    (stream.ThinkingBuilder.Length > 0 ||
+                     stream.PendingThinkingChars.Count > 0))
+                    stream.IsThinkingCollapsed = true;
             }
 
-            if (_activeStream is { FinalSnapshot: { } final } &&
-                !string.Equals(_activeStream.Message.Content, final, StringComparison.Ordinal))
+            if (update.IsFinal)
             {
-                _activeStream.Builder.Clear();
-                _activeStream.Builder.Append(final);
-                _activeStream.Message.Content = final;
+                stream.FinalSnapshot = update.Snapshot;
+                QueueMissingFinalText(stream, update.Snapshot);
+            }
+
+            if (!stream.IsDraining)
+            {
+                stream.IsDraining = true;
+                shouldStartDrain = true;
+            }
+        }
+
+        if (shouldStartDrain)
+            _ = DrainAssistantStreamAsync(stream);
+    }
+
+    private async Task DrainAssistantStreamAsync(AssistantStreamState stream)
+    {
+        try
+        {
+            while (ReferenceEquals(_activeStream, stream))
+            {
+                bool changed;
+                lock (stream.Gate)
+                {
+                    var pending = stream.PendingThinkingChars.Count + stream.PendingTextChars.Count;
+                    if (pending <= 0)
+                    {
+                        if (!string.IsNullOrEmpty(stream.FinalSnapshot))
+                            QueueMissingFinalText(stream, stream.FinalSnapshot);
+
+                        pending = stream.PendingThinkingChars.Count + stream.PendingTextChars.Count;
+                    }
+
+                    if (pending <= 0)
+                        break;
+
+                    var batchSize = pending > 80 ? 3 : 1;
+                    for (var i = 0; i < batchSize; i++)
+                    {
+                        if (stream.PendingThinkingChars.Count > 0)
+                        {
+                            stream.ThinkingBuilder.Append(stream.PendingThinkingChars.Dequeue());
+                            continue;
+                        }
+
+                        if (stream.PendingTextChars.Count > 0)
+                            stream.TextBuilder.Append(stream.PendingTextChars.Dequeue());
+                    }
+
+                    stream.Message.Content = stream.ComposeContent();
+                    changed = true;
+                }
+
+                if (!changed)
+                    break;
                 StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
+                await Task.Delay(10);
             }
         }
         finally
         {
-            _isDrainingStream = false;
+            var shouldRestart = false;
+            lock (stream.Gate)
+            {
+                stream.IsDraining = false;
+                if (ReferenceEquals(_activeStream, stream) &&
+                    (stream.PendingThinkingChars.Count > 0 || stream.PendingTextChars.Count > 0))
+                {
+                    stream.IsDraining = true;
+                    shouldRestart = true;
+                }
+            }
+
+            if (shouldRestart)
+                _ = DrainAssistantStreamAsync(stream);
         }
+    }
+
+    private static void QueueMissingFinalText(AssistantStreamState stream, string snapshot)
+    {
+        if (string.IsNullOrEmpty(snapshot))
+            return;
+
+        var knownLength = stream.TextBuilder.Length + stream.PendingTextChars.Count;
+        if (snapshot.Length <= knownLength)
+            return;
+
+        var currentText = stream.TextBuilder.ToString();
+        if (!snapshot.StartsWith(currentText, StringComparison.Ordinal))
+            return;
+
+        foreach (var ch in snapshot[knownLength..])
+            stream.PendingTextChars.Enqueue(ch);
     }
 
     private IProgress<AgentProgressUpdate> BeginAgentProgress(bool reset)
@@ -665,9 +736,42 @@ internal sealed class AssistantStreamState(
 {
     public Message Message { get; } = message;
     public IProgress<LlmStreamUpdate> Progress { get; } = progress;
-    public Queue<char> PendingChars { get; } = new();
-    public StringBuilder Builder { get; } = new();
+    public object Gate { get; } = new();
+    public Queue<char> PendingTextChars { get; } = new();
+    public Queue<char> PendingThinkingChars { get; } = new();
+    public StringBuilder TextBuilder { get; } = new();
+    public StringBuilder ThinkingBuilder { get; } = new();
+    public bool IsThinkingCollapsed { get; set; }
+    public bool IsDraining { get; set; }
     public string? FinalSnapshot { get; set; }
+
+    public string ComposeContent()
+    {
+        if (ThinkingBuilder.Length == 0)
+            return TextBuilder.ToString();
+
+        var marker = IsThinkingCollapsed
+            ? LiveStreamContentMarkers.ThinkingCollapsed
+            : LiveStreamContentMarkers.ThinkingExpanded;
+        var builder = new StringBuilder();
+        builder.AppendLine(marker);
+        builder.AppendLine(ThinkingBuilder.ToString());
+        builder.AppendLine(LiveStreamContentMarkers.ThinkingEnd);
+        builder.Append(TextBuilder);
+        return builder.ToString();
+    }
+}
+
+internal sealed class InlineLlmStreamProgress(Action<LlmStreamUpdate> onUpdate) : IProgress<LlmStreamUpdate>
+{
+    public void Report(LlmStreamUpdate value) => onUpdate(value);
+}
+
+public static class LiveStreamContentMarkers
+{
+    public const string ThinkingExpanded = "<tlah-thinking expanded>";
+    public const string ThinkingCollapsed = "<tlah-thinking collapsed>";
+    public const string ThinkingEnd = "</tlah-thinking>";
 }
 
 public sealed record AgentProgressLine(

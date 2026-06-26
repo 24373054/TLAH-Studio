@@ -18,15 +18,17 @@ public partial class SettingsDialogViewModel : ObservableObject
 
     // ── Provider list ──────────────────────────────────────────────
     public ObservableCollection<ProviderInfo> Providers { get; } = new();
+    public ObservableCollection<string> GlobalModelOptions { get; } = new();
+    public ObservableCollection<string> ChatModelOptions { get; } = new();
 
     [ObservableProperty]
     private ProviderInfo? _selectedProvider;
 
     // ── Global settings form fields ─────────────────────────────────
-    [ObservableProperty] private string _provider = "openai";
+    [ObservableProperty] private string _provider = "deepseek";
     [ObservableProperty] private string _apiKey = string.Empty;
-    [ObservableProperty] private string _baseUrl = "https://api.openai.com";
-    [ObservableProperty] private string _model = "gpt-4o";
+    [ObservableProperty] private string _baseUrl = "https://api.deepseek.com";
+    [ObservableProperty] private string _model = "deepseek-v4-pro";
     [ObservableProperty] private double _temperature = 0.7;
     [ObservableProperty] private int _maxTokens = 4096;
     [ObservableProperty] private string _systemPrompt = "You are a helpful assistant.";
@@ -45,8 +47,11 @@ public partial class SettingsDialogViewModel : ObservableObject
     [ObservableProperty] private bool _isGlobalTab = true;
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isTesting;
+    [ObservableProperty] private bool _isLoadingModels;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _testMessage;
+    [ObservableProperty] private bool _isGlobalLongContextEnabled;
+    [ObservableProperty] private bool _isChatLongContextEnabled;
 
     public bool HasCurrentChat => _appState.CurrentChatId != null;
     public string ChatIdLabel => _appState.CurrentChatId?.ToString("D") ?? "No chat selected";
@@ -80,8 +85,10 @@ public partial class SettingsDialogViewModel : ObservableObject
             MaxTokens = gs.MaxTokens;
             SystemPrompt = gs.SystemPrompt;
             UserRole = gs.UserRole;
+            IsGlobalLongContextEnabled = HasLongContextSuffix(Model);
 
             SelectedProvider = Providers.FirstOrDefault(p => p.Key == gs.Provider);
+            LoadFallbackModelOptions(GlobalModelOptions, Provider);
 
             // Load per-chat settings if a chat is selected
             if (_appState.CurrentChatId != null)
@@ -96,6 +103,8 @@ public partial class SettingsDialogViewModel : ObservableObject
                     ChatTemperature = cs.Temperature;
                     ChatMaxTokens = cs.MaxTokens;
                     ChatUserRole = cs.UserRole;
+                    IsChatLongContextEnabled = HasLongContextSuffix(ChatModel);
+                    LoadFallbackModelOptions(ChatModelOptions, ChatProvider ?? Provider);
                 }
                 else
                 {
@@ -184,6 +193,86 @@ public partial class SettingsDialogViewModel : ObservableObject
         TestMessage = "Chat API key override will be cleared when you save.";
     }
 
+    public async Task RefreshGlobalModelsAsync()
+    {
+        IsLoadingModels = true;
+        ErrorMessage = null;
+        try
+        {
+            var apiKey = await ResolveGlobalApiKeyAsync();
+            var models = await _llmService.ListModelsAsync(Provider, apiKey, BaseUrl);
+            ReplaceModels(GlobalModelOptions, models);
+            TestMessage = $"Loaded {GlobalModelOptions.Count} model option(s).";
+        }
+        catch (Exception e)
+        {
+            LoadFallbackModelOptions(GlobalModelOptions, Provider);
+            TestMessage = $"Using built-in model list: {e.Message}";
+        }
+        finally
+        {
+            IsLoadingModels = false;
+        }
+    }
+
+    public async Task RefreshChatModelsAsync()
+    {
+        IsLoadingModels = true;
+        ErrorMessage = null;
+        try
+        {
+            var effective = _appState.CurrentChatId == null
+                ? null
+                : await _settingsService.GetEffectiveSettingsAsync(_appState.CurrentChatId.Value);
+            var provider = ChatProvider ?? effective?.Provider ?? Provider;
+            var apiKey = await ResolveChatApiKeyAsync(effective?.ApiKey ?? await ResolveGlobalApiKeyAsync());
+            var baseUrl = ChatBaseUrl ?? effective?.BaseUrl ?? BaseUrl;
+            var models = await _llmService.ListModelsAsync(provider, apiKey, baseUrl);
+            ReplaceModels(ChatModelOptions, models);
+            TestMessage = $"Loaded {ChatModelOptions.Count} model option(s).";
+        }
+        catch (Exception e)
+        {
+            LoadFallbackModelOptions(ChatModelOptions, ChatProvider ?? Provider);
+            TestMessage = $"Using built-in model list: {e.Message}";
+        }
+        finally
+        {
+            IsLoadingModels = false;
+        }
+    }
+
+    public void ApplyGlobalProviderDefaults(ProviderInfo provider)
+    {
+        SelectedProvider = provider;
+        Provider = provider.Key;
+        BaseUrl = provider.DefaultBaseUrl;
+        Model = provider.DefaultModel;
+        IsGlobalLongContextEnabled = false;
+        LoadFallbackModelOptions(GlobalModelOptions, provider.Key);
+    }
+
+    public void ApplyChatProviderDefaults(ProviderInfo? provider)
+    {
+        ChatProvider = provider?.Key;
+        ChatBaseUrl = provider?.DefaultBaseUrl;
+        ChatModel = provider?.DefaultModel;
+        IsChatLongContextEnabled = false;
+        LoadFallbackModelOptions(ChatModelOptions, provider?.Key ?? Provider);
+    }
+
+    public static bool IsDeepSeekProvider(string? provider) =>
+        string.Equals(provider, "deepseek", StringComparison.OrdinalIgnoreCase);
+
+    public static string ApplyLongContextSuffix(string? model, bool enabled)
+    {
+        var trimmed = (model ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            return trimmed;
+        var withoutSuffix = RemoveLongContextSuffix(trimmed);
+        return enabled ? $"{withoutSuffix}[1m]" : withoutSuffix;
+    }
+
     [RelayCommand]
     public async Task SaveGlobalAsync()
     {
@@ -254,6 +343,25 @@ public partial class SettingsDialogViewModel : ObservableObject
             Provider = value.Key;
     }
 
+    private static bool HasLongContextSuffix(string? model) =>
+        !string.IsNullOrWhiteSpace(model) &&
+        model.Trim().EndsWith("[1m]", StringComparison.OrdinalIgnoreCase);
+
+    private static string RemoveLongContextSuffix(string model) =>
+        model.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase)
+            ? model[..^4]
+            : model;
+
+    private static void LoadFallbackModelOptions(ObservableCollection<string> target, string? provider) =>
+        ReplaceModels(target, ProviderModelCatalog.FallbackModels(provider ?? "openai"));
+
+    private static void ReplaceModels(ObservableCollection<string> target, IEnumerable<string> models)
+    {
+        target.Clear();
+        foreach (var model in models.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct(StringComparer.OrdinalIgnoreCase))
+            target.Add(model);
+    }
+
     private void ClearChatOverrides()
     {
         ChatProvider = null;
@@ -263,6 +371,8 @@ public partial class SettingsDialogViewModel : ObservableObject
         ChatTemperature = null;
         ChatMaxTokens = null;
         ChatUserRole = null;
+        IsChatLongContextEnabled = false;
+        LoadFallbackModelOptions(ChatModelOptions, Provider);
     }
 
     private async Task<string> ResolveGlobalApiKeyAsync()

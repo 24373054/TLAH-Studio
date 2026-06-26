@@ -95,6 +95,7 @@ public class AnthropicProvider : ILlmProvider
 
         // Extract assistant text from content blocks
         string assistantText = "";
+        string? reasoningText = null;
         Dictionary<string, int>? tokenUsage = null;
         string? error = null;
         var toolCalls = new List<LlmToolCall>();
@@ -116,6 +117,16 @@ public class AnthropicProvider : ILlmProvider
                             var text = textEl.GetString();
                             if (!string.IsNullOrEmpty(text))
                                 textParts.Add(text);
+                        }
+                        else if (block.TryGetProperty("type", out typeEl) &&
+                                 typeEl.GetString() == "thinking" &&
+                                 block.TryGetProperty("thinking", out var thinkingEl))
+                        {
+                            var thinking = thinkingEl.GetString();
+                            if (!string.IsNullOrWhiteSpace(thinking))
+                                reasoningText = string.IsNullOrWhiteSpace(reasoningText)
+                                    ? thinking
+                                    : reasoningText + thinking;
                         }
                         else if (block.TryGetProperty("type", out typeEl) &&
                                  typeEl.GetString() == "tool_use")
@@ -173,7 +184,8 @@ public class AnthropicProvider : ILlmProvider
             AssistantText: assistantText,
             TokenUsage: tokenUsage,
             Error: error,
-            ToolCalls: toolCalls
+            ToolCalls: toolCalls,
+            ReasoningText: reasoningText
         );
     }
 
@@ -210,8 +222,10 @@ public class AnthropicProvider : ILlmProvider
 
         var chunks = new List<string>();
         var text = new StringBuilder();
+        var thinking = new StringBuilder();
         var toolBuilders = new Dictionary<int, AnthropicToolCallBuilder>();
         Dictionary<string, int>? tokenUsage = null;
+        var textStarted = false;
 
         await using var streamBody = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(streamBody);
@@ -266,8 +280,34 @@ public class AnthropicProvider : ILlmProvider
                         var part = textPart.GetString();
                         if (!string.IsNullOrEmpty(part))
                         {
+                            if (!textStarted)
+                            {
+                                textStarted = true;
+                                stream.Report(new LlmStreamUpdate(
+                                    string.Empty,
+                                    text.ToString(),
+                                    LlmStreamEventTypes.TextStarted));
+                            }
                             text.Append(part);
-                            stream.Report(new LlmStreamUpdate(part, text.ToString()));
+                            stream.Report(new LlmStreamUpdate(
+                                part,
+                                text.ToString(),
+                                LlmStreamEventTypes.TextDelta));
+                        }
+                    }
+                    else if (delta.TryGetProperty("type", out deltaType) &&
+                             deltaType.GetString() == "thinking_delta" &&
+                             delta.TryGetProperty("thinking", out var thinkingPart) &&
+                             thinkingPart.ValueKind == JsonValueKind.String)
+                    {
+                        var part = thinkingPart.GetString();
+                        if (!string.IsNullOrEmpty(part))
+                        {
+                            thinking.Append(part);
+                            stream.Report(new LlmStreamUpdate(
+                                part,
+                                thinking.ToString(),
+                                LlmStreamEventTypes.ThinkingDelta));
                         }
                     }
                     else if (delta.TryGetProperty("type", out deltaType) &&
@@ -299,13 +339,19 @@ public class AnthropicProvider : ILlmProvider
         }
         sw.Stop();
 
-        stream.Report(new LlmStreamUpdate(string.Empty, text.ToString(), IsFinal: true));
+        stream.Report(new LlmStreamUpdate(
+            string.Empty,
+            text.ToString(),
+            LlmStreamEventTypes.TextDelta,
+            IsFinal: true));
         var rawResponse = new Dictionary<string, object>
         {
             ["stream"] = true,
             ["chunks"] = chunks,
             ["assistant_text"] = text.ToString()
         };
+        if (thinking.Length > 0)
+            rawResponse["reasoning_text"] = thinking.ToString();
         if (tokenUsage != null)
             rawResponse["usage"] = tokenUsage;
 
@@ -322,7 +368,8 @@ public class AnthropicProvider : ILlmProvider
             (int)sw.ElapsedMilliseconds,
             text.ToString(),
             tokenUsage,
-            ToolCalls: toolCalls);
+            ToolCalls: toolCalls,
+            ReasoningText: thinking.Length == 0 ? null : thinking.ToString());
     }
 
     private static object BuildMessage(MessagePayload message)

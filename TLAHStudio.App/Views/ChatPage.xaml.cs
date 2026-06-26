@@ -307,20 +307,7 @@ public sealed partial class ChatPage : UserControl
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = isUser ? AccentTextBrush() : TextMutedBrush()
         });
-        stack.Children.Add(new TextBlock
-        {
-            Text = string.IsNullOrEmpty(message.Content) && isDraft
-                ? "Waiting for the first token..."
-                : message.Content,
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = isUser
-                ? AccentTextBrush()
-                : string.IsNullOrEmpty(message.Content) && isDraft
-                    ? TextSecondaryBrush()
-                    : TextPrimaryBrush(),
-            FontSize = IsCompactDensity() ? 13 : 14,
-            LineHeight = IsCompactDensity() ? 20 : 22
-        });
+        stack.Children.Add(BuildMessageBody(message, isDraft, isUser));
 
         var actions = new StackPanel
         {
@@ -348,6 +335,110 @@ public sealed partial class ChatPage : UserControl
         border.Child = stack;
         row.Children.Add(border);
         return row;
+    }
+
+    private UIElement BuildMessageBody(Message message, bool isDraft, bool isUser)
+    {
+        if (isDraft && TryParseLiveStreamContent(message.Content, out var thinking, out var answer, out var isExpanded))
+            return BuildLiveStreamBody(thinking, answer, isExpanded);
+
+        return new TextBlock
+        {
+            Text = string.IsNullOrEmpty(message.Content) && isDraft
+                ? "Waiting for the first token..."
+                : message.Content,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = isUser
+                ? AccentTextBrush()
+                : string.IsNullOrEmpty(message.Content) && isDraft
+                    ? TextSecondaryBrush()
+                    : TextPrimaryBrush(),
+            FontSize = IsCompactDensity() ? 13 : 14,
+            LineHeight = IsCompactDensity() ? 20 : 22
+        };
+    }
+
+    private UIElement BuildLiveStreamBody(string thinking, string answer, bool isExpanded)
+    {
+        var panel = new StackPanel { Spacing = 8 };
+        var thinkingBox = new Expander
+        {
+            IsExpanded = isExpanded,
+            Header = new TextBlock
+            {
+                Text = isExpanded ? "Thinking..." : $"Thinking collapsed · {thinking.Length} chars",
+                Foreground = TextSecondaryBrush(),
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            },
+            Background = ThemeBrush(
+                Color.FromArgb(0xAA, 0xF3, 0xF7, 0xFD),
+                Color.FromArgb(0x8A, 0x0E, 0x17, 0x25)),
+            BorderBrush = MessageBorderBrush(),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8)
+        };
+        thinkingBox.Content = new ScrollViewer
+        {
+            MaxHeight = 180,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = new TextBlock
+            {
+                Text = thinking,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = TextSecondaryBrush(),
+                FontSize = IsCompactDensity() ? 12 : 13,
+                LineHeight = IsCompactDensity() ? 18 : 20
+            }
+        };
+        panel.Children.Add(thinkingBox);
+
+        if (!string.IsNullOrEmpty(answer))
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = answer,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = TextPrimaryBrush(),
+                FontSize = IsCompactDensity() ? 13 : 14,
+                LineHeight = IsCompactDensity() ? 20 : 22
+            });
+        }
+
+        return panel;
+    }
+
+    private static bool TryParseLiveStreamContent(
+        string content,
+        out string thinking,
+        out string answer,
+        out bool isExpanded)
+    {
+        thinking = string.Empty;
+        answer = string.Empty;
+        isExpanded = false;
+        if (string.IsNullOrEmpty(content))
+            return false;
+
+        if (content.StartsWith(LiveStreamContentMarkers.ThinkingExpanded, StringComparison.Ordinal))
+            isExpanded = true;
+        else if (!content.StartsWith(LiveStreamContentMarkers.ThinkingCollapsed, StringComparison.Ordinal))
+            return false;
+
+        var firstLineEnd = content.IndexOf('\n');
+        if (firstLineEnd < 0)
+            return false;
+
+        var end = content.IndexOf(
+            LiveStreamContentMarkers.ThinkingEnd,
+            firstLineEnd + 1,
+            StringComparison.Ordinal);
+        if (end < 0)
+            return false;
+
+        thinking = content[(firstLineEnd + 1)..end].Trim();
+        answer = content[(end + LiveStreamContentMarkers.ThinkingEnd.Length)..].TrimStart('\r', '\n');
+        return true;
     }
 
     private UIElement BuildAgentLiveCard()

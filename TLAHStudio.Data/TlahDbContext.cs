@@ -133,9 +133,9 @@ public class TlahDbContext : DbContext
             entity.HasData(new GlobalSettings
             {
                 Id = 1,
-                Provider = "openai",
-                BaseUrl = "https://api.openai.com",
-                Model = "gpt-4o",
+                Provider = "deepseek",
+                BaseUrl = "https://api.deepseek.com",
+                Model = "deepseek-v4-pro",
                 Temperature = 0.7,
                 MaxTokens = 4096,
                 SystemPrompt = "You are a helpful assistant.",

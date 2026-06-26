@@ -1,14 +1,14 @@
 {
-  "version": "1.7.1",
+  "version": "1.7.2",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.1.exe",
-  "sha256": "043e041fe8864d3481fa0df05c59a99423990e3223547d9dadcbd0197fcbcb2a",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.2.exe",
+  "sha256": "46749538f1f90ded2786f77097fb6d09bd69f95aa06e501f227b0d475164c3d0",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Streaming reliability release.\n\nFixes:\n- Provider calls now use SSE streaming for OpenAI-compatible and Anthropic endpoints, enabling token-by-token live assistant previews\n- Agent mode shows a live assistant draft while model text arrives instead of waiting for a full final reload\n- Long agent runs can produce a final step-budget summary instead of stopping with only a paused status\n- Agent step budget is expanded for complex tasks and resume capacity is increased\n- Tool approval dialogs now show a read-only formatted argument preview instead of an empty-looking input box\n- Added regression tests for streaming providers and step-budget finalization",
+  "releaseNotes": "Streaming UX and DeepSeek setup release.\n\nFixes:\n- Assistant replies now render through a live character-level draft instead of appearing only after completion\n- OpenAI-compatible and Anthropic streaming now surface reasoning/thinking deltas separately from final text\n- Thinking output is shown while the model is reasoning and automatically collapses when final text starts\n- DeepSeek is now available as a first-class default provider with https://api.deepseek.com and model presets\n- Settings and first-run setup can fetch provider model lists and toggle DeepSeek 1M context suffix ([1m])\n- Agent step budget is increased for longer multi-tool tasks while preserving resumable runs",
   "forceUpdate": true,
-  "minSupportedVersion": "1.7.1",
+  "minSupportedVersion": "1.7.2",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96829784
+  "installerSizeBytes": 96838248
 }

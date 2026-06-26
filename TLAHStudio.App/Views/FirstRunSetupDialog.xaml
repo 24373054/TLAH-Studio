@@ -63,13 +63,41 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Spacing="6">
                         <TextBlock Text="Model" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <TextBox
-                            x:Name="ModelBox"
-                            MinHeight="40"
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="ModelBox"
+                                MinHeight="40"
+                                Background="{ThemeResource InputBackgroundBrush}"
+                                Foreground="{ThemeResource TextPrimaryBrush}"
+                                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                CornerRadius="8" />
+                            <Button
+                                Grid.Column="1"
+                                Click="RefreshModels_Click"
+                                Padding="10,7"
+                                CornerRadius="8"
+                                ToolTipService.ToolTip="Refresh model list">
+                                <SymbolIcon Symbol="Sync" />
+                            </Button>
+                        </Grid>
+                        <ComboBox
+                            x:Name="ModelPicker"
+                            PlaceholderText="Detected models"
+                            SelectionChanged="ModelPicker_SelectionChanged"
                             Background="{ThemeResource InputBackgroundBrush}"
                             Foreground="{ThemeResource TextPrimaryBrush}"
                             BorderBrush="{ThemeResource BorderSubtleBrush}"
                             CornerRadius="8" />
+                        <CheckBox
+                            x:Name="DeepSeekLongContextCheckBox"
+                            Content="Use 1M context ([1m])"
+                            Checked="DeepSeekLongContext_Changed"
+                            Unchecked="DeepSeekLongContext_Changed"
+                            Foreground="{ThemeResource TextSecondaryBrush}" />
                     </StackPanel>
                 </Grid>
 

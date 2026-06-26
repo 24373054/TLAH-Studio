@@ -2,7 +2,7 @@
 ; Supports: manual install (GUI wizard) and silent update (/VERYSILENT /NORESTART)
 
 #define MyAppName "TLAH Studio"
-#define MyAppVersion "1.7.1"
+#define MyAppVersion "1.7.2"
 #define MyAppPublisher "KeEntropy Technology"
 #define MyAppExeName "TLAHStudio.App.exe"
 #define MyAppUpdaterName "TLAHStudio.Updater.exe"
@@ -81,8 +81,7 @@ var
   ResultCode: Integer;
 begin
   Exec('taskkill.exe', '/F /IM "' + ImageName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-end;
-
+ end;
 function HasCommandLineSwitch(SwitchName: String): Boolean;
 begin
   Result := Pos('/' + UpperCase(SwitchName), UpperCase(GetCmdTail)) > 0;

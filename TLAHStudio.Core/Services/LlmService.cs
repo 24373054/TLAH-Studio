@@ -726,7 +726,8 @@ public class LlmService : ILlmService
                 state.Messages.Add(new MessagePayload(
                     "assistant",
                     lastResponse.AssistantText,
-                    ToolCalls: [toolCall]));
+                    ToolCalls: [toolCall],
+                    ReasoningContent: lastResponse.ReasoningText));
                 run.CurrentStep = stepNumber;
                 run.UpdatedAt = DateTime.UtcNow;
                 await LogAgentEventAsync(
@@ -1589,6 +1590,63 @@ public class LlmService : ILlmService
         }
     }
 
+    public async Task<IReadOnlyList<string>> ListModelsAsync(
+        string provider,
+        string apiKey,
+        string baseUrl,
+        CancellationToken ct = default)
+    {
+        var fallback = ProviderModelCatalog.FallbackModels(provider);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return fallback;
+
+        var plainKey = ProtectedSecret.Reveal(apiKey);
+        if (string.Equals(provider, "anthropic", StringComparison.OrdinalIgnoreCase))
+            return fallback;
+
+        var root = baseUrl.TrimEnd('/');
+        var candidates = new List<string> { $"{root}/models" };
+        if (!root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            candidates.Add($"{root}/v1/models");
+
+        foreach (var endpoint in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+                if (!string.IsNullOrWhiteSpace(plainKey))
+                    request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {plainKey}");
+
+                using var response = await _httpClientFactory
+                    .CreateClient("LLM")
+                    .SendAsync(request, ct);
+                if (!response.IsSuccessStatusCode)
+                    continue;
+
+                var body = await response.Content.ReadAsStringAsync(ct);
+                using var document = JsonDocument.Parse(body);
+                if (!document.RootElement.TryGetProperty("data", out var data) ||
+                    data.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                var models = data.EnumerateArray()
+                    .Select(ReadModelId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Cast<string>()
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (models.Count > 0)
+                    return models;
+            }
+            catch when (!ct.IsCancellationRequested)
+            {
+            }
+        }
+
+        return fallback;
+    }
+
     private async Task<SendMessageResult> CallProviderForExistingHistoryAsync(
         Guid chatId,
         Message sourceMessage,
@@ -1999,6 +2057,11 @@ public class LlmService : ILlmService
         value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+
+    private static string? ReadModelId(JsonElement root) =>
+        ReadString(root, "id") ??
+        ReadString(root, "name") ??
+        (root.ValueKind == JsonValueKind.String ? root.GetString() : null);
 
     private static int? ReadInt(JsonElement root, string name) =>
         root.ValueKind == JsonValueKind.Object &&

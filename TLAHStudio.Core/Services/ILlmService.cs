@@ -75,6 +75,12 @@ public interface ILlmService
         string baseUrl,
         string model,
         CancellationToken ct = default);
+
+    Task<IReadOnlyList<string>> ListModelsAsync(
+        string provider,
+        string apiKey,
+        string baseUrl,
+        CancellationToken ct = default);
 }
 
 public record SendMessageResult(
@@ -89,7 +95,7 @@ public record SendMessageResult(
 public record ConnectionTestResult(bool Success, string Message, int? StatusCode = null, int? LatencyMs = null);
 
 public sealed record AgentRunOptions(
-    int MaxSteps = 24,
+    int MaxSteps = 48,
     int CommandTimeoutSeconds = 20,
     int MaxCommandOutputChars = 12000,
     bool AutoApproveTools = false,
