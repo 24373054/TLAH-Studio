@@ -55,11 +55,14 @@ public sealed partial class ChatPage : UserControl
         _densityService = densityService;
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
+        _vm.AgentProgressLines.CollectionChanged += OnAgentProgressChanged;
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
                 or nameof(ChatPageViewModel.ErrorMessage)
-                or nameof(ChatPageViewModel.IsLoading))
+                or nameof(ChatPageViewModel.IsLoading)
+                or nameof(ChatPageViewModel.IsAgentLiveVisible)
+                or nameof(ChatPageViewModel.AgentLiveSummary))
                 DispatcherQueue.TryEnqueue(RenderMessages);
             if (args.PropertyName is nameof(ChatPageViewModel.AgentStatusText)
                 or nameof(ChatPageViewModel.IsAgentStatusVisible)
@@ -110,6 +113,9 @@ public sealed partial class ChatPage : UserControl
     private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
         DispatcherQueue.TryEnqueue(RenderMessages);
 
+    private void OnAgentProgressChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        DispatcherQueue.TryEnqueue(RenderMessages);
+
     private void OnPointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
         if (MessagesScrollViewer.ScrollableHeight <= 0)
@@ -154,6 +160,9 @@ public sealed partial class ChatPage : UserControl
 
         foreach (var message in _vm.Messages)
             MessagesStack.Children.Add(BuildMessage(message));
+
+        if (_vm.IsAgentLiveVisible && _vm.AgentProgressLines.Count > 0)
+            MessagesStack.Children.Add(BuildAgentLiveCard());
 
         if (shouldScrollToBottom)
         {
@@ -328,6 +337,103 @@ public sealed partial class ChatPage : UserControl
         border.Child = stack;
         row.Children.Add(border);
         return row;
+    }
+
+    private UIElement BuildAgentLiveCard()
+    {
+        var border = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = IsCompactDensity()
+                ? new Thickness(12, 10, 12, 10)
+                : new Thickness(15, 13, 15, 13),
+            BorderThickness = new Thickness(1),
+            BorderBrush = AccentSubtleBrush(),
+            Background = ThemeBrush(
+                Color.FromArgb(0xEE, 0xF8, 0xFB, 0xFF),
+                Color.FromArgb(0xE8, 0x12, 0x1B, 0x2A)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MaxWidth = IsCompactDensity() ? 720 : 800
+        };
+
+        var stack = new StackPanel { Spacing = 10 };
+        var header = new Grid { ColumnSpacing = 10 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.Children.Add(new ProgressRing
+        {
+            Width = 18,
+            Height = 18,
+            IsActive = true,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = AccentBrush()
+        });
+        var headerText = new StackPanel { Spacing = 2 };
+        headerText.Children.Add(new TextBlock
+        {
+            Text = "Live agent activity",
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = TextPrimaryBrush()
+        });
+        headerText.Children.Add(new TextBlock
+        {
+            Text = _vm?.AgentLiveSummary ?? "Working...",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = TextSecondaryBrush(),
+            FontSize = IsCompactDensity() ? 12 : 13,
+            LineHeight = IsCompactDensity() ? 18 : 20
+        });
+        Grid.SetColumn(headerText, 1);
+        header.Children.Add(headerText);
+        stack.Children.Add(header);
+
+        var lines = _vm?.AgentProgressLines.TakeLast(IsCompactDensity() ? 6 : 8).ToList()
+                    ?? new List<AgentProgressLine>();
+        foreach (var line in lines)
+            stack.Children.Add(BuildAgentProgressLine(line));
+
+        border.Child = stack;
+        return border;
+    }
+
+    private UIElement BuildAgentProgressLine(AgentProgressLine line)
+    {
+        var grid = new Grid
+        {
+            ColumnSpacing = 9,
+            Margin = new Thickness(0, 1, 0, 0)
+        };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var tag = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(7, 3, 7, 3),
+            Background = ProgressTagBrush(line.Severity),
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = line.Label,
+                FontSize = 11,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = ProgressTagTextBrush(line.Severity)
+            }
+        };
+        grid.Children.Add(tag);
+
+        var text = new TextBlock
+        {
+            Text = line.Text,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = TextPrimaryBrush(),
+            FontSize = IsCompactDensity() ? 12 : 13,
+            LineHeight = IsCompactDensity() ? 18 : 20
+        };
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        return grid;
     }
 
     private Button ActionButton(Symbol symbol, string tooltip, bool onAccent, Func<Task> action)
@@ -505,11 +611,41 @@ public sealed partial class ChatPage : UserControl
 
     private SolidColorBrush AccentTextBrush() => new(Microsoft.UI.Colors.White);
 
+    private SolidColorBrush AccentSubtleBrush() => new(ThemeColor(
+        Color.FromArgb(0xFF, 0xBF, 0xD4, 0xFF),
+        Color.FromArgb(0x99, 0x6A, 0xA7, 0xFF)));
+
     private SolidColorBrush MessageBorderBrush() => new(ThemeColor(
         Color.FromArgb(0xFF, 0xD3, 0xDD, 0xE9),
         Color.FromArgb(0x66, 0x6F, 0x7D, 0x91)));
 
     private SolidColorBrush ThemeBrush(Color light, Color dark) => new(ThemeColor(light, dark));
+
+    private SolidColorBrush ProgressTagBrush(string severity) => new(severity switch
+    {
+        AgentEventSeverities.Error => ThemeColor(
+            Color.FromArgb(0xFF, 0xFE, 0xE2, 0xE2),
+            Color.FromArgb(0xFF, 0x45, 0x1D, 0x24)),
+        AgentEventSeverities.Warning => ThemeColor(
+            Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
+            Color.FromArgb(0xFF, 0x43, 0x34, 0x18)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0xDB, 0xEA, 0xFF),
+            Color.FromArgb(0xFF, 0x1A, 0x2F, 0x52))
+    });
+
+    private SolidColorBrush ProgressTagTextBrush(string severity) => new(severity switch
+    {
+        AgentEventSeverities.Error => ThemeColor(
+            Color.FromArgb(0xFF, 0xB9, 0x1C, 0x1C),
+            Color.FromArgb(0xFF, 0xFF, 0xB4, 0xB4)),
+        AgentEventSeverities.Warning => ThemeColor(
+            Color.FromArgb(0xFF, 0x92, 0x4E, 0x0E),
+            Color.FromArgb(0xFF, 0xF8, 0xD6, 0x7A)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
+            Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
+    });
 
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
 

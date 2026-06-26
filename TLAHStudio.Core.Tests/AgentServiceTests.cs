@@ -46,11 +46,15 @@ public class AgentServiceTests
         using var client = new HttpClient(handler);
         var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
         var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+        var progress = new List<AgentProgressUpdate>();
 
         var result = await service.RunAgentTaskAsync(
             chat.Id,
             "Create a note file.",
-            options: new AgentRunOptions(MaxSteps: 3, AutoApproveTools: true));
+            options: new AgentRunOptions(
+                MaxSteps: 3,
+                AutoApproveTools: true,
+                Progress: new CollectingAgentProgress(progress)));
 
         Assert.Equal("Done. The sandbox command created note.txt and returned agent-ok.", result.AssistantMessage.Content);
         Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
@@ -68,6 +72,10 @@ public class AgentServiceTests
         Assert.Contains(events, e => e.EventType == AgentEventTypes.ToolRequest);
         Assert.Contains(events, e => e.EventType == AgentEventTypes.ToolResult);
         Assert.Contains(events, e => e.EventType == AgentEventTypes.RunCompleted);
+        Assert.Contains(progress, e => e.EventType == AgentEventTypes.ToolRequest);
+        Assert.Contains(progress, e => e.EventType == AgentEventTypes.ToolResult);
+        Assert.Contains(progress, e => e.EventType == AgentEventTypes.RunCompleted);
+        Assert.All(progress, e => Assert.Equal(chat.Id, e.Run.ChatId));
     }
 
     [Fact]
@@ -215,5 +223,10 @@ public class AgentServiceTests
         Assert.Equal(ToolInvocationStatuses.AwaitingApproval, invocation.Status);
         Assert.Single(handler.Requests);
         Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.ApprovalRequested);
+    }
+
+    private sealed class CollectingAgentProgress(List<AgentProgressUpdate> events) : IProgress<AgentProgressUpdate>
+    {
+        public void Report(AgentProgressUpdate value) => events.Add(value);
     }
 }

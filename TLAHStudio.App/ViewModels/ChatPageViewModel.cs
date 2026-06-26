@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TLAHStudio.Core.Models;
@@ -17,8 +18,10 @@ public partial class ChatPageViewModel : ObservableObject
     private readonly ISettingsService _settingsService;
     private readonly IAppStateService _appState;
     private CancellationTokenSource? _sendCts;
+    private IProgress<AgentProgressUpdate>? _activeAgentProgress;
 
     public ObservableCollection<Message> Messages { get; } = new();
+    public ObservableCollection<AgentProgressLine> AgentProgressLines { get; } = new();
 
     [ObservableProperty]
     private string _inputText = string.Empty;
@@ -46,6 +49,12 @@ public partial class ChatPageViewModel : ObservableObject
 
     [ObservableProperty]
     private string _agentStatusText = string.Empty;
+
+    [ObservableProperty]
+    private bool _isAgentLiveVisible;
+
+    [ObservableProperty]
+    private string _agentLiveSummary = string.Empty;
 
     [ObservableProperty]
     private Guid? _currentAgentRunId;
@@ -80,6 +89,7 @@ public partial class ChatPageViewModel : ObservableObject
     {
         CurrentChat = null;
         Messages.Clear();
+        ClearAgentProgress();
         UpdateAgentStatus(null);
     }
 
@@ -93,6 +103,7 @@ public partial class ChatPageViewModel : ObservableObject
             var chat = await _chatService.GetChatAsync(chatId);
             CurrentChat = chat;
             Messages.Clear();
+            ClearAgentProgress();
             if (chat?.Messages != null)
             {
                 foreach (var msg in chat.Messages)
@@ -123,6 +134,7 @@ public partial class ChatPageViewModel : ObservableObject
         var role = SelectedRole == "system" ? "system" : null;
 
         InputText = string.Empty;
+        var optimisticMessage = AddOptimisticUserMessage(content, role ?? "user");
         IsSending = true;
         ErrorMessage = null;
         _sendCts?.Dispose();
@@ -130,12 +142,13 @@ public partial class ChatPageViewModel : ObservableObject
 
         try
         {
+            var agentProgress = IsAgentModeEnabled ? BeginAgentProgress(reset: true) : null;
             var result = IsAgentModeEnabled
                 ? await _llmService.RunAgentTaskAsync(
                     _appState.CurrentChatId.Value,
                     content,
                     role,
-                    new AgentRunOptions(),
+                    new AgentRunOptions(Progress: agentProgress),
                     _sendCts.Token)
                 : await _llmService.SendMessageAsync(
                     _appState.CurrentChatId.Value,
@@ -154,14 +167,17 @@ public partial class ChatPageViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
+            RemoveOptimisticMessage(optimisticMessage);
             ErrorMessage = "Request stopped.";
         }
         catch (Exception e)
         {
+            RemoveOptimisticMessage(optimisticMessage);
             ErrorMessage = e.Message;
         }
         finally
         {
+            IsAgentLiveVisible = false;
             IsSending = false;
         }
     }
@@ -189,10 +205,11 @@ public partial class ChatPageViewModel : ObservableObject
         _sendCts = new CancellationTokenSource();
         try
         {
+            var agentProgress = BeginAgentProgress(reset: true);
             AgentStatusText = "Resuming saved agent run...";
             var result = await _llmService.ResumeAgentTaskAsync(
                 CurrentAgentRunId.Value,
-                new AgentRunOptions(),
+                new AgentRunOptions(Progress: agentProgress),
                 _sendCts.Token);
             result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
             await ReloadCurrentChatAsync();
@@ -208,6 +225,7 @@ public partial class ChatPageViewModel : ObservableObject
         }
         finally
         {
+            IsAgentLiveVisible = false;
             IsSending = false;
         }
     }
@@ -375,11 +393,148 @@ public partial class ChatPageViewModel : ObservableObject
                 : "Tool approved. Continuing the agent run...";
             result = await _llmService.ResumeAgentTaskAsync(
                 request.AgentRunId,
-                new AgentRunOptions(),
+                new AgentRunOptions(Progress: _activeAgentProgress),
                 ct);
             UpdateAgentStatus(result.AgentRun);
         }
         return result;
+    }
+
+    private Message? AddOptimisticUserMessage(string content, string role)
+    {
+        if (_appState.CurrentChatId == null)
+            return null;
+
+        var sequence = Messages.Count == 0
+            ? 0
+            : Messages.Max(m => m.SequenceNum) + 1;
+        var message = new Message
+        {
+            ChatId = _appState.CurrentChatId.Value,
+            Role = role,
+            Content = content,
+            SequenceNum = sequence,
+            CreatedAt = DateTime.UtcNow
+        };
+        Messages.Add(message);
+        return message;
+    }
+
+    private void RemoveOptimisticMessage(Message? message)
+    {
+        if (message != null && message.TurnId == null)
+            Messages.Remove(message);
+    }
+
+    private IProgress<AgentProgressUpdate> BeginAgentProgress(bool reset)
+    {
+        if (reset)
+            AgentProgressLines.Clear();
+
+        AgentLiveSummary = "Preparing the agent run...";
+        IsAgentLiveVisible = true;
+        _activeAgentProgress = new Progress<AgentProgressUpdate>(OnAgentProgress);
+        return _activeAgentProgress;
+    }
+
+    private void ClearAgentProgress()
+    {
+        AgentProgressLines.Clear();
+        AgentLiveSummary = string.Empty;
+        IsAgentLiveVisible = false;
+        _activeAgentProgress = null;
+    }
+
+    private void OnAgentProgress(AgentProgressUpdate update)
+    {
+        UpdateAgentStatus(update.Run);
+        var line = FormatAgentProgress(update);
+        if (line == null)
+            return;
+
+        if (AgentProgressLines.LastOrDefault() is { } last &&
+            last.SequenceNumber == line.SequenceNumber)
+        {
+            return;
+        }
+
+        AgentProgressLines.Add(line);
+        while (AgentProgressLines.Count > 18)
+            AgentProgressLines.RemoveAt(0);
+
+        AgentLiveSummary = line.Text;
+        IsAgentLiveVisible = true;
+    }
+
+    private static AgentProgressLine? FormatAgentProgress(AgentProgressUpdate update)
+    {
+        var label = update.EventType switch
+        {
+            AgentEventTypes.RunStarted => "Start",
+            AgentEventTypes.Resume => "Resume",
+            AgentEventTypes.ModelRequest => "Plan",
+            AgentEventTypes.ModelResponse => "Model",
+            AgentEventTypes.ToolRequest => "Tool",
+            AgentEventTypes.ApprovalRequested => "Approval",
+            AgentEventTypes.ApprovalGranted => "Approved",
+            AgentEventTypes.ApprovalDenied => "Denied",
+            AgentEventTypes.ToolStarted => "Run",
+            AgentEventTypes.ToolResult => "Result",
+            AgentEventTypes.ProtocolRepair => "Repair",
+            AgentEventTypes.RunCompleted => "Done",
+            AgentEventTypes.RunPaused => "Paused",
+            AgentEventTypes.RunCancelled => "Stopped",
+            AgentEventTypes.Error => "Error",
+            _ => "Event"
+        };
+
+        var text = update.EventType switch
+        {
+            AgentEventTypes.ModelRequest => $"Planning step {Math.Max(update.Run.CurrentStep + 1, 1)}...",
+            AgentEventTypes.ModelResponse => TryReadToolCount(update.DataJson) > 0
+                ? "Model selected a tool call."
+                : "Model returned a response.",
+            AgentEventTypes.ToolRequest => CleanSummary(update.Summary),
+            AgentEventTypes.ToolStarted => CleanSummary(update.Summary),
+            AgentEventTypes.ToolResult => CleanSummary(update.Summary),
+            AgentEventTypes.ApprovalRequested => CleanSummary(update.Summary),
+            AgentEventTypes.RunCompleted => "Agent completed the task.",
+            AgentEventTypes.RunPaused => "Agent paused at the step limit.",
+            AgentEventTypes.RunCancelled => "Agent run stopped.",
+            AgentEventTypes.Error => CleanSummary(update.Summary),
+            AgentEventTypes.ProtocolRepair => "Adjusted provider message format before continuing.",
+            _ => CleanSummary(update.Summary)
+        };
+
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        return new AgentProgressLine(
+            update.SequenceNumber,
+            label,
+            text,
+            update.Severity,
+            update.CreatedAt);
+    }
+
+    private static string CleanSummary(string summary) =>
+        summary.Replace("Agent run", "Agent", StringComparison.OrdinalIgnoreCase)
+            .Trim();
+
+    private static int TryReadToolCount(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("toolCallCount", out var count) &&
+                   count.ValueKind == JsonValueKind.Number
+                ? count.GetInt32()
+                : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private void UpdateAgentStatus(AgentRunSnapshot? run)
@@ -417,6 +572,13 @@ public partial class ChatPageViewModel : ObservableObject
     protected virtual void OnTurnCreated(Guid turnId) =>
         TurnCreated?.Invoke(this, turnId);
 }
+
+public sealed record AgentProgressLine(
+    int SequenceNumber,
+    string Label,
+    string Text,
+    string Severity,
+    DateTime CreatedAt);
 
 public enum AgentApprovalChoice
 {

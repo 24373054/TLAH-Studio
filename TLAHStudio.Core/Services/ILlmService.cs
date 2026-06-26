@@ -90,7 +90,20 @@ public sealed record AgentRunOptions(
     int MaxSteps = 6,
     int CommandTimeoutSeconds = 20,
     int MaxCommandOutputChars = 12000,
-    bool AutoApproveTools = false);
+    bool AutoApproveTools = false,
+    IProgress<AgentProgressUpdate>? Progress = null);
+
+public sealed record AgentProgressUpdate(
+    Guid AgentRunId,
+    int SequenceNumber,
+    string EventType,
+    string Severity,
+    string Summary,
+    DateTime CreatedAt,
+    AgentRunSnapshot Run,
+    Guid? AgentStepId = null,
+    Guid? ToolInvocationId = null,
+    string DataJson = "{}");
 
 public sealed record AgentRunSnapshot(
     Guid Id,

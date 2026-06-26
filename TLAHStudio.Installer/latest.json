@@ -1,14 +1,14 @@
 {
-  "version": "1.6.0",
+  "version": "1.7.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.6.0.exe",
-  "sha256": "48ccd02b63829b7f98415c411e49f6e85801d8468ca25e2fc8c65f37510cc9d1",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.0.exe",
+  "sha256": "cbb5a3bde88ed1f7ac3c88ec9f4af9f8123f4f4ca643eaf24b13c605c5e3be47",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Agent Event Log v2 and tool safety kernel release.\n\nHighlights:\n- Added AgentEvent event log for model calls, protocol repairs, tool requests, approvals, tool results, errors, resume, pause, and completion\n- Added ToolProtocolGuard to repair or reject invalid provider-bound tool message structures before model calls\n- Added semantic tool safety assessment for terminal, PowerShell, Git, file, HTTP, browser, search, and MCP tools\n- File writes now include a bounded diff preview and path-boundary validation\n- High-risk tool actions require explicit approval unless allowed by chat/project/global policy\n- Added regression tests for event logging, protocol repair, safety classification, and high-risk approval behavior",
+  "releaseNotes": "Real-time agent activity streaming and live UI preview release.\n\nHighlights:\n- Added in-process AgentProgressUpdate stream backed by AgentEvent v2\n- Agent runs now surface model planning, protocol repair, tool requests, approvals, tool execution, tool results, errors, pause, resume, and completion while the run is still active\n- Chat UI now shows a live agent activity card with recent steps and a smooth running summary instead of waiting for final reload\n- User messages appear immediately while a request is running\n- Added regression coverage proving agent progress events are emitted during execution",
   "forceUpdate": true,
-  "minSupportedVersion": "1.6.0",
+  "minSupportedVersion": "1.7.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96819800
+  "installerSizeBytes": 96827280
 }

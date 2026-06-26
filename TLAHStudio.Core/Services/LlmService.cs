@@ -18,6 +18,8 @@ namespace TLAHStudio.Core.Services;
 /// </summary>
 public class LlmService : ILlmService
 {
+    private static readonly AsyncLocal<IProgress<AgentProgressUpdate>?> AgentProgressSink = new();
+
     private readonly DbContext _db;
     private readonly IChatService _chatService;
     private readonly ISettingsService _settingsService;
@@ -219,6 +221,7 @@ public class LlmService : ILlmService
         CancellationToken ct = default)
     {
         options ??= new AgentRunOptions();
+        using var progressScope = UseAgentProgress(options.Progress);
         var maxSteps = Math.Clamp(options.MaxSteps, 1, 12);
         var chat = await _db.Set<Chat>()
             .FirstOrDefaultAsync(c => c.Id == chatId, ct)
@@ -283,6 +286,7 @@ public class LlmService : ILlmService
         CancellationToken ct = default)
     {
         options ??= new AgentRunOptions();
+        using var progressScope = UseAgentProgress(options.Progress);
         var run = await _db.Set<AgentRun>()
             .FirstOrDefaultAsync(r => r.Id == agentRunId, ct)
             ?? throw new InvalidOperationException($"Agent run not found: {agentRunId}");
@@ -1576,7 +1580,7 @@ public class LlmService : ILlmService
         var dataJson = data == null
             ? "{}"
             : SecretRedactor.RedactJson(JsonSerializer.Serialize(data));
-        _db.Set<AgentEvent>().Add(new AgentEvent
+        var agentEvent = new AgentEvent
         {
             AgentRunId = run.Id,
             AgentStepId = stepId,
@@ -1587,8 +1591,50 @@ public class LlmService : ILlmService
             Summary = SecretRedactor.RedactText(summary),
             DataJson = dataJson,
             CreatedAt = DateTime.UtcNow
-        });
+        };
+        _db.Set<AgentEvent>().Add(agentEvent);
         await _db.SaveChangesAsync(ct);
+
+        if (AgentProgressSink.Value is { } progress)
+        {
+            var snapshot = await ToAgentRunSnapshotAsync(run, ct);
+            progress.Report(new AgentProgressUpdate(
+                run.Id,
+                agentEvent.SequenceNumber,
+                agentEvent.EventType,
+                agentEvent.Severity,
+                agentEvent.Summary,
+                agentEvent.CreatedAt,
+                snapshot,
+                agentEvent.AgentStepId,
+                agentEvent.ToolInvocationId,
+                agentEvent.DataJson));
+        }
+    }
+
+    private static IDisposable UseAgentProgress(IProgress<AgentProgressUpdate>? progress)
+    {
+        var previous = AgentProgressSink.Value;
+        if (progress != null)
+            AgentProgressSink.Value = progress;
+        return new AgentProgressScope(previous);
+    }
+
+    private sealed class AgentProgressScope : IDisposable
+    {
+        private readonly IProgress<AgentProgressUpdate>? _previous;
+        private bool _disposed;
+
+        public AgentProgressScope(IProgress<AgentProgressUpdate>? previous) =>
+            _previous = previous;
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            AgentProgressSink.Value = _previous;
+            _disposed = true;
+        }
     }
 
     private static MessagePayload ToProviderMessage(Message message)
