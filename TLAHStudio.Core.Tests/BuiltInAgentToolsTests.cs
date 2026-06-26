@@ -20,6 +20,7 @@ public class BuiltInAgentToolsTests
         var write = new FileWriteAgentTool(sandbox, platform);
         var read = new FileReadAgentTool(sandbox, platform);
         var search = new FileSearchAgentTool(sandbox, platform);
+        var send = new FileSendAgentTool(sandbox);
 
         var writeResult = await write.ExecuteAsync(
             context,
@@ -39,11 +40,25 @@ public class BuiltInAgentToolsTests
         Assert.True(searchResult.Success);
         Assert.Contains("test.txt:2", searchResult.Output);
 
+        var sendResult = await send.ExecuteAsync(
+            context,
+            """{"path":"notes/test.txt","caption":"Download this."}""");
+        Assert.True(sendResult.Success);
+        var artifact = Assert.Single(sendResult.Artifacts!);
+        Assert.Equal("notes" + Path.DirectorySeparatorChar + "test.txt", artifact.RelativePath);
+        Assert.Equal("text/plain", artifact.ContentType);
+
         var traversal = await read.ExecuteAsync(
             context,
             """{"path":"../outside.txt"}""");
         Assert.False(traversal.Success);
         Assert.Contains("escapes", traversal.Error, StringComparison.OrdinalIgnoreCase);
+
+        var sendTraversal = await send.ExecuteAsync(
+            context,
+            """{"path":"../outside.txt"}""");
+        Assert.False(sendTraversal.Success);
+        Assert.Contains("escapes", sendTraversal.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

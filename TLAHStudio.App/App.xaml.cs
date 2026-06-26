@@ -80,6 +80,7 @@ public partial class App : Application
             services.AddScoped<IAgentTool, FileListAgentTool>();
             services.AddScoped<IAgentTool, FileReadAgentTool>();
             services.AddScoped<IAgentTool, FileWriteAgentTool>();
+            services.AddScoped<IAgentTool, FileSendAgentTool>();
             services.AddScoped<IAgentTool, FileSearchAgentTool>();
             services.AddScoped<IAgentTool, GitAgentTool>();
             services.AddScoped<IAgentTool, HttpRequestAgentTool>();

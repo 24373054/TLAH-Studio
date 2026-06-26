@@ -60,6 +60,7 @@ public class LlmService : ILlmService
                 new FileListAgentTool(_sandboxCommandService),
                 new FileReadAgentTool(_sandboxCommandService, _toolPlatform),
                 new FileWriteAgentTool(_sandboxCommandService, _toolPlatform),
+                new FileSendAgentTool(_sandboxCommandService),
                 new FileSearchAgentTool(_sandboxCommandService, _toolPlatform),
                 new GitAgentTool(_sandboxCommandService),
                 new HttpRequestAgentTool(_toolPlatform, network, httpClientFactory),
@@ -1848,7 +1849,8 @@ public class LlmService : ILlmService
     private static MessagePayload ToProviderMessage(Message message)
     {
         var role = NormalizeProviderRole(message.Role);
-        var messageContent = AssistantContentFormatter.StripThinking(message.Content);
+        var messageContent = MessageAttachmentFormatter.StripAttachments(
+            AssistantContentFormatter.StripThinking(message.Content));
         var content = string.Equals(role, message.Role, StringComparison.OrdinalIgnoreCase)
             ? messageContent
             : $"[{message.Role}]\n{messageContent}";
@@ -1875,7 +1877,8 @@ public class LlmService : ILlmService
         builder.AppendLine("You may complete multi-step tasks with typed file, Git, HTTP, search, browser, terminal, and MCP tools.");
         builder.AppendLine($"Sandbox working directory: {sandboxRoot}");
         builder.AppendLine("Work only inside the sandbox directory. Never read host user files or attempt destructive, privileged, registry, service, shutdown, or system-configuration operations.");
-        builder.AppendLine($"Prefer {AgentToolNames.FileList}, {AgentToolNames.FileRead}, {AgentToolNames.FileWrite}, and {AgentToolNames.FileSearch} over terminal commands for file work.");
+        builder.AppendLine($"Prefer {AgentToolNames.FileList}, {AgentToolNames.FileRead}, {AgentToolNames.FileWrite}, {AgentToolNames.FileSend}, and {AgentToolNames.FileSearch} over terminal commands for file work.");
+        builder.AppendLine($"When you create a file the user should see, preview, download, or use outside the sandbox, call {AgentToolNames.FileSend} with the relative sandbox path before giving the final answer.");
         builder.AppendLine($"Use {AgentToolNames.TerminalExec} only when a typed tool cannot complete the task. Use {AgentToolNames.McpListTools} before {AgentToolNames.McpCall}.");
         builder.AppendLine("Network requests are limited to configured public-domain allowlists. Credentials can only be referenced by broker entry name and must never be requested, printed, or stored.");
         builder.AppendLine("Request one tool call at a time and provide a short reason argument.");
@@ -1994,7 +1997,18 @@ public class LlmService : ILlmService
             foreach (var artifact in result.Artifacts)
                 sb.AppendLine($"- {artifact.RelativePath} ({artifact.SizeBytes} bytes)");
         }
-        return sb.ToString();
+        var text = sb.ToString();
+        if (string.Equals(toolName, AgentToolNames.FileSend, StringComparison.OrdinalIgnoreCase) &&
+            result.Artifacts is { Count: > 0 })
+        {
+            text = MessageAttachmentFormatter.Compose(
+                text,
+                result.Artifacts
+                    .Select(a => new MessageAttachment(a.RelativePath, a.ContentType, a.SizeBytes, a.Sha256))
+                    .ToArray());
+        }
+
+        return text;
     }
 
     private static void EnsureProviderReady(string apiKey, string baseUrl, string model)
@@ -2109,7 +2123,8 @@ public class LlmService : ILlmService
     private static MessagePayload ToProviderMessage(string role, string content)
     {
         var normalized = NormalizeProviderRole(role);
-        var messageContent = AssistantContentFormatter.StripThinking(content);
+        var messageContent = MessageAttachmentFormatter.StripAttachments(
+            AssistantContentFormatter.StripThinking(content));
         var safeContent = string.Equals(normalized, role, StringComparison.OrdinalIgnoreCase)
             ? messageContent
             : $"[{role}]\n{messageContent}";

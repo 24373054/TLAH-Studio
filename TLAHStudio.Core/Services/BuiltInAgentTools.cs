@@ -93,16 +93,29 @@ internal static class AgentToolSupport
             hash);
     }
 
-    private static string ContentType(string path) =>
+    public static string ContentType(string path) =>
         Path.GetExtension(path).ToLowerInvariant() switch
         {
-            ".txt" or ".md" or ".log" or ".ps1" or ".cs" or ".js" or ".ts" => "text/plain",
+            ".txt" or ".md" or ".log" or ".ps1" or ".cs" or ".js" or ".ts" or ".py" or ".xml" or ".xaml" => "text/plain",
             ".json" => "application/json",
             ".csv" => "text/csv",
             ".html" or ".htm" => "text/html",
             ".png" => "image/png",
             ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".svg" => "image/svg+xml",
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mov" => "video/quicktime",
+            ".avi" => "video/x-msvideo",
+            ".mp3" => "audio/mpeg",
+            ".wav" => "audio/wav",
             ".pdf" => "application/pdf",
+            ".zip" => "application/zip",
+            ".7z" => "application/x-7z-compressed",
+            ".rar" => "application/vnd.rar",
             _ => "application/octet-stream"
         };
 }
@@ -341,6 +354,67 @@ public sealed class FileWriteAgentTool : IAgentTool
                 true,
                 $"Wrote {bytes} bytes to {artifact.RelativePath}.",
                 Artifacts: [artifact]);
+        }
+        catch (Exception ex)
+        {
+            return new AgentToolResult(false, string.Empty, ex.Message);
+        }
+    }
+}
+
+public sealed class FileSendAgentTool : IAgentTool
+{
+    private const long MaxSendBytes = 100L * 1024L * 1024L;
+    private readonly ISandboxCommandService _sandbox;
+
+    public FileSendAgentTool(ISandboxCommandService sandbox)
+    {
+        _sandbox = sandbox;
+    }
+
+    public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
+        AgentToolNames.FileSend,
+        "Send an existing sandbox file to the user as a visible chat attachment. Use this after creating an image, video, archive, text file, report, or any other file the user should be able to preview or download.",
+        new Dictionary<string, object>
+        {
+            ["path"] = AgentToolSupport.StringProperty("Relative file path inside the current chat sandbox."),
+            ["caption"] = AgentToolSupport.StringProperty("Optional short caption shown near the attachment.")
+        },
+        ["path"]);
+
+    public bool RequiresApproval => true;
+
+    public async Task<AgentToolResult> ExecuteAsync(
+        AgentToolExecutionContext context,
+        string argumentsJson,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+                return new AgentToolResult(false, string.Empty, error);
+
+            var path = AgentToolSupport.ResolveSandboxPath(
+                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+            if (!File.Exists(path))
+                return new AgentToolResult(false, string.Empty, "File not found.");
+
+            var info = new FileInfo(path);
+            if (info.Length <= 0)
+                return new AgentToolResult(false, string.Empty, "The selected file is empty.");
+            if (info.Length > MaxSendBytes)
+                return new AgentToolResult(false, string.Empty, $"File exceeds the {MaxSendBytes}-byte send limit.");
+
+            var artifact = await AgentToolSupport.ArtifactAsync(
+                _sandbox.GetSandboxRoot(context.ChatId),
+                path,
+                ct);
+            var caption = AgentToolSupport.GetString(root, "caption").Trim();
+            var output = string.IsNullOrWhiteSpace(caption)
+                ? $"Sent {artifact.RelativePath} ({artifact.SizeBytes} bytes)."
+                : $"Sent {artifact.RelativePath} ({artifact.SizeBytes} bytes).\nCaption: {caption}";
+
+            return new AgentToolResult(true, output, Artifacts: [artifact]);
         }
         catch (Exception ex)
         {

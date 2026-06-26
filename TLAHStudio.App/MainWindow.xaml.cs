@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using System.Text.Json;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.App.Views;
+using TLAHStudio.Core.Services;
 using Windows.Storage.Streams;
 using Windows.System;
 
@@ -32,6 +33,7 @@ public sealed partial class MainWindow : Window
     public IBackgroundService BackgroundService { get; }
     public IUiDensityService UiDensityService { get; }
     public IAppReleaseService AppReleaseService { get; }
+    public ISandboxCommandService SandboxCommandService { get; }
 
     public async Task<ContentDialogResult?> TryShowDialogAsync(ContentDialog dialog, bool waitForTurn = false)
     {
@@ -64,17 +66,17 @@ public sealed partial class MainWindow : Window
         MainViewModel mvm, SidebarViewModel svm, ChatPageViewModel cvm,
         DebugPanelViewModel dvm, SettingsDialogViewModel sv, BackgroundSettingsDialogViewModel bv,
         AgentFileDialogViewModel av, PrivacyDataViewModel pv, TeamWorkspaceViewModel twv, ToolPlatformViewModel tpv, UpdateNotificationViewModel uv, IThemeService ts,
-        IBackgroundService bg, IUiDensityService density, IAppReleaseService release)
+        IBackgroundService bg, IUiDensityService density, IAppReleaseService release, ISandboxCommandService sandbox)
     {
         ViewModel = mvm; SidebarVM = svm; ChatVM = cvm; DebugVM = dvm;
         SettingsVM = sv; BgSettingsVM = bv; AgentFileVM = av; PrivacyDataVM = pv; TeamWorkspaceVM = twv; ToolPlatformVM = tpv;
         UpdateNotificationVM = uv; ThemeService = ts; BackgroundService = bg;
-        UiDensityService = density; AppReleaseService = release;
+        UiDensityService = density; AppReleaseService = release; SandboxCommandService = sandbox;
 
         this.InitializeComponent();
 
         DebugPanelView.Bind(DebugVM);
-        ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService);
+        ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService, SandboxCommandService);
         ChatVM.AgentApprovalRequested += OnAgentApprovalRequested;
         DebugVM.TurnReplayed += async (_, turnId) =>
         {

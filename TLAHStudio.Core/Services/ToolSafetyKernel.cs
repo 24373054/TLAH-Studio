@@ -103,6 +103,7 @@ public static partial class ToolSafetyKernel
             AgentToolNames.FileRead => AssessPathRead(sandbox, chatId, root, "file read"),
             AgentToolNames.FileSearch => AssessPathRead(sandbox, chatId, root, "file search"),
             AgentToolNames.FileWrite => AssessFileWrite(sandbox, chatId, root),
+            AgentToolNames.FileSend => AssessFileSend(sandbox, chatId, root),
             AgentToolNames.Git => AssessGit(root),
             AgentToolNames.HttpRequest => AssessHttp(root),
             AgentToolNames.WebSearch => ToolSafetyAssessment.Medium("network", true, false, "Read-only public web search through the configured allowlist."),
@@ -250,6 +251,33 @@ public static partial class ToolSafetyKernel
             isWrite: true,
             $"File write is constrained to {resolved.RelativePath}.",
             preview);
+    }
+
+    private static ToolSafetyAssessment AssessFileSend(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root)
+    {
+        var rawPath = ReadString(root, "path");
+        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        if (resolved.Error != null)
+            return ToolSafetyAssessment.Blocked("path", "File send path escapes the chat sandbox.", resolved.Error);
+
+        var exists = File.Exists(resolved.FullPath);
+        var sizeBytes = exists ? new FileInfo(resolved.FullPath!).Length : 0;
+        var caption = ReadString(root, "caption");
+        return ToolSafetyAssessment.LowRead(
+            "file_send",
+            exists
+                ? $"Send sandbox file {resolved.RelativePath} to the chat."
+                : $"Requested file {resolved.RelativePath} does not exist yet.",
+            new
+            {
+                path = resolved.RelativePath,
+                exists,
+                sizeBytes,
+                caption
+            });
     }
 
     private static ToolSafetyAssessment AssessGit(JsonElement root)

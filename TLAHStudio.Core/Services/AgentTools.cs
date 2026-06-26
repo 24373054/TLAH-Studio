@@ -14,6 +14,7 @@ public static class AgentToolNames
     public const string FileList = "file_list";
     public const string FileRead = "file_read";
     public const string FileWrite = "file_write";
+    public const string FileSend = "file_send";
     public const string FileSearch = "file_search";
     public const string Git = "git";
     public const string HttpRequest = "http_request";

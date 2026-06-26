@@ -1,14 +1,14 @@
 {
-  "version": "1.7.3",
+  "version": "1.7.4",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.3.exe",
-  "sha256": "965b481be6f9e5301762d5b745135dfb9a7c3b7bd913b901924812fba7164eb9",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.4.exe",
+  "sha256": "ef8c9c2fb85f6f9f1abe4cf3c1ee70c4c59be06f797d68e4f667697f3952f757",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Streaming transcript reliability update.\n\nFixes:\n- Normal and agent responses wait for live text drain before reloading saved messages, so replies type out instead of appearing all at once\n- Model thinking is saved as collapsible chat content, stays in the transcript, and is stripped before provider calls\n- DeepSeek long-context selection keeps valid deepseek-v4-pro[1m] and deepseek-v4-flash[1m] model names",
+  "releaseNotes": "Agent file attachment delivery update.\n\nFixes:\n- Added file_send agent tool for sending sandbox files into the chat as visible attachments\n- Chat bubbles now render sent images and videos with previews, and generic files with open/save actions\n- ZIP, TXT, JSON, PDF, images, videos, audio, and common archives get content-type aware cards\n- Hidden attachment metadata is stripped before provider calls and copy/edit actions",
   "forceUpdate": true,
-  "minSupportedVersion": "1.7.3",
+  "minSupportedVersion": "1.7.4",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96838400
+  "installerSizeBytes": 96841608
 }
