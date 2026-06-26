@@ -148,7 +148,9 @@ public class LlmProviderTests
         Assert.Equal(["你", "好"], stream.Deltas);
         Assert.Contains(stream.Updates, u => u.IsFinal);
         Assert.Equal(3, result.TokenUsage!["total_tokens"]);
-        var body = await Assert.Single(handler.Requests).Content!.ReadAsStringAsync();
+        var request = Assert.Single(handler.Requests);
+        Assert.Contains(request.Headers.Accept, h => h.MediaType == "text/event-stream");
+        var body = await request.Content!.ReadAsStringAsync();
         Assert.Contains("\"stream\":true", body);
     }
 
@@ -248,7 +250,9 @@ public class LlmProviderTests
         Assert.Equal(["第", "一"], stream.Deltas);
         Assert.Contains(stream.Updates, u => u.IsFinal);
         Assert.Equal(2, result.TokenUsage!["output_tokens"]);
-        var body = await Assert.Single(handler.Requests).Content!.ReadAsStringAsync();
+        var request = Assert.Single(handler.Requests);
+        Assert.Contains(request.Headers.Accept, h => h.MediaType == "text/event-stream");
+        var body = await request.Content!.ReadAsStringAsync();
         Assert.Contains("\"stream\":true", body);
     }
 

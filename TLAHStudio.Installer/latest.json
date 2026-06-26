@@ -1,14 +1,14 @@
 {
-  "version": "1.7.4",
+  "version": "1.7.5",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.4.exe",
-  "sha256": "ef8c9c2fb85f6f9f1abe4cf3c1ee70c4c59be06f797d68e4f667697f3952f757",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.5.exe",
+  "sha256": "ad2b8f840208501c865fb749602e7406ab64bf459da843b7a51860fea52a9020",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Agent file attachment delivery update.\n\nFixes:\n- Added file_send agent tool for sending sandbox files into the chat as visible attachments\n- Chat bubbles now render sent images and videos with previews, and generic files with open/save actions\n- ZIP, TXT, JSON, PDF, images, videos, audio, and common archives get content-type aware cards\n- Hidden attachment metadata is stripped before provider calls and copy/edit actions",
+  "releaseNotes": "Streaming latency reliability update.\n\nFixes:\n- Real SSE reads now avoid capturing the WinUI thread, so streaming chunks can update the chat while the provider is still generating\n- Streaming requests now explicitly send Accept: text/event-stream for OpenAI-compatible, DeepSeek, and Anthropic-compatible endpoints\n- Added tests to guard streaming request headers",
   "forceUpdate": true,
-  "minSupportedVersion": "1.7.4",
+  "minSupportedVersion": "1.7.5",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96841608
+  "installerSizeBytes": 96841712
 }

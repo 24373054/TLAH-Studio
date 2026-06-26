@@ -201,14 +201,17 @@ public class OpenAICompatibleProvider : ILlmProvider
             Content = JsonContent.Create(rawRequest)
         };
         request.Headers.Add("Authorization", $"Bearer {_apiKey}");
+        request.Headers.Accept.ParseAdd("text/event-stream");
 
         var sw = Stopwatch.StartNew();
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await _http
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
         var latencyMs = (int)sw.ElapsedMilliseconds;
         if (!response.IsSuccessStatusCode)
         {
             sw.Stop();
-            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            var errorBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var error = ExtractErrorMessage(errorBody, response.ReasonPhrase ?? "Unknown error");
             var rawError = TryParseJsonObject(errorBody) ??
                            new Dictionary<string, object> { ["_body"] = errorBody };
@@ -228,12 +231,12 @@ public class OpenAICompatibleProvider : ILlmProvider
         Dictionary<string, int>? tokenUsage = null;
         var textStarted = false;
 
-        await using var streamBody = await response.Content.ReadAsStreamAsync(ct);
+        await using var streamBody = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         using var reader = new StreamReader(streamBody);
         while (!reader.EndOfStream)
         {
             ct.ThrowIfCancellationRequested();
-            var line = await reader.ReadLineAsync(ct);
+            var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                 continue;
 
