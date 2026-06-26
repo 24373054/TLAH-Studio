@@ -56,6 +56,7 @@ public sealed partial class ChatPage : UserControl
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.AgentProgressLines.CollectionChanged += OnAgentProgressChanged;
+        _vm.StreamingMessageUpdated += (_, _) => DispatcherQueue.TryEnqueue(RenderMessages);
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
@@ -279,6 +280,7 @@ public sealed partial class ChatPage : UserControl
         var isSystem = string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase);
         var isAssistant = string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase);
         var isTool = string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase);
+        var isDraft = isAssistant && message.TurnId == null && _vm?.IsSending == true;
 
         var row = new Grid
         {
@@ -300,16 +302,22 @@ public sealed partial class ChatPage : UserControl
         var stack = new StackPanel { Spacing = 7 };
         stack.Children.Add(new TextBlock
         {
-            Text = isSystem ? "system" : isUser ? "you" : isTool ? "sandbox" : "assistant",
+            Text = isDraft ? "assistant · live preview" : isSystem ? "system" : isUser ? "you" : isTool ? "sandbox" : "assistant",
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = isUser ? AccentTextBrush() : TextMutedBrush()
         });
         stack.Children.Add(new TextBlock
         {
-            Text = message.Content,
+            Text = string.IsNullOrEmpty(message.Content) && isDraft
+                ? "Waiting for the first token..."
+                : message.Content,
             TextWrapping = TextWrapping.Wrap,
-            Foreground = isUser ? AccentTextBrush() : TextPrimaryBrush(),
+            Foreground = isUser
+                ? AccentTextBrush()
+                : string.IsNullOrEmpty(message.Content) && isDraft
+                    ? TextSecondaryBrush()
+                    : TextPrimaryBrush(),
             FontSize = IsCompactDensity() ? 13 : 14,
             LineHeight = IsCompactDensity() ? 20 : 22
         });
@@ -319,20 +327,23 @@ public sealed partial class ChatPage : UserControl
             Orientation = Orientation.Horizontal,
             Spacing = 6
         };
-        actions.Children.Add(ActionButton(Symbol.Copy, "Copy", isUser, () =>
+        if (!isDraft)
         {
-            CopyMessage(message);
-            return Task.CompletedTask;
-        }));
-        if (isAssistant)
-            actions.Children.Add(ActionButton(Symbol.Refresh, IsApiError(message) ? "Retry" : "Regenerate", isUser, () => _vm?.RegenerateMessageAsync(message) ?? Task.CompletedTask));
-        else if (!isTool)
-            actions.Children.Add(ActionButton(Symbol.Edit, "Edit and resend", isUser, () => EditAndResendAsync(message)));
-        if (!isTool)
-            actions.Children.Add(ActionButton(Symbol.Forward, "Continue from here", isUser, () => _vm?.ContinueFromMessageAsync(message) ?? Task.CompletedTask));
-        if (message.TurnId is { } turnId && _debugVm != null)
-            actions.Children.Add(ActionButton(Symbol.Find, "Inspect prompt", isUser, () => OpenInspectorAsync(turnId)));
-        stack.Children.Add(actions);
+            actions.Children.Add(ActionButton(Symbol.Copy, "Copy", isUser, () =>
+            {
+                CopyMessage(message);
+                return Task.CompletedTask;
+            }));
+            if (isAssistant)
+                actions.Children.Add(ActionButton(Symbol.Refresh, IsApiError(message) ? "Retry" : "Regenerate", isUser, () => _vm?.RegenerateMessageAsync(message) ?? Task.CompletedTask));
+            else if (!isTool)
+                actions.Children.Add(ActionButton(Symbol.Edit, "Edit and resend", isUser, () => EditAndResendAsync(message)));
+            if (!isTool)
+                actions.Children.Add(ActionButton(Symbol.Forward, "Continue from here", isUser, () => _vm?.ContinueFromMessageAsync(message) ?? Task.CompletedTask));
+            if (message.TurnId is { } turnId && _debugVm != null)
+                actions.Children.Add(ActionButton(Symbol.Find, "Inspect prompt", isUser, () => OpenInspectorAsync(turnId)));
+            stack.Children.Add(actions);
+        }
 
         border.Child = stack;
         row.Children.Add(border);

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 
 namespace TLAHStudio.Core.Llm;
@@ -37,6 +38,7 @@ public class AnthropicProvider : ILlmProvider
         double temperature = 0.7,
         int maxTokens = 4096,
         IReadOnlyList<LlmToolDefinition>? tools = null,
+        IProgress<LlmStreamUpdate>? stream = null,
         CancellationToken ct = default)
     {
         // Build raw request (Anthropic uses separate "system" field)
@@ -56,6 +58,12 @@ public class AnthropicProvider : ILlmProvider
                 description = t.Description,
                 input_schema = t.InputSchema
             }).ToArray();
+        }
+
+        if (stream != null)
+        {
+            rawRequest["stream"] = true;
+            return await ChatStreamAsync(rawRequest, stream, ct);
         }
 
         var request = new HttpRequestMessage(HttpMethod.Post, EndpointUrl)
@@ -169,6 +177,154 @@ public class AnthropicProvider : ILlmProvider
         );
     }
 
+    private async Task<LlmResponse> ChatStreamAsync(
+        Dictionary<string, object> rawRequest,
+        IProgress<LlmStreamUpdate> stream,
+        CancellationToken ct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, EndpointUrl)
+        {
+            Content = JsonContent.Create(rawRequest)
+        };
+        request.Headers.Add("x-api-key", _apiKey);
+        request.Headers.Add("anthropic-version", AnthropicVersion);
+
+        var sw = Stopwatch.StartNew();
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        var latencyMs = (int)sw.ElapsedMilliseconds;
+        if (!response.IsSuccessStatusCode)
+        {
+            sw.Stop();
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            var error = ExtractErrorMessage(errorBody, response.ReasonPhrase ?? "Unknown error");
+            var rawError = TryParseJsonObject(errorBody) ??
+                           new Dictionary<string, object> { ["_body"] = errorBody };
+            return new LlmResponse(
+                rawRequest,
+                rawError,
+                (int)response.StatusCode,
+                latencyMs,
+                $"[API Error {(int)response.StatusCode}: {error}]",
+                Error: error);
+        }
+
+        var chunks = new List<string>();
+        var text = new StringBuilder();
+        var toolBuilders = new Dictionary<int, AnthropicToolCallBuilder>();
+        Dictionary<string, int>? tokenUsage = null;
+
+        await using var streamBody = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(streamBody);
+        while (!reader.EndOfStream)
+        {
+            ct.ThrowIfCancellationRequested();
+            var line = await reader.ReadLineAsync(ct);
+            if (string.IsNullOrWhiteSpace(line) ||
+                !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var data = line["data:".Length..].Trim();
+            if (data == "[DONE]")
+                break;
+
+            chunks.Add(data);
+            try
+            {
+                using var doc = JsonDocument.Parse(data);
+                var root = doc.RootElement;
+                var type = root.TryGetProperty("type", out var typeEl)
+                    ? typeEl.GetString()
+                    : null;
+
+                if (type == "content_block_start" &&
+                    root.TryGetProperty("index", out var indexEl) &&
+                    indexEl.ValueKind == JsonValueKind.Number &&
+                    root.TryGetProperty("content_block", out var block) &&
+                    block.ValueKind == JsonValueKind.Object &&
+                    block.TryGetProperty("type", out var blockType) &&
+                    blockType.GetString() == "tool_use")
+                {
+                    var index = indexEl.GetInt32();
+                    var builder = new AnthropicToolCallBuilder();
+                    if (block.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+                        builder.Id = id.GetString();
+                    if (block.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String)
+                        builder.Name = name.GetString();
+                    toolBuilders[index] = builder;
+                    continue;
+                }
+
+                if (type == "content_block_delta" &&
+                    root.TryGetProperty("delta", out var delta) &&
+                    delta.ValueKind == JsonValueKind.Object)
+                {
+                    if (delta.TryGetProperty("type", out var deltaType) &&
+                        deltaType.GetString() == "text_delta" &&
+                        delta.TryGetProperty("text", out var textPart) &&
+                        textPart.ValueKind == JsonValueKind.String)
+                    {
+                        var part = textPart.GetString();
+                        if (!string.IsNullOrEmpty(part))
+                        {
+                            text.Append(part);
+                            stream.Report(new LlmStreamUpdate(part, text.ToString()));
+                        }
+                    }
+                    else if (delta.TryGetProperty("type", out deltaType) &&
+                             deltaType.GetString() == "input_json_delta" &&
+                             delta.TryGetProperty("partial_json", out var partial) &&
+                             partial.ValueKind == JsonValueKind.String &&
+                             root.TryGetProperty("index", out indexEl) &&
+                             indexEl.ValueKind == JsonValueKind.Number)
+                    {
+                        var index = indexEl.GetInt32();
+                        if (!toolBuilders.TryGetValue(index, out var builder))
+                        {
+                            builder = new AnthropicToolCallBuilder();
+                            toolBuilders[index] = builder;
+                        }
+                        builder.InputJson.Append(partial.GetString());
+                    }
+                }
+
+                if (type == "message_delta" &&
+                    root.TryGetProperty("usage", out var usage) &&
+                    usage.ValueKind == JsonValueKind.Object)
+                    tokenUsage = ParseUsage(usage, tokenUsage);
+            }
+            catch
+            {
+                // Keep malformed stream chunks in rawResponse for diagnostics.
+            }
+        }
+        sw.Stop();
+
+        stream.Report(new LlmStreamUpdate(string.Empty, text.ToString(), IsFinal: true));
+        var rawResponse = new Dictionary<string, object>
+        {
+            ["stream"] = true,
+            ["chunks"] = chunks,
+            ["assistant_text"] = text.ToString()
+        };
+        if (tokenUsage != null)
+            rawResponse["usage"] = tokenUsage;
+
+        var toolCalls = toolBuilders
+            .OrderBy(kv => kv.Key)
+            .Select(kv => kv.Value.ToToolCall())
+            .Where(t => !string.IsNullOrWhiteSpace(t.Name))
+            .ToArray();
+
+        return new LlmResponse(
+            rawRequest,
+            rawResponse,
+            (int)response.StatusCode,
+            (int)sw.ElapsedMilliseconds,
+            text.ToString(),
+            tokenUsage,
+            ToolCalls: toolCalls);
+    }
+
     private static object BuildMessage(MessagePayload message)
     {
         if (message.ToolCalls is { Count: > 0 })
@@ -217,5 +373,65 @@ public class AnthropicProvider : ILlmProvider
         {
             return new Dictionary<string, object>();
         }
+    }
+
+    private static Dictionary<string, int> ParseUsage(
+        JsonElement usageElement,
+        Dictionary<string, int>? previous)
+    {
+        var tokenUsage = previous == null
+            ? new Dictionary<string, int>()
+            : new Dictionary<string, int>(previous);
+        if (usageElement.TryGetProperty("input_tokens", out var it) &&
+            it.ValueKind == JsonValueKind.Number)
+            tokenUsage["input_tokens"] = it.GetInt32();
+        if (usageElement.TryGetProperty("output_tokens", out var ot) &&
+            ot.ValueKind == JsonValueKind.Number)
+            tokenUsage["output_tokens"] = ot.GetInt32();
+        if (tokenUsage.TryGetValue("input_tokens", out var input) &&
+            tokenUsage.TryGetValue("output_tokens", out var output))
+            tokenUsage["total_tokens"] = input + output;
+        return tokenUsage;
+    }
+
+    private static Dictionary<string, object>? TryParseJsonObject(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string ExtractErrorMessage(string body, string fallback)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error) &&
+                error.ValueKind == JsonValueKind.Object &&
+                error.TryGetProperty("message", out var message))
+                return message.GetString() ?? fallback;
+        }
+        catch
+        {
+        }
+
+        return fallback;
+    }
+
+    private sealed class AnthropicToolCallBuilder
+    {
+        public string? Id { get; set; }
+        public string? Name { get; set; }
+        public StringBuilder InputJson { get; } = new();
+
+        public LlmToolCall ToToolCall() => new(
+            string.IsNullOrWhiteSpace(Id) ? Guid.NewGuid().ToString("N") : Id!,
+            Name ?? string.Empty,
+            InputJson.Length == 0 ? "{}" : InputJson.ToString());
     }
 }

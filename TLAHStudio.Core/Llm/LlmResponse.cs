@@ -20,6 +20,12 @@ public sealed record LlmToolCall(
     string Name,
     string ArgumentsJson);
 
+public sealed record LlmStreamUpdate(
+    string Delta,
+    string Snapshot,
+    string EventType = "text_delta",
+    bool IsFinal = false);
+
 /// <summary>
 /// The complete result of an LLM API call — everything needed for debugging.
 /// Maps 1:1 from LLMResponse dataclass in llm/base.py.

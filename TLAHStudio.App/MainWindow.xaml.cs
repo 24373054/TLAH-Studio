@@ -128,28 +128,33 @@ public sealed partial class MainWindow : Window
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"]
             });
-            var argumentsBox = new TextBox
+            var argumentsText = new TextBlock
             {
                 Text = details,
-                IsReadOnly = true,
-                AcceptsReturn = true,
-                TextWrapping = TextWrapping.NoWrap,
-                MinHeight = 220,
-                MaxHeight = 320,
+                TextWrapping = TextWrapping.Wrap,
                 FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono"),
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"]
+            };
+            var argumentsViewer = new ScrollViewer
+            {
+                Content = argumentsText,
+                MinHeight = 160,
+                MaxHeight = 320,
+                Padding = new Thickness(12),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+            var argumentsBox = new Border
+            {
+                Child = argumentsViewer,
+                CornerRadius = new CornerRadius(8),
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["InputBackgroundBrush"],
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"],
-                BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderSubtleBrush"]
+                BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderSubtleBrush"],
+                BorderThickness = new Thickness(1)
             };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
                 argumentsBox,
-                "Agent tool arguments");
-            ScrollViewer.SetVerticalScrollBarVisibility(
-                argumentsBox,
-                ScrollBarVisibility.Auto);
-            ScrollViewer.SetHorizontalScrollBarVisibility(
-                argumentsBox,
-                ScrollBarVisibility.Auto);
+                "Agent tool arguments preview");
             content.Children.Add(argumentsBox);
 
             var dialog = new ContentDialog

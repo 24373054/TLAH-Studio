@@ -122,6 +122,37 @@ public class LlmProviderTests
     }
 
     [Fact]
+    public async Task OpenAICompatibleProvider_StreamsTextDeltas()
+    {
+        var handler = new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            data: {"choices":[{"delta":{"content":"你"}}]}
+
+            data: {"choices":[{"delta":{"content":"好"}}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}
+
+            data: [DONE]
+
+            """, System.Text.Encoding.UTF8, "text/event-stream")
+        });
+        using var client = new HttpClient(handler);
+        var provider = new OpenAICompatibleProvider(client, "sk-test", "https://api.example.com", "model-a");
+        var stream = new CollectingStreamProgress();
+
+        var result = await provider.ChatAsync(
+            [new MessagePayload("user", "hi")],
+            "system",
+            stream: stream);
+
+        Assert.Equal("你好", result.AssistantText);
+        Assert.Equal(["你", "好"], stream.Deltas);
+        Assert.Contains(stream.Updates, u => u.IsFinal);
+        Assert.Equal(3, result.TokenUsage!["total_tokens"]);
+        var body = await Assert.Single(handler.Requests).Content!.ReadAsStringAsync();
+        Assert.Contains("\"stream\":true", body);
+    }
+
+    [Fact]
     public async Task AnthropicProvider_ExtractsNativeToolUse()
     {
         var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
@@ -152,5 +183,51 @@ public class LlmProviderTests
         Assert.Equal("toolu-1", call.Id);
         Assert.Equal("sandbox_exec", call.Name);
         Assert.Contains("Get-ChildItem", call.ArgumentsJson);
+    }
+
+    [Fact]
+    public async Task AnthropicProvider_StreamsTextDeltas()
+    {
+        var handler = new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"第"}}
+
+            data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"一"}}
+
+            data: {"type":"message_delta","usage":{"output_tokens":2}}
+
+            data: {"type":"message_stop"}
+
+            """, System.Text.Encoding.UTF8, "text/event-stream")
+        });
+        using var client = new HttpClient(handler);
+        var provider = new AnthropicProvider(client, "sk-test", "https://anthropic.example.com", "claude-test");
+        var stream = new CollectingStreamProgress();
+
+        var result = await provider.ChatAsync(
+            [new MessagePayload("user", "hi")],
+            "system",
+            stream: stream);
+
+        Assert.Equal("第一", result.AssistantText);
+        Assert.Equal(["第", "一"], stream.Deltas);
+        Assert.Contains(stream.Updates, u => u.IsFinal);
+        Assert.Equal(2, result.TokenUsage!["output_tokens"]);
+        var body = await Assert.Single(handler.Requests).Content!.ReadAsStringAsync();
+        Assert.Contains("\"stream\":true", body);
+    }
+
+    private sealed class CollectingStreamProgress : IProgress<LlmStreamUpdate>
+    {
+        public List<LlmStreamUpdate> Updates { get; } = [];
+        public List<string> Deltas { get; } = [];
+
+        public void Report(LlmStreamUpdate value)
+        {
+            Updates.Add(value);
+            if (!string.IsNullOrEmpty(value.Delta))
+                Deltas.Add(value.Delta);
+        }
     }
 }

@@ -24,6 +24,7 @@ public interface ILlmProvider
         double temperature = 0.7,
         int maxTokens = 4096,
         IReadOnlyList<LlmToolDefinition>? tools = null,
+        IProgress<LlmStreamUpdate>? stream = null,
         CancellationToken ct = default);
 
     /// <summary>Short name for this provider type.</summary>

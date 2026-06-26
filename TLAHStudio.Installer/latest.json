@@ -1,14 +1,14 @@
 {
-  "version": "1.7.0",
+  "version": "1.7.1",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.0.exe",
-  "sha256": "cbb5a3bde88ed1f7ac3c88ec9f4af9f8123f4f4ca643eaf24b13c605c5e3be47",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.1.exe",
+  "sha256": "043e041fe8864d3481fa0df05c59a99423990e3223547d9dadcbd0197fcbcb2a",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Real-time agent activity streaming and live UI preview release.\n\nHighlights:\n- Added in-process AgentProgressUpdate stream backed by AgentEvent v2\n- Agent runs now surface model planning, protocol repair, tool requests, approvals, tool execution, tool results, errors, pause, resume, and completion while the run is still active\n- Chat UI now shows a live agent activity card with recent steps and a smooth running summary instead of waiting for final reload\n- User messages appear immediately while a request is running\n- Added regression coverage proving agent progress events are emitted during execution",
+  "releaseNotes": "Streaming reliability release.\n\nFixes:\n- Provider calls now use SSE streaming for OpenAI-compatible and Anthropic endpoints, enabling token-by-token live assistant previews\n- Agent mode shows a live assistant draft while model text arrives instead of waiting for a full final reload\n- Long agent runs can produce a final step-budget summary instead of stopping with only a paused status\n- Agent step budget is expanded for complex tasks and resume capacity is increased\n- Tool approval dialogs now show a read-only formatted argument preview instead of an empty-looking input box\n- Added regression tests for streaming providers and step-budget finalization",
   "forceUpdate": true,
-  "minSupportedVersion": "1.7.0",
+  "minSupportedVersion": "1.7.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96827280
+  "installerSizeBytes": 96829784
 }

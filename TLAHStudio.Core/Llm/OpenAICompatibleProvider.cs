@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 
 namespace TLAHStudio.Core.Llm;
@@ -36,6 +37,7 @@ public class OpenAICompatibleProvider : ILlmProvider
         double temperature = 0.7,
         int maxTokens = 4096,
         IReadOnlyList<LlmToolDefinition>? tools = null,
+        IProgress<LlmStreamUpdate>? stream = null,
         CancellationToken ct = default)
     {
         // Build the full messages array with system prompt first.
@@ -62,6 +64,13 @@ public class OpenAICompatibleProvider : ILlmProvider
                 }
             }).ToArray();
             rawRequest["tool_choice"] = "auto";
+        }
+
+        if (stream != null)
+        {
+            rawRequest["stream"] = true;
+            rawRequest["stream_options"] = new { include_usage = true };
+            return await ChatStreamAsync(rawRequest, stream, ct);
         }
 
         var request = new HttpRequestMessage(HttpMethod.Post, EndpointUrl)
@@ -170,6 +179,148 @@ public class OpenAICompatibleProvider : ILlmProvider
         );
     }
 
+    private async Task<LlmResponse> ChatStreamAsync(
+        Dictionary<string, object> rawRequest,
+        IProgress<LlmStreamUpdate> stream,
+        CancellationToken ct)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, EndpointUrl)
+        {
+            Content = JsonContent.Create(rawRequest)
+        };
+        request.Headers.Add("Authorization", $"Bearer {_apiKey}");
+
+        var sw = Stopwatch.StartNew();
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        var latencyMs = (int)sw.ElapsedMilliseconds;
+        if (!response.IsSuccessStatusCode)
+        {
+            sw.Stop();
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            var error = ExtractErrorMessage(errorBody, response.ReasonPhrase ?? "Unknown error");
+            var rawError = TryParseJsonObject(errorBody) ??
+                           new Dictionary<string, object> { ["_body"] = errorBody };
+            return new LlmResponse(
+                rawRequest,
+                rawError,
+                (int)response.StatusCode,
+                latencyMs,
+                $"[API Error {(int)response.StatusCode}: {error}]",
+                Error: error);
+        }
+
+        var chunks = new List<string>();
+        var text = new StringBuilder();
+        var toolBuilders = new Dictionary<int, OpenAIToolCallBuilder>();
+        Dictionary<string, int>? tokenUsage = null;
+
+        await using var streamBody = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(streamBody);
+        while (!reader.EndOfStream)
+        {
+            ct.ThrowIfCancellationRequested();
+            var line = await reader.ReadLineAsync(ct);
+            if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var data = line["data:".Length..].Trim();
+            if (data == "[DONE]")
+                break;
+
+            chunks.Add(data);
+            try
+            {
+                using var doc = JsonDocument.Parse(data);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
+                    tokenUsage = ParseUsage(usage);
+
+                if (!root.TryGetProperty("choices", out var choices) ||
+                    choices.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                foreach (var choice in choices.EnumerateArray())
+                {
+                    if (!choice.TryGetProperty("delta", out var delta) ||
+                        delta.ValueKind != JsonValueKind.Object)
+                        continue;
+
+                    if (delta.TryGetProperty("content", out var content) &&
+                        content.ValueKind == JsonValueKind.String)
+                    {
+                        var part = content.GetString();
+                        if (!string.IsNullOrEmpty(part))
+                        {
+                            text.Append(part);
+                            stream.Report(new LlmStreamUpdate(part, text.ToString()));
+                        }
+                    }
+
+                    if (delta.TryGetProperty("tool_calls", out var toolCalls) &&
+                        toolCalls.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var toolCall in toolCalls.EnumerateArray())
+                        {
+                            var index = toolCall.TryGetProperty("index", out var indexEl) &&
+                                        indexEl.ValueKind == JsonValueKind.Number
+                                ? indexEl.GetInt32()
+                                : toolBuilders.Count;
+                            if (!toolBuilders.TryGetValue(index, out var builder))
+                            {
+                                builder = new OpenAIToolCallBuilder();
+                                toolBuilders[index] = builder;
+                            }
+
+                            if (toolCall.TryGetProperty("id", out var id) &&
+                                id.ValueKind == JsonValueKind.String)
+                                builder.Id = id.GetString();
+                            if (toolCall.TryGetProperty("function", out var function) &&
+                                function.ValueKind == JsonValueKind.Object)
+                            {
+                                if (function.TryGetProperty("name", out var name) &&
+                                    name.ValueKind == JsonValueKind.String)
+                                    builder.Name = name.GetString();
+                                if (function.TryGetProperty("arguments", out var args) &&
+                                    args.ValueKind == JsonValueKind.String)
+                                    builder.Arguments.Append(args.GetString());
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Keep malformed stream chunks in rawResponse; providers occasionally send comments.
+            }
+        }
+        sw.Stop();
+
+        stream.Report(new LlmStreamUpdate(string.Empty, text.ToString(), IsFinal: true));
+        var rawResponse = new Dictionary<string, object>
+        {
+            ["stream"] = true,
+            ["chunks"] = chunks,
+            ["assistant_text"] = text.ToString()
+        };
+        if (tokenUsage != null)
+            rawResponse["usage"] = tokenUsage;
+
+        var toolCallsResult = toolBuilders
+            .OrderBy(kv => kv.Key)
+            .Select(kv => kv.Value.ToToolCall())
+            .Where(t => !string.IsNullOrWhiteSpace(t.Name))
+            .ToArray();
+
+        return new LlmResponse(
+            rawRequest,
+            rawResponse,
+            (int)response.StatusCode,
+            (int)sw.ElapsedMilliseconds,
+            text.ToString(),
+            tokenUsage,
+            ToolCalls: toolCallsResult);
+    }
+
     private static object BuildMessage(MessagePayload message)
     {
         if (message.ToolCalls is { Count: > 0 })
@@ -198,5 +349,58 @@ public class OpenAICompatibleProvider : ILlmProvider
         }
 
         return new { role = message.Role, content = message.Content };
+    }
+
+    private static Dictionary<string, int> ParseUsage(JsonElement usageElement)
+    {
+        var tokenUsage = new Dictionary<string, int>();
+        if (usageElement.TryGetProperty("prompt_tokens", out var pt) && pt.ValueKind == JsonValueKind.Number)
+            tokenUsage["prompt_tokens"] = pt.GetInt32();
+        if (usageElement.TryGetProperty("completion_tokens", out var ct2) && ct2.ValueKind == JsonValueKind.Number)
+            tokenUsage["completion_tokens"] = ct2.GetInt32();
+        if (usageElement.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
+            tokenUsage["total_tokens"] = tt.GetInt32();
+        return tokenUsage;
+    }
+
+    private static Dictionary<string, object>? TryParseJsonObject(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string ExtractErrorMessage(string body, string fallback)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error) &&
+                error.ValueKind == JsonValueKind.Object &&
+                error.TryGetProperty("message", out var message))
+                return message.GetString() ?? fallback;
+        }
+        catch
+        {
+        }
+
+        return fallback;
+    }
+
+    private sealed class OpenAIToolCallBuilder
+    {
+        public string? Id { get; set; }
+        public string? Name { get; set; }
+        public StringBuilder Arguments { get; } = new();
+
+        public LlmToolCall ToToolCall() => new(
+            string.IsNullOrWhiteSpace(Id) ? Guid.NewGuid().ToString("N") : Id!,
+            Name ?? string.Empty,
+            Arguments.Length == 0 ? "{}" : Arguments.ToString());
     }
 }

@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
 
@@ -19,6 +21,8 @@ public partial class ChatPageViewModel : ObservableObject
     private readonly IAppStateService _appState;
     private CancellationTokenSource? _sendCts;
     private IProgress<AgentProgressUpdate>? _activeAgentProgress;
+    private AssistantStreamState? _activeStream;
+    private bool _isDrainingStream;
 
     public ObservableCollection<Message> Messages { get; } = new();
     public ObservableCollection<AgentProgressLine> AgentProgressLines { get; } = new();
@@ -135,6 +139,7 @@ public partial class ChatPageViewModel : ObservableObject
 
         InputText = string.Empty;
         var optimisticMessage = AddOptimisticUserMessage(content, role ?? "user");
+        var stream = BeginAssistantStream();
         IsSending = true;
         ErrorMessage = null;
         _sendCts?.Dispose();
@@ -148,13 +153,14 @@ public partial class ChatPageViewModel : ObservableObject
                     _appState.CurrentChatId.Value,
                     content,
                     role,
-                    new AgentRunOptions(Progress: agentProgress),
+                    new AgentRunOptions(OutputStream: stream.Progress, Progress: agentProgress),
                     _sendCts.Token)
                 : await _llmService.SendMessageAsync(
                     _appState.CurrentChatId.Value,
                     content,
                     role,
-                    _sendCts.Token);
+                    _sendCts.Token,
+                    stream.Progress);
 
             if (IsAgentModeEnabled)
                 result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
@@ -168,16 +174,19 @@ public partial class ChatPageViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             RemoveOptimisticMessage(optimisticMessage);
+            RemoveStreamMessage(stream.Message);
             ErrorMessage = "Request stopped.";
         }
         catch (Exception e)
         {
             RemoveOptimisticMessage(optimisticMessage);
+            RemoveStreamMessage(stream.Message);
             ErrorMessage = e.Message;
         }
         finally
         {
             IsAgentLiveVisible = false;
+            _activeStream = null;
             IsSending = false;
         }
     }
@@ -206,10 +215,11 @@ public partial class ChatPageViewModel : ObservableObject
         try
         {
             var agentProgress = BeginAgentProgress(reset: true);
+            var stream = BeginAssistantStream();
             AgentStatusText = "Resuming saved agent run...";
             var result = await _llmService.ResumeAgentTaskAsync(
                 CurrentAgentRunId.Value,
-                new AgentRunOptions(Progress: agentProgress),
+                new AgentRunOptions(OutputStream: stream.Progress, Progress: agentProgress),
                 _sendCts.Token);
             result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
             await ReloadCurrentChatAsync();
@@ -226,6 +236,7 @@ public partial class ChatPageViewModel : ObservableObject
         finally
         {
             IsAgentLiveVisible = false;
+            _activeStream = null;
             IsSending = false;
         }
     }
@@ -393,7 +404,7 @@ public partial class ChatPageViewModel : ObservableObject
                 : "Tool approved. Continuing the agent run...";
             result = await _llmService.ResumeAgentTaskAsync(
                 request.AgentRunId,
-                new AgentRunOptions(Progress: _activeAgentProgress),
+                new AgentRunOptions(OutputStream: _activeStream?.Progress, Progress: _activeAgentProgress),
                 ct);
             UpdateAgentStatus(result.AgentRun);
         }
@@ -424,6 +435,80 @@ public partial class ChatPageViewModel : ObservableObject
     {
         if (message != null && message.TurnId == null)
             Messages.Remove(message);
+    }
+
+    private AssistantStreamState BeginAssistantStream()
+    {
+        var message = new Message
+        {
+            ChatId = _appState.CurrentChatId ?? Guid.Empty,
+            Role = "assistant",
+            Content = string.Empty,
+            SequenceNum = Messages.Count == 0 ? 0 : Messages.Max(m => m.SequenceNum) + 1,
+            CreatedAt = DateTime.UtcNow
+        };
+        Messages.Add(message);
+        _activeStream = new AssistantStreamState(
+            message,
+            new Progress<LlmStreamUpdate>(OnAssistantStream));
+        return _activeStream;
+    }
+
+    private void RemoveStreamMessage(Message? message)
+    {
+        if (message != null && message.TurnId == null)
+            Messages.Remove(message);
+    }
+
+    private void OnAssistantStream(LlmStreamUpdate update)
+    {
+        if (_activeStream == null)
+            return;
+
+        if (!string.IsNullOrEmpty(update.Delta))
+        {
+            foreach (var ch in update.Delta)
+                _activeStream.PendingChars.Enqueue(ch);
+        }
+
+        if (update.IsFinal)
+            _activeStream.FinalSnapshot = update.Snapshot;
+
+        if (!_isDrainingStream)
+            _ = DrainAssistantStreamAsync();
+    }
+
+    private async Task DrainAssistantStreamAsync()
+    {
+        if (_activeStream == null)
+            return;
+
+        _isDrainingStream = true;
+        try
+        {
+            while (_activeStream != null && _activeStream.PendingChars.Count > 0)
+            {
+                var batchSize = _activeStream.PendingChars.Count > 80 ? 3 : 1;
+                for (var i = 0; i < batchSize && _activeStream.PendingChars.Count > 0; i++)
+                    _activeStream.Builder.Append(_activeStream.PendingChars.Dequeue());
+                _activeStream.Message.Content = _activeStream.Builder.ToString();
+                StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
+                await Task.Delay(10);
+            }
+
+            if (_activeStream is { FinalSnapshot: { } final } &&
+                !string.Equals(_activeStream.Message.Content, final, StringComparison.Ordinal))
+            {
+                _activeStream.Builder.Clear();
+                _activeStream.Builder.Append(final);
+                _activeStream.Message.Content = final;
+                StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
+            }
+        }
+        finally
+        {
+            _isDrainingStream = false;
+        }
     }
 
     private IProgress<AgentProgressUpdate> BeginAgentProgress(bool reset)
@@ -569,8 +654,20 @@ public partial class ChatPageViewModel : ObservableObject
     /// <summary>Fired when a new Turn is created, for the DebugPanel to pick up.</summary>
     public event EventHandler<Guid>? TurnCreated;
     public event EventHandler<AgentApprovalRequest>? AgentApprovalRequested;
+    public event EventHandler? StreamingMessageUpdated;
     protected virtual void OnTurnCreated(Guid turnId) =>
         TurnCreated?.Invoke(this, turnId);
+}
+
+internal sealed class AssistantStreamState(
+    Message message,
+    IProgress<LlmStreamUpdate> progress)
+{
+    public Message Message { get; } = message;
+    public IProgress<LlmStreamUpdate> Progress { get; } = progress;
+    public Queue<char> PendingChars { get; } = new();
+    public StringBuilder Builder { get; } = new();
+    public string? FinalSnapshot { get; set; }
 }
 
 public sealed record AgentProgressLine(

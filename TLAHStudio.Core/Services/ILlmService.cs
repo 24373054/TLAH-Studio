@@ -1,4 +1,5 @@
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Llm;
 
 namespace TLAHStudio.Core.Services;
 
@@ -22,7 +23,8 @@ public interface ILlmService
         Guid chatId,
         string userContent,
         string? role = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        IProgress<LlmStreamUpdate>? stream = null);
 
     Task<SendMessageResult> RunAgentTaskAsync(
         Guid chatId,
@@ -87,10 +89,11 @@ public record SendMessageResult(
 public record ConnectionTestResult(bool Success, string Message, int? StatusCode = null, int? LatencyMs = null);
 
 public sealed record AgentRunOptions(
-    int MaxSteps = 6,
+    int MaxSteps = 24,
     int CommandTimeoutSeconds = 20,
     int MaxCommandOutputChars = 12000,
     bool AutoApproveTools = false,
+    IProgress<LlmStreamUpdate>? OutputStream = null,
     IProgress<AgentProgressUpdate>? Progress = null);
 
 public sealed record AgentProgressUpdate(

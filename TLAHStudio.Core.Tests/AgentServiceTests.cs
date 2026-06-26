@@ -178,6 +178,69 @@ public class AgentServiceTests
     }
 
     [Fact]
+    public async Task RunAgentTaskAsync_FinalizesWithSummaryWhenStepBudgetIsReached()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai",
+            ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com",
+            Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Step budget");
+
+        var responses = new Queue<string>([
+            """
+            {
+              "choices": [ {
+                "message": {
+                  "content": null,
+                  "tool_calls": [ {
+                    "id": "call-budget",
+                    "type": "function",
+                    "function": {
+                      "name": "sandbox_exec",
+                      "arguments": "{\"command\":\"'budget-ok' | Set-Content budget.txt; Get-Content budget.txt\",\"reason\":\"Create one artifact before the budget is reached.\"}"
+                    }
+                  } ]
+                }
+              } ]
+            }
+            """,
+            """
+            {
+              "choices": [
+                { "message": { "content": "I created budget.txt and confirmed it contains budget-ok." } }
+              ]
+            }
+            """
+        ]);
+
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Do one thing and report back.",
+            options: new AgentRunOptions(MaxSteps: 1, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Equal("I created budget.txt and confirmed it contains budget-ok.", result.AssistantMessage.Content);
+        Assert.Equal(2, result.AgentRun.CurrentStep);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(2, await db.Set<AgentStep>().CountAsync());
+        Assert.Contains(await db.Set<AgentStep>().ToListAsync(), s => s.Kind == "final");
+        Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.RunCompleted);
+        Assert.DoesNotContain(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.RunPaused);
+    }
+
+    [Fact]
     public async Task RunAgentTaskAsync_RequiresManualApprovalForHighRiskToolsEvenWhenAutoApproveIsEnabled()
     {
         await using var db = TestDb.Create();

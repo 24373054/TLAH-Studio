@@ -79,7 +79,8 @@ public class LlmService : ILlmService
         Guid chatId,
         string userContent,
         string? role = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<LlmStreamUpdate>? stream = null)
     {
         // 1. Load chat
         var chat = await _db.Set<Chat>()
@@ -158,6 +159,7 @@ public class LlmService : ILlmService
             systemPrompt: systemPrompt,
             temperature: effective.Temperature,
             maxTokens: effective.MaxTokens,
+            stream: stream,
             ct: ct);
 
         // 12. Store raw request
@@ -222,7 +224,7 @@ public class LlmService : ILlmService
     {
         options ??= new AgentRunOptions();
         using var progressScope = UseAgentProgress(options.Progress);
-        var maxSteps = Math.Clamp(options.MaxSteps, 1, 12);
+        var maxSteps = Math.Clamp(options.MaxSteps, 1, 96);
         var chat = await _db.Set<Chat>()
             .FirstOrDefaultAsync(c => c.Id == chatId, ct)
             ?? throw new InvalidOperationException($"Chat not found: {chatId}");
@@ -307,9 +309,9 @@ public class LlmService : ILlmService
             ?? throw new InvalidOperationException("The agent checkpoint is invalid.");
 
         run.MaxSteps = Math.Clamp(
-            Math.Max(run.MaxSteps, run.CurrentStep + Math.Clamp(options.MaxSteps, 1, 12)),
+            Math.Max(run.MaxSteps, run.CurrentStep + Math.Clamp(options.MaxSteps, 1, 96)),
             1,
-            48);
+            192);
         run.Status = AgentRunStatuses.Running;
         run.ErrorMessage = null;
         run.UpdatedAt = DateTime.UtcNow;
@@ -527,6 +529,7 @@ public class LlmService : ILlmService
                     temperature: effective.Temperature,
                     maxTokens: effective.MaxTokens,
                     tools: guard.Tools,
+                    stream: options.OutputStream,
                     ct: ct);
                 step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(lastResponse.RawResponse));
                 await LogAgentEventAsync(
@@ -843,21 +846,40 @@ public class LlmService : ILlmService
 
             if (run.Status == AgentRunStatuses.Running)
             {
-                run.Status = AgentRunStatuses.Paused;
-                run.UpdatedAt = DateTime.UtcNow;
-                await LogAgentEventAsync(
-                    run,
-                    AgentEventTypes.RunPaused,
-                    "Agent reached the step budget and paused.",
-                    new { run.CurrentStep, run.MaxSteps },
-                    severity: AgentEventSeverities.Warning,
-                    ct: ct);
-                lastAssistantMessage = await AddAgentStatusMessageAsync(
+                var finalization = await TryFinalizeAgentAtStepBudgetAsync(
                     run,
                     turn,
+                    chat,
                     state,
-                    $"Agent paused after reaching the step budget ({run.MaxSteps}). The run is saved and can be resumed.",
+                    provider,
+                    systemPrompt,
+                    effective.Temperature,
+                    effective.MaxTokens,
+                    options,
                     ct);
+                if (finalization != null)
+                {
+                    lastResponse = finalization.Value.Response;
+                    lastAssistantMessage = finalization.Value.Message;
+                }
+                else
+                {
+                    run.Status = AgentRunStatuses.Paused;
+                    run.UpdatedAt = DateTime.UtcNow;
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.RunPaused,
+                        "Agent reached the step budget and paused.",
+                        new { run.CurrentStep, run.MaxSteps },
+                        severity: AgentEventSeverities.Warning,
+                        ct: ct);
+                    lastAssistantMessage = await AddAgentStatusMessageAsync(
+                        run,
+                        turn,
+                        state,
+                        $"Agent paused after reaching the step budget ({run.MaxSteps}). The run is saved and can be resumed.",
+                        ct);
+                }
             }
 
             lastResponse ??= new LlmResponse(
@@ -902,6 +924,130 @@ public class LlmService : ILlmService
                 severity: AgentEventSeverities.Error,
                 ct: CancellationToken.None);
             throw;
+        }
+    }
+
+    private async Task<(LlmResponse Response, Message Message)?> TryFinalizeAgentAtStepBudgetAsync(
+        AgentRun run,
+        Turn turn,
+        Chat chat,
+        AgentExecutionState state,
+        ILlmProvider provider,
+        string systemPrompt,
+        double temperature,
+        int maxTokens,
+        AgentRunOptions options,
+        CancellationToken ct)
+    {
+        var stepNumber = run.CurrentStep + 1;
+        var step = new AgentStep
+        {
+            AgentRunId = run.Id,
+            StepNumber = stepNumber,
+            Kind = "final_summary",
+            Status = AgentStepStatuses.Running,
+            Summary = "Summarize the long-running agent state without requesting more tools.",
+            InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages))
+        };
+        _db.Set<AgentStep>().Add(step);
+        await _db.SaveChangesAsync(ct);
+
+        var summaryMessages = state.Messages.ToList();
+        summaryMessages.Add(new MessagePayload(
+            "user",
+            """
+            The agent has reached its current step budget. Do not request tools or describe internal policy.
+            Give the user the best possible final answer now: summarize what was done, include concrete results,
+            explain any remaining limitation, and list the exact next action if more work is needed.
+            """));
+
+        try
+        {
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.ModelRequest,
+                "Asking the model for a step-budget final answer.",
+                new { stepNumber, run.CurrentStep, run.MaxSteps },
+                step.Id,
+                ct: ct);
+
+            var response = await provider.ChatAsync(
+                messages: summaryMessages,
+                systemPrompt: systemPrompt,
+                temperature: Math.Min(temperature, 0.4),
+                maxTokens: Math.Max(512, Math.Min(maxTokens, 2048)),
+                tools: null,
+                stream: options.OutputStream,
+                ct: ct);
+            step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(response.RawResponse));
+
+            if (response.HttpStatus is < 200 or >= 300 ||
+                !string.IsNullOrWhiteSpace(response.Error) ||
+                string.IsNullOrWhiteSpace(response.AssistantText))
+            {
+                step.Status = AgentStepStatuses.Failed;
+                step.Summary = response.Error ?? "The model did not provide a final answer before the step budget pause.";
+                step.CompletedAt = DateTime.UtcNow;
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.Error,
+                    SecretRedactor.RedactText(step.Summary),
+                    new { response.HttpStatus, response.LatencyMs },
+                    step.Id,
+                    severity: AgentEventSeverities.Warning,
+                    ct: ct);
+                await _db.SaveChangesAsync(ct);
+                return null;
+            }
+
+            var assistantText = response.AssistantText.Trim();
+            step.Kind = "final";
+            step.Status = AgentStepStatuses.Completed;
+            step.Summary = "Agent provided a final answer at the step budget.";
+            step.CompletedAt = DateTime.UtcNow;
+            run.CurrentStep = stepNumber;
+            run.MaxSteps = Math.Max(run.MaxSteps, stepNumber);
+            run.Status = AgentRunStatuses.Completed;
+            run.CompletedAt = DateTime.UtcNow;
+            run.UpdatedAt = DateTime.UtcNow;
+            state.Messages.Add(new MessagePayload("assistant", assistantText));
+
+            var message = new Message
+            {
+                ChatId = run.ChatId,
+                Role = "assistant",
+                Content = assistantText,
+                TurnId = turn.Id,
+                SequenceNum = state.SequenceNum++
+            };
+            _db.Set<Message>().Add(message);
+            chat.UpdatedAt = DateTime.UtcNow;
+            await SaveCheckpointAsync(run, state, ct);
+            await _db.SaveChangesAsync(ct);
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.RunCompleted,
+                "Agent reached the step budget and produced a final answer.",
+                new { run.CurrentStep, run.MaxSteps },
+                step.Id,
+                ct: ct);
+            return (response, message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            step.Status = AgentStepStatuses.Failed;
+            step.Summary = SecretRedactor.RedactText(ex.Message);
+            step.CompletedAt = DateTime.UtcNow;
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.Error,
+                $"Step-budget finalization failed: {step.Summary}",
+                new { exceptionType = ex.GetType().Name },
+                step.Id,
+                severity: AgentEventSeverities.Warning,
+                ct: ct);
+            await _db.SaveChangesAsync(ct);
+            return null;
         }
     }
 
