@@ -26,6 +26,11 @@ public class ChatSettings
     [MaxLength(100)]
     public string? Model { get; set; }
 
+    public bool? UseLongContext { get; set; }
+
+    [MaxLength(20)]
+    public string? ThinkingDepth { get; set; }
+
     public double? Temperature { get; set; }
 
     public int? MaxTokens { get; set; }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 
 #pragma warning disable CA1416 // TLAH Studio is a Windows desktop client; DPAPI is intentionally Windows-only.
@@ -39,12 +40,15 @@ public class SettingsService : ISettingsService
     public async Task<GlobalSettingsDto> GetGlobalSettingsMaskedAsync(CancellationToken ct = default)
     {
         var gs = await GetGlobalSettingsRawAsync(ct);
+        await NormalizeGlobalSettingsAsync(gs, ct);
         var apiKey = await RevealAndMigrateGlobalApiKeyAsync(gs, ct);
         return new GlobalSettingsDto(
             Provider: gs.Provider,
             ApiKey: ApiKeyMasker.Mask(apiKey),
             BaseUrl: gs.BaseUrl,
             Model: gs.Model,
+            UseLongContext: gs.UseLongContext,
+            ThinkingDepth: ReasoningDepths.Normalize(gs.ThinkingDepth),
             Temperature: gs.Temperature,
             MaxTokens: gs.MaxTokens,
             SystemPrompt: gs.SystemPrompt,
@@ -61,7 +65,14 @@ public class SettingsService : ISettingsService
         if (data.ApiKey != null && !ApiKeyMasker.IsMasked(data.ApiKey))
             gs.ApiKey = ProtectedSecret.Protect(data.ApiKey.Trim());
         if (data.BaseUrl != null) gs.BaseUrl = data.BaseUrl;
-        if (data.Model != null) gs.Model = data.Model;
+        if (data.Model != null)
+        {
+            if (ProviderModelResolver.HasLongContextSuffix(data.Model))
+                gs.UseLongContext = true;
+            gs.Model = ProviderModelResolver.NormalizeModelForStorage(data.Model);
+        }
+        if (data.UseLongContext.HasValue) gs.UseLongContext = data.UseLongContext.Value;
+        if (data.ThinkingDepth != null) gs.ThinkingDepth = ReasoningDepths.Normalize(data.ThinkingDepth);
         if (data.Temperature.HasValue) gs.Temperature = data.Temperature.Value;
         if (data.MaxTokens.HasValue) gs.MaxTokens = data.MaxTokens.Value;
         if (data.SystemPrompt != null) gs.SystemPrompt = data.SystemPrompt;
@@ -122,11 +133,14 @@ public class SettingsService : ISettingsService
             return null;
 
         var apiKey = await RevealAndMigrateChatApiKeyAsync(cs, ct);
+        await NormalizeChatSettingsAsync(cs, ct);
         return new ChatSettingsDto(
             Provider: cs.Provider,
             ApiKey: string.IsNullOrWhiteSpace(apiKey) ? null : ApiKeyMasker.Mask(apiKey),
             BaseUrl: cs.BaseUrl,
             Model: cs.Model,
+            UseLongContext: cs.UseLongContext,
+            ThinkingDepth: cs.ThinkingDepth,
             Temperature: cs.Temperature,
             MaxTokens: cs.MaxTokens,
             UserRole: cs.UserRole);
@@ -154,7 +168,14 @@ public class SettingsService : ISettingsService
                 ? null
                 : ProtectedSecret.Protect(data.ApiKey.Trim());
         if (data.BaseUrl != null) cs.BaseUrl = data.BaseUrl;
-        if (data.Model != null) cs.Model = data.Model;
+        if (data.Model != null)
+        {
+            if (ProviderModelResolver.HasLongContextSuffix(data.Model))
+                cs.UseLongContext = true;
+            cs.Model = ProviderModelResolver.NormalizeModelForStorage(data.Model);
+        }
+        if (data.UseLongContext.HasValue) cs.UseLongContext = data.UseLongContext.Value;
+        if (data.ThinkingDepth != null) cs.ThinkingDepth = ReasoningDepths.Normalize(data.ThinkingDepth);
         if (data.Temperature.HasValue) cs.Temperature = data.Temperature.Value;
         if (data.MaxTokens.HasValue) cs.MaxTokens = data.MaxTokens.Value;
         if (data.UserRole != null) cs.UserRole = data.UserRole;
@@ -200,19 +221,29 @@ public class SettingsService : ISettingsService
         var chatApiKey = cs == null ? null : await RevealAndMigrateChatApiKeyAsync(cs, ct);
         var profileApiKey = profile == null ? null : await RevealAndMigrateProfileApiKeyAsync(profile, ct);
 
+        var provider = cs?.Provider ?? profile?.Provider ?? gs.Provider;
+        var baseUrl = cs?.BaseUrl ?? profile?.BaseUrl ?? gs.BaseUrl;
+        var model = cs?.Model ?? profile?.Model ?? gs.Model;
+        var useLongContext = cs?.UseLongContext ?? profile?.UseLongContext ?? gs.UseLongContext;
+        var resolution = ProviderModelResolver.Resolve(provider, baseUrl, model, useLongContext);
+
         return new EffectiveSettings(
-            Provider: cs?.Provider ?? profile?.Provider ?? gs.Provider,
+            Provider: provider,
             ApiKey: !string.IsNullOrWhiteSpace(chatApiKey)
                 ? chatApiKey
                 : !string.IsNullOrWhiteSpace(profileApiKey)
                     ? profileApiKey
                     : globalApiKey,
-            BaseUrl: cs?.BaseUrl ?? profile?.BaseUrl ?? gs.BaseUrl,
-            Model: cs?.Model ?? profile?.Model ?? gs.Model,
+            BaseUrl: baseUrl,
+            Model: resolution.WireModel,
             Temperature: cs?.Temperature ?? profile?.Temperature ?? gs.Temperature,
             MaxTokens: cs?.MaxTokens ?? profile?.MaxTokens ?? gs.MaxTokens,
             SystemPrompt: gs.SystemPrompt,
-            UserRole: cs?.UserRole ?? profile?.UserRole ?? gs.UserRole
+            UserRole: cs?.UserRole ?? profile?.UserRole ?? gs.UserRole,
+            UseLongContext: resolution.LongContextEnabled,
+            ThinkingDepth: ReasoningDepths.Normalize(cs?.ThinkingDepth ?? profile?.ThinkingDepth ?? gs.ThinkingDepth),
+            ContextBudgetTokens: resolution.ContextBudgetTokens,
+            AutoCompactTriggerTokens: resolution.AutoCompactTriggerTokens
         );
     }
 
@@ -231,6 +262,52 @@ public class SettingsService : ISettingsService
         }
 
         return plain;
+    }
+
+    private async Task NormalizeGlobalSettingsAsync(GlobalSettings settings, CancellationToken ct)
+    {
+        var normalizedModel = ProviderModelResolver.NormalizeModelForStorage(settings.Model);
+        var changed = false;
+        if (!string.Equals(settings.Model, normalizedModel, StringComparison.Ordinal))
+        {
+            settings.Model = normalizedModel;
+            settings.UseLongContext = true;
+            changed = true;
+        }
+
+        var normalizedDepth = ReasoningDepths.Normalize(settings.ThinkingDepth);
+        if (!string.Equals(settings.ThinkingDepth, normalizedDepth, StringComparison.Ordinal))
+        {
+            settings.ThinkingDepth = normalizedDepth;
+            changed = true;
+        }
+
+        if (changed)
+            await _db.SaveChangesAsync(ct);
+    }
+
+    private async Task NormalizeChatSettingsAsync(ChatSettings settings, CancellationToken ct)
+    {
+        var changed = false;
+        if (settings.Model != null && ProviderModelResolver.HasLongContextSuffix(settings.Model))
+        {
+            settings.Model = ProviderModelResolver.NormalizeModelForStorage(settings.Model);
+            settings.UseLongContext = true;
+            changed = true;
+        }
+
+        if (settings.ThinkingDepth != null)
+        {
+            var normalizedDepth = ReasoningDepths.Normalize(settings.ThinkingDepth);
+            if (!string.Equals(settings.ThinkingDepth, normalizedDepth, StringComparison.Ordinal))
+            {
+                settings.ThinkingDepth = normalizedDepth;
+                changed = true;
+            }
+        }
+
+        if (changed)
+            await _db.SaveChangesAsync(ct);
     }
 
     private async Task<string> RevealAndMigrateChatApiKeyAsync(ChatSettings settings, CancellationToken ct)

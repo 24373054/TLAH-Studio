@@ -39,6 +39,7 @@ public class AnthropicProvider : ILlmProvider
         int maxTokens = 4096,
         IReadOnlyList<LlmToolDefinition>? tools = null,
         IProgress<LlmStreamUpdate>? stream = null,
+        LlmReasoningOptions? reasoning = null,
         CancellationToken ct = default)
     {
         // Build raw request (Anthropic uses separate "system" field)
@@ -59,6 +60,7 @@ public class AnthropicProvider : ILlmProvider
                 input_schema = t.InputSchema
             }).ToArray();
         }
+        AddDeepSeekAnthropicReasoningOptions(rawRequest, reasoning);
 
         if (stream != null)
         {
@@ -187,6 +189,26 @@ public class AnthropicProvider : ILlmProvider
             ToolCalls: toolCalls,
             ReasoningText: reasoningText
         );
+    }
+
+    private void AddDeepSeekAnthropicReasoningOptions(
+        Dictionary<string, object> rawRequest,
+        LlmReasoningOptions? reasoning)
+    {
+        if (!_baseUrl.Contains("api.deepseek.com/anthropic", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var depth = ReasoningDepths.Normalize(reasoning?.Depth);
+        if (depth == ReasoningDepths.Auto)
+            return;
+
+        rawRequest["output_config"] = depth == ReasoningDepths.Off
+            ? new { thinking = new { type = "disabled" } }
+            : new
+            {
+                thinking = new { type = "enabled" },
+                effort = depth == ReasoningDepths.Max ? ReasoningDepths.Max : ReasoningDepths.High
+            };
     }
 
     private async Task<LlmResponse> ChatStreamAsync(

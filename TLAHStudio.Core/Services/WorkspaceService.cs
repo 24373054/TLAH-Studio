@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 
 #pragma warning disable CA1416 // DPAPI is intentionally Windows-only in the Windows desktop client.
@@ -189,7 +190,14 @@ public class WorkspaceService : IWorkspaceService
         if (update.ApiKey != null && !ApiKeyMasker.IsMasked(update.ApiKey))
             profile.ApiKey = string.IsNullOrWhiteSpace(update.ApiKey) ? null : ProtectedSecret.Protect(update.ApiKey.Trim());
         if (update.BaseUrl != null) profile.BaseUrl = update.BaseUrl.Trim();
-        if (update.Model != null) profile.Model = update.Model.Trim();
+        if (update.Model != null)
+        {
+            if (ProviderModelResolver.HasLongContextSuffix(update.Model))
+                profile.UseLongContext = true;
+            profile.Model = ProviderModelResolver.NormalizeModelForStorage(update.Model);
+        }
+        if (update.UseLongContext.HasValue) profile.UseLongContext = update.UseLongContext.Value;
+        if (update.ThinkingDepth != null) profile.ThinkingDepth = ReasoningDepths.Normalize(update.ThinkingDepth);
         if (update.Temperature.HasValue) profile.Temperature = update.Temperature.Value;
         if (update.MaxTokens.HasValue) profile.MaxTokens = update.MaxTokens.Value;
         if (update.UserRole != null) profile.UserRole = update.UserRole.Trim();
@@ -336,6 +344,8 @@ public class WorkspaceService : IWorkspaceService
                 ApiKey = (string?)null,
                 p.BaseUrl,
                 p.Model,
+                p.UseLongContext,
+                p.ThinkingDepth,
                 p.Temperature,
                 p.MaxTokens,
                 p.UserRole,
@@ -383,6 +393,8 @@ public class WorkspaceService : IWorkspaceService
                     Provider = ReadString(item, "Provider") ?? "openai",
                     BaseUrl = ReadString(item, "BaseUrl") ?? "https://api.openai.com",
                     Model = ReadString(item, "Model") ?? "gpt-4o",
+                    UseLongContext = ReadBool(item, "UseLongContext") ?? false,
+                    ThinkingDepth = ReasoningDepths.Normalize(ReadString(item, "ThinkingDepth")),
                     Temperature = ReadDouble(item, "Temperature") ?? 0.7,
                     MaxTokens = ReadInt(item, "MaxTokens") ?? 4096,
                     UserRole = ReadString(item, "UserRole") ?? "user",
@@ -443,6 +455,8 @@ public class WorkspaceService : IWorkspaceService
             string.IsNullOrWhiteSpace(apiKey) ? null : ApiKeyMasker.Mask(apiKey),
             profile.BaseUrl,
             profile.Model,
+            profile.UseLongContext,
+            ReasoningDepths.Normalize(profile.ThinkingDepth),
             profile.Temperature,
             profile.MaxTokens,
             profile.UserRole,

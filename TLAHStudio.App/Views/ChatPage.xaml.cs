@@ -29,11 +29,20 @@ public sealed partial class ChatPage : UserControl
     private double _chatBubbleOpacity = 1;
     private int _lastMessageCount;
     private bool _isNarrow;
+    private bool _renderQueued;
+    private DateTimeOffset _lastRenderAt = DateTimeOffset.MinValue;
+    private string _lastLayoutSignature = string.Empty;
+    private readonly Dictionary<Guid, CachedMessageElement> _messageElementCache = new();
+    private const int RenderThrottleMs = 50;
 
     public ChatPage()
     {
         InitializeComponent();
-        ActualThemeChanged += (_, _) => RenderMessages();
+        ActualThemeChanged += (_, _) =>
+        {
+            InvalidateMessageCache();
+            RequestRender(immediate: true);
+        };
         SizeChanged += OnChatSizeChanged;
         AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnPointerWheelChanged), true);
     }
@@ -66,7 +75,7 @@ public sealed partial class ChatPage : UserControl
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.AgentProgressLines.CollectionChanged += OnAgentProgressChanged;
-        _vm.StreamingMessageUpdated += (_, _) => DispatcherQueue.TryEnqueue(RenderMessages);
+        _vm.StreamingMessageUpdated += (_, _) => RequestRender();
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
@@ -74,7 +83,7 @@ public sealed partial class ChatPage : UserControl
                 or nameof(ChatPageViewModel.IsLoading)
                 or nameof(ChatPageViewModel.IsAgentLiveVisible)
                 or nameof(ChatPageViewModel.AgentLiveSummary))
-                DispatcherQueue.TryEnqueue(RenderMessages);
+                RequestRender();
             if (args.PropertyName is nameof(ChatPageViewModel.AgentStatusText)
                 or nameof(ChatPageViewModel.IsAgentStatusVisible)
                 or nameof(ChatPageViewModel.CurrentAgentRunStatus))
@@ -85,18 +94,20 @@ public sealed partial class ChatPage : UserControl
         _backgroundService.ConfigChanged += (_, config) => DispatcherQueue.TryEnqueue(() =>
         {
             ApplyBackgroundConfig(config);
-            RenderMessages();
+            InvalidateMessageCache();
+            RequestRender(immediate: true);
         });
 
         _densityService.DensityChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
             ApplyDensity();
-            RenderMessages();
+            InvalidateMessageCache();
+            RequestRender(immediate: true);
         });
 
         ApplyDensity();
         UpdateAgentStatus();
-        RenderMessages();
+        RequestRender(immediate: true);
     }
 
     private void UpdateAgentStatus()
@@ -122,10 +133,43 @@ public sealed partial class ChatPage : UserControl
     }
 
     private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
-        DispatcherQueue.TryEnqueue(RenderMessages);
+        RequestRender(immediate: e.Action is NotifyCollectionChangedAction.Reset);
 
     private void OnAgentProgressChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
-        DispatcherQueue.TryEnqueue(RenderMessages);
+        RequestRender();
+
+    private void RequestRender(bool immediate = false)
+    {
+        if (immediate)
+        {
+            DispatcherQueue.TryEnqueue(RenderMessages);
+            return;
+        }
+
+        if (_renderQueued)
+            return;
+
+        _renderQueued = true;
+        var delayMs = Math.Max(
+            0,
+            RenderThrottleMs - (int)(DateTimeOffset.UtcNow - _lastRenderAt).TotalMilliseconds);
+        _ = Task.Run(async () =>
+        {
+            if (delayMs > 0)
+                await Task.Delay(delayMs);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _renderQueued = false;
+                RenderMessages();
+            });
+        });
+    }
+
+    private void InvalidateMessageCache()
+    {
+        _messageElementCache.Clear();
+        _lastLayoutSignature = string.Empty;
+    }
 
     private void OnPointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
@@ -148,37 +192,77 @@ public sealed partial class ChatPage : UserControl
     private void RenderMessages()
     {
         if (_vm == null) return;
+        _lastRenderAt = DateTimeOffset.UtcNow;
 
         var shouldScrollToBottom =
             _vm.Messages.Count != _lastMessageCount || IsNearBottom();
         _lastMessageCount = _vm.Messages.Count;
 
-        MessagesStack.Children.Clear();
+        var elements = new List<UIElement>();
         if (!string.IsNullOrWhiteSpace(_vm.ErrorMessage))
-            MessagesStack.Children.Add(BuildErrorState(_vm.ErrorMessage));
+            elements.Add(BuildErrorState(_vm.ErrorMessage));
 
         if (_vm.CurrentChat == null)
         {
-            MessagesStack.Children.Add(BuildNoChatState());
+            SyncMessageChildren(elements.Append(BuildNoChatState()).ToList(), "no-chat");
             return;
         }
 
         if (_vm.Messages.Count == 0)
         {
-            MessagesStack.Children.Add(BuildEmptyState());
+            SyncMessageChildren(elements.Append(BuildEmptyState()).ToList(), "empty");
             return;
         }
 
         foreach (var message in _vm.Messages)
-            MessagesStack.Children.Add(BuildMessage(message));
+            elements.Add(GetCachedMessageElement(message));
 
         if (_vm.IsAgentLiveVisible && _vm.AgentProgressLines.Count > 0)
-            MessagesStack.Children.Add(BuildAgentLiveCard());
+            elements.Add(BuildAgentLiveCard());
+
+        var signature = string.Join(
+            "|",
+            _vm.Messages.Select(m => $"{m.Id:N}:{m.Role}:{m.Content.Length}:{m.TurnId?.ToString("N") ?? "draft"}"))
+            + $"|err:{_vm.ErrorMessage?.Length ?? 0}|live:{_vm.AgentProgressLines.Count}";
+        SyncMessageChildren(elements, signature);
 
         if (shouldScrollToBottom)
         {
-            MessagesScrollViewer.UpdateLayout();
-            MessagesScrollViewer.ChangeView(null, MessagesScrollViewer.ScrollableHeight, null, true);
+            DispatcherQueue.TryEnqueue(() =>
+                MessagesScrollViewer.ChangeView(null, MessagesScrollViewer.ScrollableHeight, null, true));
+        }
+    }
+
+    private UIElement GetCachedMessageElement(Message message)
+    {
+        var signature = $"{message.Role}|{message.Content}|{message.TurnId?.ToString("N") ?? "draft"}|{_chatBubbleOpacity}|{IsCompactDensity()}";
+        if (_messageElementCache.TryGetValue(message.Id, out var cached) &&
+            string.Equals(cached.Signature, signature, StringComparison.Ordinal))
+        {
+            return cached.Element;
+        }
+
+        var element = BuildMessage(message);
+        _messageElementCache[message.Id] = new CachedMessageElement(signature, element);
+        return element;
+    }
+
+    private void SyncMessageChildren(IReadOnlyList<UIElement> elements, string signature)
+    {
+        if (!string.Equals(signature, _lastLayoutSignature, StringComparison.Ordinal) ||
+            MessagesStack.Children.Count != elements.Count)
+        {
+            MessagesStack.Children.Clear();
+            foreach (var element in elements)
+                MessagesStack.Children.Add(element);
+            _lastLayoutSignature = signature;
+            return;
+        }
+
+        for (var i = 0; i < elements.Count; i++)
+        {
+            if (!ReferenceEquals(MessagesStack.Children[i], elements[i]))
+                MessagesStack.Children[i] = elements[i];
         }
     }
 
@@ -1080,6 +1164,8 @@ public sealed partial class ChatPage : UserControl
     });
 
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
+
+    private sealed record CachedMessageElement(string Signature, UIElement Element);
 
     private void ApplyDensity()
     {

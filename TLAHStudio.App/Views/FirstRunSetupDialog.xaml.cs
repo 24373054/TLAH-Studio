@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using TLAHStudio.App.ViewModels;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 
 namespace TLAHStudio.App.Views;
@@ -45,7 +46,7 @@ public sealed partial class FirstRunSetupDialog : ContentDialog
         _vm.ApplyGlobalProviderDefaults(provider);
         BaseUrlBox.Text = _vm.BaseUrl;
         ModelBox.Text = _vm.Model;
-        DeepSeekLongContextCheckBox.IsChecked = false;
+        DeepSeekLongContextCheckBox.IsChecked = _vm.IsGlobalLongContextEnabled;
         ModelPicker.SelectedItem = FindModelOption(_vm.GlobalModelOptions, ModelBox.Text);
         UpdateDeepSeekControls();
         _ = RefreshModelsAsync();
@@ -124,7 +125,7 @@ public sealed partial class FirstRunSetupDialog : ContentDialog
     {
         if (_isPopulating || ModelPicker.SelectedItem is not string model)
             return;
-        if (HasLongContextSuffix(model))
+        if (HasLongContextSuffix(model) || ProviderModelResolver.IsDeepSeekV4Model(model))
             DeepSeekLongContextCheckBox.IsChecked = true;
         ModelBox.Text = SettingsDialogViewModel.ApplyLongContextSuffix(
             model,
@@ -159,13 +160,10 @@ public sealed partial class FirstRunSetupDialog : ContentDialog
     }
 
     private static bool HasLongContextSuffix(string? value) =>
-        (value ?? string.Empty).Trim().EndsWith("[1m]", StringComparison.OrdinalIgnoreCase);
+        ProviderModelResolver.HasLongContextSuffix(value);
 
     private static string RemoveLongContextSuffix(string? value)
     {
-        var model = (value ?? string.Empty).Trim();
-        return model.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase)
-            ? model[..^4]
-            : model;
+        return ProviderModelResolver.NormalizeModelForStorage(value);
     }
 }

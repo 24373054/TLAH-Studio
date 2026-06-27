@@ -111,7 +111,8 @@ public sealed record ProviderStreamRequest(
     int MaxTokens,
     IReadOnlyList<LlmToolDefinition>? Tools = null,
     IProgress<LlmStreamUpdate>? OutputStream = null,
-    IProgress<AgentRuntimeStreamUpdate>? RuntimeStream = null);
+    IProgress<AgentRuntimeStreamUpdate>? RuntimeStream = null,
+    LlmReasoningOptions? Reasoning = null);
 
 public interface IProviderStreamAdapter
 {
@@ -135,6 +136,7 @@ public sealed class ProviderStreamAdapter : IProviderStreamAdapter
             request.MaxTokens,
             request.Tools,
             stream,
+            request.Reasoning,
             ct);
     }
 

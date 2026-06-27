@@ -23,6 +23,11 @@ public class GlobalSettings
     [MaxLength(100)]
     public string Model { get; set; } = "gpt-4o";
 
+    public bool UseLongContext { get; set; }
+
+    [MaxLength(20)]
+    public string ThinkingDepth { get; set; } = "auto";
+
     public double Temperature { get; set; } = 0.7;
 
     public int MaxTokens { get; set; } = 4096;

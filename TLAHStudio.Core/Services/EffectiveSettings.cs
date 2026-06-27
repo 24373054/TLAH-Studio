@@ -1,3 +1,5 @@
+using TLAHStudio.Core.Llm;
+
 namespace TLAHStudio.Core.Services;
 
 /// <summary>
@@ -12,7 +14,11 @@ public record EffectiveSettings(
     double Temperature,
     int MaxTokens,
     string SystemPrompt,
-    string UserRole
+    string UserRole,
+    bool UseLongContext,
+    string ThinkingDepth,
+    int ContextBudgetTokens,
+    int AutoCompactTriggerTokens
 );
 
 /// <summary>
@@ -38,13 +44,7 @@ public static class ProviderModelCatalog
             "deepseek" =>
             [
                 "deepseek-v4-pro",
-                "deepseek-v4-flash",
-                "deepseek-v4-pro[1m]",
-                "deepseek-v4-flash[1m]",
-                "deepseek-v3.1",
-                "deepseek-v3.1-terminus",
-                "deepseek-chat",
-                "deepseek-reasoner"
+                "deepseek-v4-flash"
             ],
             "anthropic" =>
             [

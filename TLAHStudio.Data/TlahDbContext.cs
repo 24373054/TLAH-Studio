@@ -136,6 +136,8 @@ public class TlahDbContext : DbContext
                 Provider = "deepseek",
                 BaseUrl = "https://api.deepseek.com",
                 Model = "deepseek-v4-pro",
+                UseLongContext = true,
+                ThinkingDepth = "auto",
                 Temperature = 0.7,
                 MaxTokens = 4096,
                 SystemPrompt = "You are a helpful assistant.",
@@ -328,6 +330,10 @@ public class TlahDbContext : DbContext
         AddColumnIfMissing(connection, "Chats", "DeletedAt", "TEXT NULL");
         AddColumnIfMissing(connection, "Chats", "ProjectSpaceId", "TEXT NULL");
         AddColumnIfMissing(connection, "Chats", "ConfigProfileId", "TEXT NULL");
+        AddColumnIfMissing(connection, "GlobalSettings", "UseLongContext", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "GlobalSettings", "ThinkingDepth", "TEXT NOT NULL DEFAULT 'auto'");
+        AddColumnIfMissing(connection, "ChatSettings", "UseLongContext", "INTEGER NULL");
+        AddColumnIfMissing(connection, "ChatSettings", "ThinkingDepth", "TEXT NULL");
 
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "ProjectSpaces" (
@@ -353,6 +359,8 @@ public class TlahDbContext : DbContext
                 "ApiKey" TEXT NULL,
                 "BaseUrl" TEXT NOT NULL,
                 "Model" TEXT NOT NULL,
+                "UseLongContext" INTEGER NOT NULL DEFAULT 0,
+                "ThinkingDepth" TEXT NOT NULL DEFAULT 'auto',
                 "Temperature" REAL NOT NULL,
                 "MaxTokens" INTEGER NOT NULL,
                 "UserRole" TEXT NOT NULL,
@@ -362,6 +370,8 @@ public class TlahDbContext : DbContext
                 "UpdatedAt" TEXT NOT NULL
             );
             """);
+        AddColumnIfMissing(connection, "ConfigProfiles", "UseLongContext", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(connection, "ConfigProfiles", "ThinkingDepth", "TEXT NOT NULL DEFAULT 'auto'");
 
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "PromptTemplates" (

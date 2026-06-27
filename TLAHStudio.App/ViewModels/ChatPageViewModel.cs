@@ -527,7 +527,14 @@ public partial class ChatPageViewModel : ObservableObject
                     if (pending <= 0)
                         break;
 
-                    var batchSize = pending > 80 ? 3 : 1;
+                    var batchSize = pending switch
+                    {
+                        > 400 => 24,
+                        > 160 => 12,
+                        > 60 => 6,
+                        > 12 => 3,
+                        _ => 1
+                    };
                     for (var i = 0; i < batchSize; i++)
                     {
                         if (stream.PendingThinkingChars.Count > 0)
@@ -547,7 +554,7 @@ public partial class ChatPageViewModel : ObservableObject
                 if (!changed)
                     break;
                 StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
-                await Task.Delay(10);
+                await Task.Delay(16);
             }
         }
         finally

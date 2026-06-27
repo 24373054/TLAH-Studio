@@ -94,7 +94,7 @@
                             CornerRadius="8" />
                         <CheckBox
                             x:Name="DeepSeekLongContextCheckBox"
-                            Content="Use 1M context ([1m])"
+                            Content="Use DeepSeek 1M context budget"
                             Checked="DeepSeekLongContext_Changed"
                             Unchecked="DeepSeekLongContext_Changed"
                             Foreground="{ThemeResource TextSecondaryBrush}" />

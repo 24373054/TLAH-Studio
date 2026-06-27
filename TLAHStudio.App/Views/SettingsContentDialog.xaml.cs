@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using TLAHStudio.App.ViewModels;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 
 namespace TLAHStudio.App.Views;
@@ -26,6 +27,8 @@ public sealed partial class SettingsContentDialog : ContentDialog
             ChatProviderCombo.ItemsSource = _vm.Providers;
             ModelPicker.ItemsSource = _vm.GlobalModelOptions;
             ChatModelPicker.ItemsSource = _vm.ChatModelOptions;
+            ThinkingDepthCombo.ItemsSource = _vm.ThinkingDepthOptions;
+            ChatThinkingDepthCombo.ItemsSource = _vm.ChatThinkingDepthOptions;
             ProviderCombo.SelectionChanged += ProviderCombo_SelectionChanged;
             ChatProviderCombo.SelectionChanged += ChatProviderCombo_SelectionChanged;
             PopulateGlobal();
@@ -62,6 +65,7 @@ public sealed partial class SettingsContentDialog : ContentDialog
         BaseUrlBox.Text = _vm.BaseUrl;
         ModelBox.Text = _vm.Model;
         DeepSeekLongContextCheckBox.IsChecked = _vm.IsGlobalLongContextEnabled;
+        ThinkingDepthCombo.SelectedItem = ReasoningDepths.Normalize(_vm.ThinkingDepth);
         ModelPicker.SelectedItem = FindModelOption(_vm.GlobalModelOptions, ModelBox.Text);
         UpdateDeepSeekControls();
         TempSlider.Value = _vm.Temperature;
@@ -81,6 +85,9 @@ public sealed partial class SettingsContentDialog : ContentDialog
         ChatBaseUrlBox.Text = _vm.ChatBaseUrl ?? string.Empty;
         ChatModelBox.Text = _vm.ChatModel ?? string.Empty;
         ChatDeepSeekLongContextCheckBox.IsChecked = _vm.IsChatLongContextEnabled;
+        ChatThinkingDepthCombo.SelectedItem = _vm.ChatThinkingDepth == null
+            ? SettingsDialogViewModel.InheritOption
+            : ReasoningDepths.Normalize(_vm.ChatThinkingDepth);
         ChatModelPicker.SelectedItem = FindModelOption(_vm.ChatModelOptions, ChatModelBox.Text);
         UpdateDeepSeekControls();
         ChatTempBox.Text = _vm.ChatTemperature?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
@@ -140,6 +147,7 @@ public sealed partial class SettingsContentDialog : ContentDialog
         _vm.Model = SettingsDialogViewModel.ApplyLongContextSuffix(
             ModelBox.Text,
             SettingsDialogViewModel.IsDeepSeekProvider(_vm.Provider) && _vm.IsGlobalLongContextEnabled);
+        _vm.ThinkingDepth = ThinkingDepthCombo.SelectedItem as string ?? ReasoningDepths.Auto;
         _vm.Temperature = TempSlider.Value;
         _vm.MaxTokens = double.IsNaN(MaxTokensBox.Value) ? _vm.MaxTokens : (int)MaxTokensBox.Value;
         _vm.SystemPrompt = SysPromptBox.Text;
@@ -158,6 +166,10 @@ public sealed partial class SettingsContentDialog : ContentDialog
         _vm.ChatModel = NullIfWhiteSpace(SettingsDialogViewModel.ApplyLongContextSuffix(
             ChatModelBox.Text,
             SettingsDialogViewModel.IsDeepSeekProvider(_vm.ChatProvider) && _vm.IsChatLongContextEnabled));
+        var chatThinkingDepth = ChatThinkingDepthCombo.SelectedItem as string;
+        _vm.ChatThinkingDepth = chatThinkingDepth == SettingsDialogViewModel.InheritOption
+            ? null
+            : chatThinkingDepth;
         _vm.ChatTemperature = TryDouble(ChatTempBox.Text);
         _vm.ChatMaxTokens = TryInt(ChatMaxTokensBox.Text);
         _vm.ChatUserRole = NullIfWhiteSpace(ChatUserRoleBox.Text);
@@ -272,7 +284,8 @@ public sealed partial class SettingsContentDialog : ContentDialog
         _vm.ApplyGlobalProviderDefaults(provider);
         BaseUrlBox.Text = _vm.BaseUrl;
         ModelBox.Text = _vm.Model;
-        DeepSeekLongContextCheckBox.IsChecked = false;
+        DeepSeekLongContextCheckBox.IsChecked = _vm.IsGlobalLongContextEnabled;
+        ThinkingDepthCombo.SelectedItem = ReasoningDepths.Normalize(_vm.ThinkingDepth);
         ModelPicker.SelectedItem = FindModelOption(_vm.GlobalModelOptions, ModelBox.Text);
         UpdateDeepSeekControls();
         _ = RefreshGlobalModelsAfterProviderChangeAsync();
@@ -286,7 +299,10 @@ public sealed partial class SettingsContentDialog : ContentDialog
         _vm.ApplyChatProviderDefaults(ChatProviderCombo.SelectedItem as ProviderInfo);
         ChatBaseUrlBox.Text = _vm.ChatBaseUrl ?? string.Empty;
         ChatModelBox.Text = _vm.ChatModel ?? string.Empty;
-        ChatDeepSeekLongContextCheckBox.IsChecked = false;
+        ChatDeepSeekLongContextCheckBox.IsChecked = _vm.IsChatLongContextEnabled;
+        ChatThinkingDepthCombo.SelectedItem = _vm.ChatThinkingDepth == null
+            ? SettingsDialogViewModel.InheritOption
+            : ReasoningDepths.Normalize(_vm.ChatThinkingDepth);
         ChatModelPicker.SelectedItem = FindModelOption(_vm.ChatModelOptions, ChatModelBox.Text);
         UpdateDeepSeekControls();
         _ = RefreshChatModelsAfterProviderChangeAsync();
@@ -318,7 +334,7 @@ public sealed partial class SettingsContentDialog : ContentDialog
     {
         if (_isPopulating || ModelPicker.SelectedItem is not string model)
             return;
-        if (HasLongContextSuffix(model))
+        if (HasLongContextSuffix(model) || ProviderModelResolver.IsDeepSeekV4Model(model))
             DeepSeekLongContextCheckBox.IsChecked = true;
         ModelBox.Text = SettingsDialogViewModel.ApplyLongContextSuffix(
             model,
@@ -330,7 +346,7 @@ public sealed partial class SettingsContentDialog : ContentDialog
     {
         if (_isPopulating || ChatModelPicker.SelectedItem is not string model)
             return;
-        if (HasLongContextSuffix(model))
+        if (HasLongContextSuffix(model) || ProviderModelResolver.IsDeepSeekV4Model(model))
             ChatDeepSeekLongContextCheckBox.IsChecked = true;
         ChatModelBox.Text = SettingsDialogViewModel.ApplyLongContextSuffix(
             model,
@@ -378,13 +394,10 @@ public sealed partial class SettingsContentDialog : ContentDialog
     }
 
     private static bool HasLongContextSuffix(string? value) =>
-        (value ?? string.Empty).Trim().EndsWith("[1m]", StringComparison.OrdinalIgnoreCase);
+        ProviderModelResolver.HasLongContextSuffix(value);
 
     private static string RemoveLongContextSuffix(string? value)
     {
-        var model = (value ?? string.Empty).Trim();
-        return model.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase)
-            ? model[..^4]
-            : model;
+        return ProviderModelResolver.NormalizeModelForStorage(value);
     }
 }

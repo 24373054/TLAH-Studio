@@ -192,7 +192,7 @@ public class LlmService : ILlmService
             .ToList();
         messagesForLlm.Add(new MessagePayload(NormalizeProviderRole(msgRole), userContent));
         messagesForLlm = _agentContextManager
-            .Prepare(messagesForLlm, BuildContextOptions(), forceCompact: false)
+            .Prepare(messagesForLlm, BuildContextOptions(settings: effective), forceCompact: false)
             .Messages;
 
         // 11. Call the LLM (async, no event loop hacks needed in C#)
@@ -203,7 +203,8 @@ public class LlmService : ILlmService
                 systemPrompt,
                 effective.Temperature,
                 effective.MaxTokens,
-                OutputStream: stream),
+                OutputStream: stream,
+                Reasoning: BuildReasoningOptions(effective)),
             ct);
 
         // 12. Store raw request
@@ -495,7 +496,7 @@ public class LlmService : ILlmService
             effective.Model);
         LlmResponse? lastResponse = null;
         Message? lastAssistantMessage = null;
-        var contextOptions = BuildContextOptions(options);
+        var contextOptions = BuildContextOptions(options, effective);
 
         try
         {
@@ -611,7 +612,8 @@ public class LlmService : ILlmService
                         effective.Temperature,
                         effective.MaxTokens,
                         guard.Tools,
-                        options.OutputStream),
+                        options.OutputStream,
+                        Reasoning: BuildReasoningOptions(effective)),
                     ct);
                 if (_agentContextManager.IsContextLimitError(lastResponse))
                 {
@@ -647,7 +649,8 @@ public class LlmService : ILlmService
                                     effective.Temperature,
                                     effective.MaxTokens,
                                     retryGuard.Tools,
-                                    options.OutputStream),
+                                    options.OutputStream,
+                                    Reasoning: BuildReasoningOptions(effective)),
                                 ct);
                         }
                     }
@@ -980,6 +983,7 @@ public class LlmService : ILlmService
                     systemPrompt,
                     effective.Temperature,
                     effective.MaxTokens,
+                    BuildReasoningOptions(effective),
                     options,
                     ct);
                 if (finalization != null)
@@ -1061,6 +1065,7 @@ public class LlmService : ILlmService
         string systemPrompt,
         double temperature,
         int maxTokens,
+        LlmReasoningOptions reasoning,
         AgentRunOptions options,
         CancellationToken ct)
     {
@@ -1104,7 +1109,8 @@ public class LlmService : ILlmService
                     Math.Min(temperature, 0.4),
                     Math.Max(512, Math.Min(maxTokens, 2048)),
                     Tools: null,
-                    OutputStream: options.OutputStream),
+                    OutputStream: options.OutputStream,
+                    Reasoning: reasoning),
                 ct);
             step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(response.RawResponse));
 
@@ -1683,7 +1689,8 @@ public class LlmService : ILlmService
                 replay.Messages,
                 replay.SystemPrompt,
                 replay.Temperature ?? effective.Temperature,
-                replay.MaxTokens ?? effective.MaxTokens),
+                replay.MaxTokens ?? effective.MaxTokens,
+                Reasoning: BuildReasoningOptions(effective)),
             ct);
 
         var storedRequest = new RawRequest
@@ -1753,7 +1760,8 @@ public class LlmService : ILlmService
                     [new MessagePayload("user", "Reply with OK.")],
                     "You are testing whether this API connection works.",
                     0,
-                    16),
+                    16,
+                    Reasoning: LlmReasoningOptions.Off),
                 ct);
 
             var ok = result.HttpStatus is >= 200 and < 300 && string.IsNullOrWhiteSpace(result.Error);
@@ -1871,7 +1879,7 @@ public class LlmService : ILlmService
             .Select(ToProviderMessage)
             .ToList();
         messagesForLlm = _agentContextManager
-            .Prepare(messagesForLlm, BuildContextOptions(), forceCompact: false)
+            .Prepare(messagesForLlm, BuildContextOptions(settings: effective), forceCompact: false)
             .Messages;
 
         var llmResult = await _providerStreamAdapter.ChatAsync(
@@ -1880,7 +1888,8 @@ public class LlmService : ILlmService
                 messagesForLlm,
                 systemPrompt,
                 effective.Temperature,
-                effective.MaxTokens),
+                effective.MaxTokens,
+                Reasoning: BuildReasoningOptions(effective)),
             ct);
 
         var rawRequest = new RawRequest
@@ -2036,11 +2045,28 @@ public class LlmService : ILlmService
             : "user";
     }
 
-    private static AgentContextOptions BuildContextOptions(AgentRunOptions? options = null) =>
-        new(
-            ContextBudgetTokens: options?.ContextBudgetTokens ?? 32_000,
-            AutoCompactTriggerTokens: options?.AutoCompactTriggerTokens ?? 24_000,
+    private static LlmReasoningOptions BuildReasoningOptions(EffectiveSettings settings) =>
+        new(ReasoningDepths.Normalize(settings.ThinkingDepth));
+
+    private static AgentContextOptions BuildContextOptions(
+        AgentRunOptions? options = null,
+        EffectiveSettings? settings = null)
+    {
+        var budget = settings?.ContextBudgetTokens ?? 32_000;
+        var trigger = settings?.AutoCompactTriggerTokens ?? 24_000;
+        if (options != null)
+        {
+            if (options.ContextBudgetTokens != 32_000)
+                budget = options.ContextBudgetTokens;
+            if (options.AutoCompactTriggerTokens != 24_000)
+                trigger = options.AutoCompactTriggerTokens;
+        }
+
+        return new(
+            ContextBudgetTokens: budget,
+            AutoCompactTriggerTokens: trigger,
             MaxToolResultCharsInContext: options?.MaxToolResultCharsInContext ?? 6_000);
+    }
 
     private static string AppendProjectMemory(
         string systemPrompt,

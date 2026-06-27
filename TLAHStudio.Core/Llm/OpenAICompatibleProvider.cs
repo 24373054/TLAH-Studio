@@ -34,7 +34,7 @@ public class OpenAICompatibleProvider : ILlmProvider
         _http = http;
         _apiKey = apiKey;
         _baseUrl = baseUrl.TrimEnd('/');
-        _model = model;
+        _model = ProviderModelResolver.ToWireModel(providerName, _baseUrl, model);
         _providerName = string.IsNullOrWhiteSpace(providerName) ? "openai_compat" : providerName;
     }
 
@@ -45,6 +45,7 @@ public class OpenAICompatibleProvider : ILlmProvider
         int maxTokens = 4096,
         IReadOnlyList<LlmToolDefinition>? tools = null,
         IProgress<LlmStreamUpdate>? stream = null,
+        LlmReasoningOptions? reasoning = null,
         CancellationToken ct = default)
     {
         // Build the full messages array with system prompt first.
@@ -72,6 +73,7 @@ public class OpenAICompatibleProvider : ILlmProvider
             }).ToArray();
             rawRequest["tool_choice"] = "auto";
         }
+        AddReasoningOptions(rawRequest, reasoning);
 
         if (stream != null)
         {
@@ -189,6 +191,27 @@ public class OpenAICompatibleProvider : ILlmProvider
             ToolCalls: toolCalls,
             ReasoningText: reasoningText
         );
+    }
+
+    private void AddReasoningOptions(Dictionary<string, object> rawRequest, LlmReasoningOptions? reasoning)
+    {
+        var depth = ReasoningDepths.Normalize(reasoning?.Depth);
+        if (depth == ReasoningDepths.Auto)
+            return;
+
+        if (ProviderModelResolver.IsDeepSeekModel(_model))
+        {
+            if (depth == ReasoningDepths.Off)
+            {
+                rawRequest["thinking"] = new { type = "disabled" };
+                return;
+            }
+
+            rawRequest["thinking"] = new { type = "enabled" };
+            rawRequest["reasoning_effort"] = depth == ReasoningDepths.Max
+                ? ReasoningDepths.Max
+                : ReasoningDepths.High;
+        }
     }
 
     private async Task<LlmResponse> ChatStreamAsync(

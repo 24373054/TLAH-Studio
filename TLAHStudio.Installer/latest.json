@@ -1,14 +1,14 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.1.0.exe",
-  "sha256": "531bb8497b077695d384c041234a0ccd63cb7d579fd061b5902c3df3ebda31d4",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.1.1.exe",
+  "sha256": "7d8c40bf57b0b7b1fc0ecba9a729ca96467933983a84a553df8bc9080480a2d7",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Context & Memory v1 and Workspace Code Tools release.\n\nHighlights:\n- Added token budget handling, automatic context compaction, and one-shot reactive retry when providers report context limits\n- Added project memory files plus memory_read and memory_write tools for stable project facts and preferences\n- Persisted large tool outputs into sandbox context artifacts so long runs do not overflow model context\n- Added professional workspace code tools: read, grep, glob, edit, multi_edit, diff, apply_patch, rollback, and lsp_diagnostics\n- Extended tool metadata and safety checks for read-only concurrency, write serialization, path boundaries, backups, and rollback-ready edits\n- Added tests for context compaction, output persistence, project memory, and workspace code edits",
+  "releaseNotes": "Reliability and model configuration update.\n\nFixes:\n- Reduced chat UI stalls during long agent runs by throttling live render updates and reusing message visuals\n- DeepSeek 1M mode now keeps official API model names on the wire while enabling the local 1M context budget\n- Added thinking depth controls with Auto, Off, Low, Medium, High, and Max presets\n- Normalized legacy DeepSeek [1m] model names and added regression coverage for provider request shaping",
   "forceUpdate": true,
-  "minSupportedVersion": "2.1.0",
+  "minSupportedVersion": "2.1.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96871160
+  "installerSizeBytes": 96878480
 }

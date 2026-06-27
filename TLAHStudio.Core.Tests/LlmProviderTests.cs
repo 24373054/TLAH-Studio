@@ -40,6 +40,59 @@ public class LlmProviderTests
     }
 
     [Fact]
+    public async Task DeepSeekOpenAIProvider_StripsLongContextSuffixFromWireModel()
+    {
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
+        {
+          "choices": [
+            { "message": { "content": "OK" } }
+          ]
+        }
+        """));
+        using var client = new HttpClient(handler);
+        var provider = new OpenAICompatibleProvider(
+            client,
+            "sk-test",
+            "https://api.deepseek.com",
+            "deepseek-v4-pro[1m]",
+            "deepseek");
+
+        await provider.ChatAsync([new MessagePayload("user", "hi")], "system");
+
+        var body = await Assert.Single(handler.Requests).Content!.ReadAsStringAsync();
+        Assert.Contains("\"model\":\"deepseek-v4-pro\"", body);
+        Assert.DoesNotContain("deepseek-v4-pro[1m]", body);
+    }
+
+    [Fact]
+    public async Task DeepSeekOpenAIProvider_AddsReasoningDepthRequestOptions()
+    {
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
+        {
+          "choices": [
+            { "message": { "content": "OK" } }
+          ]
+        }
+        """));
+        using var client = new HttpClient(handler);
+        var provider = new OpenAICompatibleProvider(
+            client,
+            "sk-test",
+            "https://api.deepseek.com",
+            "deepseek-v4-pro",
+            "deepseek");
+
+        await provider.ChatAsync(
+            [new MessagePayload("user", "hi")],
+            "system",
+            reasoning: new LlmReasoningOptions(ReasoningDepths.Max));
+
+        var body = await Assert.Single(handler.Requests).Content!.ReadAsStringAsync();
+        Assert.Contains("\"thinking\":{\"type\":\"enabled\"}", body);
+        Assert.Contains("\"reasoning_effort\":\"max\"", body);
+    }
+
+    [Fact]
     public async Task AnthropicProvider_BuildsExpectedRequestAndExtractsResponse()
     {
         var handler = new MapHttpMessageHandler(request =>

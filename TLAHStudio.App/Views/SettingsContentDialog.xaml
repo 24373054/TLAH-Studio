@@ -148,10 +148,18 @@
                 </Grid>
                 <CheckBox
                     x:Name="DeepSeekLongContextCheckBox"
-                    Content="Use 1M context ([1m])"
+                    Content="Use DeepSeek 1M context budget"
                     Checked="DeepSeekLongContext_Changed"
                     Unchecked="DeepSeekLongContext_Changed"
                     Foreground="{ThemeResource TextSecondaryBrush}" />
+
+                <TextBlock Text="Thinking Depth" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <ComboBox
+                    x:Name="ThinkingDepthCombo"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
 
                 <TextBlock Text="Temperature" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <Slider
@@ -302,10 +310,18 @@
                 </Grid>
                 <CheckBox
                     x:Name="ChatDeepSeekLongContextCheckBox"
-                    Content="Use 1M context ([1m])"
+                    Content="Use DeepSeek 1M context budget"
                     Checked="ChatDeepSeekLongContext_Changed"
                     Unchecked="ChatDeepSeekLongContext_Changed"
                     Foreground="{ThemeResource TextSecondaryBrush}" />
+
+                <TextBlock Text="Thinking Depth Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <ComboBox
+                    x:Name="ChatThinkingDepthCombo"
+                    Background="{ThemeResource InputBackgroundBrush}"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    CornerRadius="8" />
 
                 <TextBlock Text="Temperature Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <TextBox

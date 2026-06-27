@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TLAHStudio.Core.Helpers;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 
 namespace TLAHStudio.App.ViewModels;
@@ -20,6 +21,27 @@ public partial class SettingsDialogViewModel : ObservableObject
     public ObservableCollection<ProviderInfo> Providers { get; } = new();
     public ObservableCollection<string> GlobalModelOptions { get; } = new();
     public ObservableCollection<string> ChatModelOptions { get; } = new();
+    public IReadOnlyList<string> ThinkingDepthOptions { get; } =
+    [
+        ReasoningDepths.Auto,
+        ReasoningDepths.Off,
+        ReasoningDepths.Low,
+        ReasoningDepths.Medium,
+        ReasoningDepths.High,
+        ReasoningDepths.Max
+    ];
+    public IReadOnlyList<string> ChatThinkingDepthOptions { get; } =
+    [
+        InheritOption,
+        ReasoningDepths.Auto,
+        ReasoningDepths.Off,
+        ReasoningDepths.Low,
+        ReasoningDepths.Medium,
+        ReasoningDepths.High,
+        ReasoningDepths.Max
+    ];
+
+    public const string InheritOption = "inherit";
 
     [ObservableProperty]
     private ProviderInfo? _selectedProvider;
@@ -29,6 +51,7 @@ public partial class SettingsDialogViewModel : ObservableObject
     [ObservableProperty] private string _apiKey = string.Empty;
     [ObservableProperty] private string _baseUrl = "https://api.deepseek.com";
     [ObservableProperty] private string _model = "deepseek-v4-pro";
+    [ObservableProperty] private string _thinkingDepth = ReasoningDepths.Auto;
     [ObservableProperty] private double _temperature = 0.7;
     [ObservableProperty] private int _maxTokens = 4096;
     [ObservableProperty] private string _systemPrompt = "You are a helpful assistant.";
@@ -39,6 +62,7 @@ public partial class SettingsDialogViewModel : ObservableObject
     [ObservableProperty] private string? _chatApiKey;
     [ObservableProperty] private string? _chatBaseUrl;
     [ObservableProperty] private string? _chatModel;
+    [ObservableProperty] private string? _chatThinkingDepth;
     [ObservableProperty] private double? _chatTemperature;
     [ObservableProperty] private int? _chatMaxTokens;
     [ObservableProperty] private string? _chatUserRole;
@@ -81,11 +105,12 @@ public partial class SettingsDialogViewModel : ObservableObject
             ApiKey = gs.ApiKey;
             BaseUrl = gs.BaseUrl;
             Model = gs.Model;
+            ThinkingDepth = ReasoningDepths.Normalize(gs.ThinkingDepth);
             Temperature = gs.Temperature;
             MaxTokens = gs.MaxTokens;
             SystemPrompt = gs.SystemPrompt;
             UserRole = gs.UserRole;
-            IsGlobalLongContextEnabled = HasLongContextSuffix(Model);
+            IsGlobalLongContextEnabled = gs.UseLongContext;
 
             SelectedProvider = Providers.FirstOrDefault(p => p.Key == gs.Provider);
             LoadFallbackModelOptions(GlobalModelOptions, Provider);
@@ -100,10 +125,11 @@ public partial class SettingsDialogViewModel : ObservableObject
                     ChatApiKey = cs.ApiKey;
                     ChatBaseUrl = cs.BaseUrl;
                     ChatModel = cs.Model;
+                    ChatThinkingDepth = cs.ThinkingDepth;
                     ChatTemperature = cs.Temperature;
                     ChatMaxTokens = cs.MaxTokens;
                     ChatUserRole = cs.UserRole;
-                    IsChatLongContextEnabled = HasLongContextSuffix(ChatModel);
+                    IsChatLongContextEnabled = cs.UseLongContext == true;
                     LoadFallbackModelOptions(ChatModelOptions, ChatProvider ?? Provider);
                 }
                 else
@@ -248,7 +274,9 @@ public partial class SettingsDialogViewModel : ObservableObject
         Provider = provider.Key;
         BaseUrl = provider.DefaultBaseUrl;
         Model = provider.DefaultModel;
-        IsGlobalLongContextEnabled = false;
+        ThinkingDepth = ReasoningDepths.Auto;
+        IsGlobalLongContextEnabled = IsDeepSeekProvider(provider.Key) &&
+            ProviderModelResolver.IsDeepSeekV4Model(provider.DefaultModel);
         LoadFallbackModelOptions(GlobalModelOptions, provider.Key);
     }
 
@@ -257,7 +285,9 @@ public partial class SettingsDialogViewModel : ObservableObject
         ChatProvider = provider?.Key;
         ChatBaseUrl = provider?.DefaultBaseUrl;
         ChatModel = provider?.DefaultModel;
-        IsChatLongContextEnabled = false;
+        ChatThinkingDepth = null;
+        IsChatLongContextEnabled = IsDeepSeekProvider(provider?.Key) &&
+            ProviderModelResolver.IsDeepSeekV4Model(provider?.DefaultModel);
         LoadFallbackModelOptions(ChatModelOptions, provider?.Key ?? Provider);
     }
 
@@ -270,12 +300,7 @@ public partial class SettingsDialogViewModel : ObservableObject
         if (string.IsNullOrEmpty(trimmed))
             return trimmed;
         var withoutSuffix = RemoveLongContextSuffix(trimmed);
-        if (!enabled)
-            return withoutSuffix;
-
-        return IsSupportedDeepSeekLongContextModel(withoutSuffix)
-            ? $"{withoutSuffix}[1m]"
-            : "deepseek-v4-pro[1m]";
+        return withoutSuffix;
     }
 
     [RelayCommand]
@@ -290,6 +315,8 @@ public partial class SettingsDialogViewModel : ObservableObject
                 ApiKey: ApiKey,
                 BaseUrl: BaseUrl,
                 Model: Model,
+                UseLongContext: IsGlobalLongContextEnabled,
+                ThinkingDepth: ThinkingDepth,
                 Temperature: Temperature,
                 MaxTokens: MaxTokens,
                 SystemPrompt: SystemPrompt,
@@ -327,6 +354,8 @@ public partial class SettingsDialogViewModel : ObservableObject
                 ApiKey: ChatApiKey,
                 BaseUrl: ChatBaseUrl,
                 Model: ChatModel,
+                UseLongContext: IsChatLongContextEnabled,
+                ThinkingDepth: ChatThinkingDepth,
                 Temperature: ChatTemperature,
                 MaxTokens: ChatMaxTokens,
                 UserRole: ChatUserRole
@@ -349,13 +378,10 @@ public partial class SettingsDialogViewModel : ObservableObject
     }
 
     private static bool HasLongContextSuffix(string? model) =>
-        !string.IsNullOrWhiteSpace(model) &&
-        model.Trim().EndsWith("[1m]", StringComparison.OrdinalIgnoreCase);
+        ProviderModelResolver.HasLongContextSuffix(model);
 
     private static string RemoveLongContextSuffix(string model) =>
-        model.EndsWith("[1m]", StringComparison.OrdinalIgnoreCase)
-            ? model[..^4]
-            : model;
+        ProviderModelResolver.NormalizeModelForStorage(model);
 
     private static bool IsSupportedDeepSeekLongContextModel(string model) =>
         string.Equals(model, "deepseek-v4-pro", StringComparison.OrdinalIgnoreCase) ||
@@ -377,6 +403,7 @@ public partial class SettingsDialogViewModel : ObservableObject
         ChatApiKey = null;
         ChatBaseUrl = null;
         ChatModel = null;
+        ChatThinkingDepth = null;
         ChatTemperature = null;
         ChatMaxTokens = null;
         ChatUserRole = null;

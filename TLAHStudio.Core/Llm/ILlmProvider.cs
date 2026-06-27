@@ -25,6 +25,7 @@ public interface ILlmProvider
         int maxTokens = 4096,
         IReadOnlyList<LlmToolDefinition>? tools = null,
         IProgress<LlmStreamUpdate>? stream = null,
+        LlmReasoningOptions? reasoning = null,
         CancellationToken ct = default);
 
     /// <summary>Short name for this provider type.</summary>
