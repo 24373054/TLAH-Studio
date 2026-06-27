@@ -1,14 +1,14 @@
 {
-  "version": "1.7.5",
+  "version": "2.1.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-1.7.5.exe",
-  "sha256": "ad2b8f840208501c865fb749602e7406ab64bf459da843b7a51860fea52a9020",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.1.0.exe",
+  "sha256": "531bb8497b077695d384c041234a0ccd63cb7d579fd061b5902c3df3ebda31d4",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Streaming latency reliability update.\n\nFixes:\n- Real SSE reads now avoid capturing the WinUI thread, so streaming chunks can update the chat while the provider is still generating\n- Streaming requests now explicitly send Accept: text/event-stream for OpenAI-compatible, DeepSeek, and Anthropic-compatible endpoints\n- Added tests to guard streaming request headers",
+  "releaseNotes": "Context & Memory v1 and Workspace Code Tools release.\n\nHighlights:\n- Added token budget handling, automatic context compaction, and one-shot reactive retry when providers report context limits\n- Added project memory files plus memory_read and memory_write tools for stable project facts and preferences\n- Persisted large tool outputs into sandbox context artifacts so long runs do not overflow model context\n- Added professional workspace code tools: read, grep, glob, edit, multi_edit, diff, apply_patch, rollback, and lsp_diagnostics\n- Extended tool metadata and safety checks for read-only concurrency, write serialization, path boundaries, backups, and rollback-ready edits\n- Added tests for context compaction, output persistence, project memory, and workspace code edits",
   "forceUpdate": true,
-  "minSupportedVersion": "1.7.5",
+  "minSupportedVersion": "2.1.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96841712
+  "installerSizeBytes": 96871160
 }

@@ -100,7 +100,10 @@ public sealed record AgentRunOptions(
     int MaxCommandOutputChars = 12000,
     bool AutoApproveTools = false,
     IProgress<LlmStreamUpdate>? OutputStream = null,
-    IProgress<AgentProgressUpdate>? Progress = null);
+    IProgress<AgentProgressUpdate>? Progress = null,
+    int ContextBudgetTokens = 32_000,
+    int AutoCompactTriggerTokens = 24_000,
+    int MaxToolResultCharsInContext = 6_000);
 
 public sealed record AgentProgressUpdate(
     Guid AgentRunId,

@@ -2,7 +2,7 @@
 ; Supports: manual install (GUI wizard) and silent update (/VERYSILENT /NORESTART)
 
 #define MyAppName "TLAH Studio"
-#define MyAppVersion "1.7.5"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "KeEntropy Technology"
 #define MyAppExeName "TLAHStudio.App.exe"
 #define MyAppUpdaterName "TLAHStudio.Updater.exe"
@@ -110,3 +110,6 @@ begin
     CreateDir(ExpandConstant('{app}\cache'));
   end;
 end;
+
+
+

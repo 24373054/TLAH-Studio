@@ -22,6 +22,17 @@ public static class AgentToolNames
     public const string BrowserRead = "browser_read";
     public const string McpListTools = "mcp_list_tools";
     public const string McpCall = "mcp_call";
+    public const string MemoryRead = "memory_read";
+    public const string MemoryWrite = "memory_write";
+    public const string CodeRead = "read";
+    public const string CodeGrep = "grep";
+    public const string CodeGlob = "glob";
+    public const string CodeEdit = "edit";
+    public const string CodeMultiEdit = "multi_edit";
+    public const string CodeDiff = "diff";
+    public const string CodeApplyPatch = "apply_patch";
+    public const string CodeRollback = "rollback";
+    public const string CodeDiagnostics = "lsp_diagnostics";
 
     public static string Normalize(string name) =>
         string.Equals(name, LegacySandboxExec, StringComparison.OrdinalIgnoreCase)
@@ -42,6 +53,168 @@ public sealed record AgentToolArtifact(
     long SizeBytes,
     string Sha256);
 
+public static class AgentToolRenderHints
+{
+    public const string Text = "text";
+    public const string Terminal = "terminal";
+    public const string File = "file";
+    public const string Network = "network";
+    public const string Git = "git";
+    public const string Mcp = "mcp";
+}
+
+public static class AgentToolResultPersistenceModes
+{
+    public const string Inline = "inline";
+    public const string PersistLargeOutputs = "persist_large_outputs";
+    public const string Artifact = "artifact";
+}
+
+public sealed record AgentToolMetadata(
+    string Name,
+    bool RequiresApproval,
+    bool IsReadOnly,
+    bool IsConcurrencySafe,
+    bool IsDestructive,
+    string RenderHint,
+    int MaxResultSizeChars,
+    string ResultPersistence,
+    bool IsOpenWorld = false)
+{
+    public static AgentToolMetadata For(string name, bool requiresApproval)
+    {
+        var normalized = AgentToolNames.Normalize(name);
+        return normalized switch
+        {
+            AgentToolNames.FileList or
+            AgentToolNames.FileRead or
+            AgentToolNames.FileSearch or
+            AgentToolNames.MemoryRead or
+            AgentToolNames.CodeRead or
+            AgentToolNames.CodeGrep or
+            AgentToolNames.CodeGlob or
+            AgentToolNames.CodeDiff or
+            AgentToolNames.CodeDiagnostics => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: true,
+                IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.File,
+                24_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
+            AgentToolNames.WebSearch or
+            AgentToolNames.BrowserRead => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: true,
+                IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.Network,
+                18_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs,
+                IsOpenWorld: true),
+
+            AgentToolNames.McpListTools => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: true,
+                IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.Mcp,
+                18_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs,
+                IsOpenWorld: true),
+
+            AgentToolNames.FileSend => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: true,
+                IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.File,
+                8_000,
+                AgentToolResultPersistenceModes.Artifact),
+
+            AgentToolNames.FileWrite or
+            AgentToolNames.MemoryWrite or
+            AgentToolNames.CodeEdit or
+            AgentToolNames.CodeMultiEdit or
+            AgentToolNames.CodeApplyPatch or
+            AgentToolNames.CodeRollback => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: false,
+                AgentToolRenderHints.File,
+                18_000,
+                AgentToolResultPersistenceModes.Artifact),
+
+            AgentToolNames.Git => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: true,
+                AgentToolRenderHints.Git,
+                18_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
+            AgentToolNames.HttpRequest => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: false,
+                AgentToolRenderHints.Network,
+                18_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs,
+                IsOpenWorld: true),
+
+            AgentToolNames.McpCall => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: true,
+                AgentToolRenderHints.Mcp,
+                18_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs,
+                IsOpenWorld: true),
+
+            AgentToolNames.SandboxExec or
+            AgentToolNames.TerminalExec => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: true,
+                AgentToolRenderHints.Terminal,
+                20_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
+            _ => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: true,
+                AgentToolRenderHints.Text,
+                12_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs,
+                IsOpenWorld: true)
+        };
+    }
+}
+
+public sealed record AgentToolValidationResult(bool Success, string? Error = null)
+{
+    public static AgentToolValidationResult Ok { get; } = new(true);
+    public static AgentToolValidationResult Fail(string error) => new(false, error);
+}
+
 public sealed record AgentToolResult(
     bool Success,
     string Output,
@@ -61,6 +234,23 @@ public interface IAgentTool
 {
     LlmToolDefinition Definition { get; }
     bool RequiresApproval { get; }
+    AgentToolMetadata Metadata => AgentToolMetadata.For(Definition.Name, RequiresApproval);
+
+    bool IsReadOnly => Metadata.IsReadOnly;
+    bool IsConcurrencySafe => Metadata.IsConcurrencySafe;
+    bool IsDestructive => Metadata.IsDestructive;
+    string RenderHint => Metadata.RenderHint;
+    int MaxResultSizeChars => Metadata.MaxResultSizeChars;
+    string ResultPersistence => Metadata.ResultPersistence;
+
+    AgentToolValidationResult ValidateInput(string argumentsJson)
+    {
+        if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+            return AgentToolValidationResult.Fail(error ?? "Invalid tool arguments.");
+        return root.ValueKind == JsonValueKind.Object
+            ? AgentToolValidationResult.Ok
+            : AgentToolValidationResult.Fail("Tool arguments must be a JSON object.");
+    }
 
     Task<AgentToolResult> ExecuteAsync(
         AgentToolExecutionContext context,
@@ -71,6 +261,7 @@ public interface IAgentTool
 public interface IAgentToolRegistry
 {
     IReadOnlyList<LlmToolDefinition> Definitions { get; }
+    IReadOnlyList<AgentToolMetadata> Metadata { get; }
     bool TryGet(string name, out IAgentTool tool);
 }
 
@@ -97,6 +288,9 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
 
     public IReadOnlyList<LlmToolDefinition> Definitions =>
         _tools.Values.Select(t => t.Definition).ToArray();
+
+    public IReadOnlyList<AgentToolMetadata> Metadata =>
+        _tools.Values.Select(t => t.Metadata).ToArray();
 
     public bool TryGet(string name, out IAgentTool tool)
     {

@@ -2,6 +2,7 @@ using System.Net;
 using System.Diagnostics;
 using System.Text.Json;
 using TLAHStudio.Core.Llm;
+using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
 
 namespace TLAHStudio.Core.Tests;
@@ -71,6 +72,178 @@ public class BuiltInAgentToolsTests
         Assert.All(registry.Definitions, definition =>
             Assert.Matches("^[a-zA-Z0-9_-]+$", definition.Name));
         Assert.True(registry.TryGet("sandbox.exec", out _));
+    }
+
+    [Fact]
+    public void ToolPlatformV2MetadataClassifiesReadAndWriteTools()
+    {
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Tool.Tests", Guid.NewGuid().ToString("N")));
+        using var db = TestDb.Create();
+        var platform = new ToolPlatformService(db);
+        var registry = new AgentToolRegistry(
+        [
+            new FileListAgentTool(sandbox),
+            new FileReadAgentTool(sandbox, platform),
+            new FileWriteAgentTool(sandbox, platform),
+            new SandboxExecAgentTool(sandbox)
+        ]);
+
+        Assert.True(registry.TryGet(AgentToolNames.FileRead, out var read));
+        Assert.True(read.Metadata.IsReadOnly);
+        Assert.True(read.Metadata.IsConcurrencySafe);
+        Assert.Equal(AgentToolRenderHints.File, read.Metadata.RenderHint);
+
+        Assert.True(registry.TryGet(AgentToolNames.FileWrite, out var write));
+        Assert.False(write.Metadata.IsReadOnly);
+        Assert.False(write.Metadata.IsConcurrencySafe);
+        Assert.Equal(AgentToolResultPersistenceModes.Artifact, write.Metadata.ResultPersistence);
+
+        Assert.True(registry.TryGet(AgentToolNames.SandboxExec, out var shell));
+        Assert.True(shell.Metadata.IsDestructive);
+        Assert.Equal(AgentToolRenderHints.Terminal, shell.Metadata.RenderHint);
+    }
+
+    [Fact]
+    public void ToolExecutionSchedulerBatchesReadOnlyToolsConcurrentlyAndWritesSerially()
+    {
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Tool.Tests", Guid.NewGuid().ToString("N")));
+        using var db = TestDb.Create();
+        var platform = new ToolPlatformService(db);
+        var registry = new AgentToolRegistry(
+        [
+            new FileListAgentTool(sandbox),
+            new FileReadAgentTool(sandbox, platform),
+            new FileWriteAgentTool(sandbox, platform)
+        ]);
+        var scheduler = new ToolExecutionScheduler(registry, sandbox);
+
+        var batches = scheduler.PlanBatches(
+        [
+            new ToolExecutionPlanItem(AgentToolNames.FileList, "{}"),
+            new ToolExecutionPlanItem(AgentToolNames.FileRead, """{"path":"a.txt"}"""),
+            new ToolExecutionPlanItem(AgentToolNames.FileWrite, """{"path":"a.txt","content":"x"}"""),
+            new ToolExecutionPlanItem(AgentToolNames.FileRead, """{"path":"a.txt"}""")
+        ]);
+
+        Assert.Equal(3, batches.Count);
+        Assert.True(batches[0].Concurrent);
+        Assert.Equal(2, batches[0].Items.Count);
+        Assert.False(batches[1].Concurrent);
+        Assert.Equal(AgentToolNames.FileWrite, batches[1].Items[0].ToolName);
+        Assert.True(batches[2].Concurrent);
+    }
+
+    [Fact]
+    public void AgentContextManagerCompactsMiddleMessagesAndTrimsToolResults()
+    {
+        var manager = new AgentContextManager();
+        var messages = Enumerable.Range(0, 40)
+            .Select(i => new MessagePayload(i % 2 == 0 ? "user" : "assistant", new string('x', 1200) + $" {i}"))
+            .ToList();
+        messages.Add(new MessagePayload("tool", new string('z', 8000), "call-1"));
+
+        var prepared = manager.Prepare(
+            messages,
+            new AgentContextOptions(
+                ContextBudgetTokens: 2000,
+                AutoCompactTriggerTokens: 1000,
+                PreserveHeadMessages: 2,
+                PreserveTailMessages: 4,
+                MaxToolResultCharsInContext: 400),
+            forceCompact: false);
+
+        Assert.True(prepared.WasCompacted);
+        Assert.True(prepared.EstimatedTokensAfter < prepared.EstimatedTokensBefore);
+        Assert.Contains(prepared.Messages, m => m.Content.Contains("context summary boundary", StringComparison.Ordinal));
+        Assert.Contains("tool result preview truncated", prepared.Messages.Last().Content);
+    }
+
+    [Fact]
+    public async Task ToolResultPersistencePersistsLargeToolOutput()
+    {
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Context.Tests", Guid.NewGuid().ToString("N")));
+        var chatId = Guid.NewGuid();
+        var invocation = new ToolInvocation
+        {
+            Id = Guid.NewGuid(),
+            ToolName = AgentToolNames.TerminalExec
+        };
+        var service = new ToolResultPersistenceService();
+
+        var persisted = await service.PersistForContextAsync(
+            sandbox,
+            chatId,
+            invocation,
+            new AgentToolResult(true, new string('a', 5000)),
+            500);
+
+        Assert.True(persisted.Persisted);
+        Assert.NotNull(persisted.PersistedArtifact);
+        Assert.Contains("[persisted-output:", persisted.ContextResult.Output);
+        Assert.True(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chatId), persisted.PersistedPath!)));
+    }
+
+    [Fact]
+    public async Task MemoryToolsReadAndWriteProjectMemory()
+    {
+        await using var db = TestDb.Create();
+        var chat = new Chat { Title = "Memory" };
+        db.Set<Chat>().Add(chat);
+        await db.SaveChangesAsync();
+        var memory = new ProjectMemoryService(db);
+        var context = new AgentToolExecutionContext(chat.Id, Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+        var write = new MemoryWriteAgentTool(memory);
+        var read = new MemoryReadAgentTool(memory);
+
+        var writeResult = await write.ExecuteAsync(
+            context,
+            """{"content":"# Project Memory\n\n- Prefer concise release notes.","append":false,"reason":"Remember a stable preference."}""");
+        Assert.True(writeResult.Success);
+
+        var readResult = await read.ExecuteAsync(context, """{"reason":"Verify memory."}""");
+        Assert.True(readResult.Success);
+        Assert.Contains("Prefer concise release notes", readResult.Output);
+    }
+
+    [Fact]
+    public async Task WorkspaceCodeToolsEditReadGrepAndRollback()
+    {
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.CodeTools.Tests", Guid.NewGuid().ToString("N")));
+        var context = new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+        var edit = new CodeEditAgentTool(sandbox);
+        var read = new CodeReadAgentTool(sandbox);
+        var grep = new CodeGrepAgentTool(sandbox);
+        var rollback = new CodeRollbackAgentTool(sandbox);
+
+        var create = await edit.ExecuteAsync(
+            context,
+            """{"path":"src/hello.cs","new_text":"class Hello { }\n","create_if_missing":true,"reason":"Create test file."}""");
+        Assert.True(create.Success, create.Error);
+        Assert.Contains("Backup:", create.Output);
+
+        var readResult = await read.ExecuteAsync(context, """{"path":"src/hello.cs","start_line":1,"line_count":5}""");
+        Assert.True(readResult.Success);
+        Assert.Contains("class Hello", readResult.Output);
+
+        var grepResult = await grep.ExecuteAsync(context, """{"query":"Hello","path":"src"}""");
+        Assert.True(grepResult.Success);
+        Assert.Contains("hello.cs:1", grepResult.Output);
+
+        var backupId = create.Output
+            .Split('\n')
+            .Select(line => line.Trim())
+            .First(line => line.StartsWith("Backup:", StringComparison.Ordinal))
+            .Replace("Backup:", string.Empty, StringComparison.Ordinal)
+            .Trim();
+        var rollbackResult = await rollback.ExecuteAsync(
+            context,
+            JsonSerializer.Serialize(new { path = "src/hello.cs", backup_id = backupId, reason = "Undo test edit." }));
+        Assert.True(rollbackResult.Success, rollbackResult.Error);
+        Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(context.ChatId), "src", "hello.cs")));
     }
 
     [Fact]

@@ -40,6 +40,9 @@ public static class AgentEventTypes
     public const string ModelRequest = "model_request";
     public const string ModelResponse = "model_response";
     public const string ProtocolRepair = "protocol_repair";
+    public const string ContextCompacted = "context_compacted";
+    public const string ToolResultPersisted = "tool_result_persisted";
+    public const string MemoryLoaded = "memory_loaded";
     public const string ToolRequest = "tool_request";
     public const string ApprovalRequested = "approval_requested";
     public const string ApprovalGranted = "approval_granted";

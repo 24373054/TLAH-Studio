@@ -27,6 +27,14 @@ public class LlmService : ILlmService
     private readonly ISandboxCommandService _sandboxCommandService;
     private readonly IAgentToolRegistry _agentTools;
     private readonly IToolPlatformService _toolPlatform;
+    private readonly IAgentEventStream _agentEventStream;
+    private readonly ICheckpointStore _checkpointStore;
+    private readonly IProviderStreamAdapter _providerStreamAdapter;
+    private readonly IToolExecutionScheduler _toolExecutionScheduler;
+    private readonly IAgentRunEngine _agentRunEngine;
+    private readonly IAgentContextManager _agentContextManager;
+    private readonly IProjectMemoryService _projectMemory;
+    private readonly IToolResultPersistenceService _toolResultPersistence;
 
     public LlmService(
         DbContext db,
@@ -35,7 +43,15 @@ public class LlmService : ILlmService
         IHttpClientFactory httpClientFactory,
         ISandboxCommandService? sandboxCommandService = null,
         IAgentToolRegistry? agentTools = null,
-        IToolPlatformService? toolPlatform = null)
+        IToolPlatformService? toolPlatform = null,
+        IAgentEventStream? agentEventStream = null,
+        ICheckpointStore? checkpointStore = null,
+        IProviderStreamAdapter? providerStreamAdapter = null,
+        IToolExecutionScheduler? toolExecutionScheduler = null,
+        IAgentRunEngine? agentRunEngine = null,
+        IAgentContextManager? agentContextManager = null,
+        IProjectMemoryService? projectMemory = null,
+        IToolResultPersistenceService? toolResultPersistence = null)
     {
         _db = db;
         _chatService = chatService;
@@ -43,6 +59,9 @@ public class LlmService : ILlmService
         _httpClientFactory = httpClientFactory;
         _sandboxCommandService = sandboxCommandService ?? new SandboxCommandService();
         _toolPlatform = toolPlatform ?? new ToolPlatformService(db);
+        _agentContextManager = agentContextManager ?? new AgentContextManager();
+        _projectMemory = projectMemory ?? new ProjectMemoryService(db);
+        _toolResultPersistence = toolResultPersistence ?? new ToolResultPersistenceService();
         if (agentTools != null)
         {
             _agentTools = agentTools;
@@ -67,9 +86,25 @@ public class LlmService : ILlmService
                 new WebSearchAgentTool(_toolPlatform, network, httpClientFactory),
                 new BrowserReadAgentTool(_toolPlatform, network, httpClientFactory),
                 new McpListToolsAgentTool(mcp),
-                new McpCallAgentTool(mcp)
+                new McpCallAgentTool(mcp),
+                new MemoryReadAgentTool(_projectMemory),
+                new MemoryWriteAgentTool(_projectMemory),
+                new CodeReadAgentTool(_sandboxCommandService),
+                new CodeGrepAgentTool(_sandboxCommandService),
+                new CodeGlobAgentTool(_sandboxCommandService),
+                new CodeEditAgentTool(_sandboxCommandService),
+                new CodeMultiEditAgentTool(_sandboxCommandService),
+                new CodeDiffAgentTool(_sandboxCommandService),
+                new CodeApplyPatchAgentTool(_sandboxCommandService),
+                new CodeRollbackAgentTool(_sandboxCommandService),
+                new CodeDiagnosticsAgentTool(_sandboxCommandService)
             ]);
         }
+        _agentEventStream = agentEventStream ?? new AgentEventStream(db);
+        _checkpointStore = checkpointStore ?? new CheckpointStore(db);
+        _providerStreamAdapter = providerStreamAdapter ?? new ProviderStreamAdapter();
+        _toolExecutionScheduler = toolExecutionScheduler ?? new ToolExecutionScheduler(_agentTools, _sandboxCommandService);
+        _agentRunEngine = agentRunEngine ?? new AgentRunEngine();
     }
 
     /// <summary>
@@ -107,6 +142,9 @@ public class LlmService : ILlmService
             _db.Set<ConfigProfile>(),
             chatId,
             ct);
+        var memoryPath = await _projectMemory.GetMemoryPathAsync(chatId, ct);
+        var projectMemory = await _projectMemory.ReadAsync(chatId, ct);
+        systemPrompt = AppendProjectMemory(systemPrompt, memoryPath, projectMemory);
 
         // 5. Determine the role to use
         var msgRole = role ?? effective.UserRole;
@@ -153,15 +191,20 @@ public class LlmService : ILlmService
             .Select(ToProviderMessage)
             .ToList();
         messagesForLlm.Add(new MessagePayload(NormalizeProviderRole(msgRole), userContent));
+        messagesForLlm = _agentContextManager
+            .Prepare(messagesForLlm, BuildContextOptions(), forceCompact: false)
+            .Messages;
 
         // 11. Call the LLM (async, no event loop hacks needed in C#)
-        var llmResult = await provider.ChatAsync(
-            messages: messagesForLlm,
-            systemPrompt: systemPrompt,
-            temperature: effective.Temperature,
-            maxTokens: effective.MaxTokens,
-            stream: stream,
-            ct: ct);
+        var llmResult = await _providerStreamAdapter.ChatAsync(
+            new ProviderStreamRequest(
+                provider,
+                messagesForLlm,
+                systemPrompt,
+                effective.Temperature,
+                effective.MaxTokens,
+                OutputStream: stream),
+            ct);
 
         // 12. Store raw request
         var rawRequest = new RawRequest
@@ -280,7 +323,10 @@ public class LlmService : ILlmService
             .ToList(),
             seq);
         await SaveCheckpointAsync(run, state, ct);
-        return await ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, ct);
+        return await _agentRunEngine.ContinueAsync(
+            run,
+            token => ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, token),
+            ct);
     }
 
     public async Task<SendMessageResult> ResumeAgentTaskAsync(
@@ -301,10 +347,7 @@ public class LlmService : ILlmService
             .Where(m => m.TurnId == run.TurnId && (m.Role == "user" || m.Role == "system"))
             .OrderBy(m => m.SequenceNum)
             .FirstAsync(ct);
-        var checkpoint = await _db.Set<AgentCheckpoint>()
-            .Where(c => c.AgentRunId == run.Id)
-            .OrderByDescending(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct)
+        var checkpoint = await _checkpointStore.GetLatestAsync(run.Id, ct)
             ?? throw new InvalidOperationException("The agent run has no checkpoint to resume.");
         var state = JsonSerializer.Deserialize<AgentExecutionState>(checkpoint.StateJson)
             ?? throw new InvalidOperationException("The agent checkpoint is invalid.");
@@ -324,7 +367,10 @@ public class LlmService : ILlmService
             new { run.CurrentStep, run.MaxSteps },
             ct: ct);
 
-        return await ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, ct);
+        return await _agentRunEngine.ContinueAsync(
+            run,
+            token => ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, token),
+            ct);
     }
 
     public async Task<AgentRunSnapshot?> GetLatestAgentRunAsync(
@@ -428,9 +474,19 @@ public class LlmService : ILlmService
             _db.Set<ConfigProfile>(),
             run.ChatId,
             ct);
+        var memoryPath = await _projectMemory.GetMemoryPathAsync(run.ChatId, ct);
+        var projectMemory = await _projectMemory.ReadAsync(run.ChatId, ct);
         systemPrompt = BuildAgentSystemPrompt(
             systemPrompt,
-            _sandboxCommandService.GetSandboxRoot(run.ChatId));
+            _sandboxCommandService.GetSandboxRoot(run.ChatId),
+            memoryPath,
+            projectMemory);
+        await LogAgentEventAsync(
+            run,
+            AgentEventTypes.MemoryLoaded,
+            "Project memory file loaded into the agent context.",
+            new { memoryPath, chars = projectMemory.Length },
+            ct: ct);
         var provider = LlmProviderFactory.Create(
             _httpClientFactory.CreateClient("LLM"),
             effective.Provider,
@@ -439,6 +495,7 @@ public class LlmService : ILlmService
             effective.Model);
         LlmResponse? lastResponse = null;
         Message? lastAssistantMessage = null;
+        var contextOptions = BuildContextOptions(options);
 
         try
         {
@@ -467,6 +524,28 @@ public class LlmService : ILlmService
                 };
                 _db.Set<AgentStep>().Add(step);
                 await _db.SaveChangesAsync(ct);
+
+                var prepared = _agentContextManager.Prepare(state.Messages, contextOptions);
+                if (prepared.WasCompacted)
+                {
+                    state.Messages = prepared.Messages;
+                    step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
+                    await SaveCheckpointAsync(run, state, ct);
+                    await LogAgentEventAsync(
+                        run,
+                        AgentEventTypes.ContextCompacted,
+                        prepared.Summary,
+                        new
+                        {
+                            prepared.EstimatedTokensBefore,
+                            prepared.EstimatedTokensAfter,
+                            options.ContextBudgetTokens,
+                            options.AutoCompactTriggerTokens
+                        },
+                        step.Id,
+                        severity: AgentEventSeverities.Warning,
+                        ct: ct);
+                }
 
                 var guard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
                 if (guard.HasRepairs)
@@ -524,14 +603,55 @@ public class LlmService : ILlmService
                     },
                     step.Id,
                     ct: ct);
-                lastResponse = await provider.ChatAsync(
-                    messages: guard.Messages.ToList(),
-                    systemPrompt: systemPrompt,
-                    temperature: effective.Temperature,
-                    maxTokens: effective.MaxTokens,
-                    tools: guard.Tools,
-                    stream: options.OutputStream,
-                    ct: ct);
+                lastResponse = await _providerStreamAdapter.ChatAsync(
+                    new ProviderStreamRequest(
+                        provider,
+                        guard.Messages.ToList(),
+                        systemPrompt,
+                        effective.Temperature,
+                        effective.MaxTokens,
+                        guard.Tools,
+                        options.OutputStream),
+                    ct);
+                if (_agentContextManager.IsContextLimitError(lastResponse))
+                {
+                    var forced = _agentContextManager.Prepare(state.Messages, contextOptions, forceCompact: true);
+                    if (forced.WasCompacted)
+                    {
+                        state.Messages = forced.Messages;
+                        step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
+                        await SaveCheckpointAsync(run, state, ct);
+                        await LogAgentEventAsync(
+                            run,
+                            AgentEventTypes.ContextCompacted,
+                            "Provider reported a context limit; compacted and retried the model request once.",
+                            new
+                            {
+                                forced.EstimatedTokensBefore,
+                                forced.EstimatedTokensAfter,
+                                originalHttpStatus = lastResponse.HttpStatus,
+                                originalError = lastResponse.Error
+                            },
+                            step.Id,
+                            severity: AgentEventSeverities.Warning,
+                            ct: ct);
+
+                        var retryGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
+                        if (!retryGuard.IsRejected)
+                        {
+                            lastResponse = await _providerStreamAdapter.ChatAsync(
+                                new ProviderStreamRequest(
+                                    provider,
+                                    retryGuard.Messages.ToList(),
+                                    systemPrompt,
+                                    effective.Temperature,
+                                    effective.MaxTokens,
+                                    retryGuard.Tools,
+                                    options.OutputStream),
+                                ct);
+                        }
+                    }
+                }
                 step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(lastResponse.RawResponse));
                 await LogAgentEventAsync(
                     run,
@@ -710,7 +830,7 @@ public class LlmService : ILlmService
                     SafetyLevel = safety.Level,
                     SafetySummary = safety.Summary,
                     SafetyJson = SecretRedactor.RedactJson(safety.PreviewJson),
-                    RequiresApproval = tool.RequiresApproval
+                    RequiresApproval = tool.Metadata.RequiresApproval
                 };
                 _db.Set<ToolInvocation>().Add(invocation);
 
@@ -799,12 +919,13 @@ public class LlmService : ILlmService
                             string.Empty,
                             $"Safety policy blocked this tool call. {safety.Warning ?? safety.Summary}"),
                         state,
+                        options,
                         ct);
                     continue;
                 }
 
                 var requiresManualApproval =
-                    (tool.RequiresApproval && !options.AutoApproveTools && !policy.IsAllowed) ||
+                    (tool.Metadata.RequiresApproval && !options.AutoApproveTools && !policy.IsAllowed) ||
                     (safety.RequiresExplicitApproval && !policy.IsAllowed);
                 if (requiresManualApproval)
                 {
@@ -975,14 +1096,16 @@ public class LlmService : ILlmService
                 step.Id,
                 ct: ct);
 
-            var response = await provider.ChatAsync(
-                messages: summaryMessages,
-                systemPrompt: systemPrompt,
-                temperature: Math.Min(temperature, 0.4),
-                maxTokens: Math.Max(512, Math.Min(maxTokens, 2048)),
-                tools: null,
-                stream: options.OutputStream,
-                ct: ct);
+            var response = await _providerStreamAdapter.ChatAsync(
+                new ProviderStreamRequest(
+                    provider,
+                    summaryMessages,
+                    systemPrompt,
+                    Math.Min(temperature, 0.4),
+                    Math.Max(512, Math.Min(maxTokens, 2048)),
+                    Tools: null,
+                    OutputStream: options.OutputStream),
+                ct);
             step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(response.RawResponse));
 
             if (response.HttpStatus is < 200 or >= 300 ||
@@ -1115,7 +1238,7 @@ public class LlmService : ILlmService
                     invocation.Id,
                     severity: AgentEventSeverities.Warning,
                     ct: ct);
-                await CompleteInvocationWithResultAsync(run, invocation, step, result, state, ct);
+                await CompleteInvocationWithResultAsync(run, invocation, step, result, state, options, ct);
                 return;
             }
 
@@ -1130,6 +1253,8 @@ public class LlmService : ILlmService
                 new
                 {
                     invocation.ToolName,
+                    tool.Metadata.RenderHint,
+                    tool.Metadata.IsConcurrencySafe,
                     safety.Level,
                     safety.Category,
                     safety.IsReadOnly,
@@ -1138,15 +1263,30 @@ public class LlmService : ILlmService
                 step.Id,
                 invocation.Id,
                 ct: ct);
-            result = await tool.ExecuteAsync(
-                new AgentToolExecutionContext(
-                    run.ChatId,
-                    run.Id,
-                    invocation.Id,
+            var scheduled = await _toolExecutionScheduler.ExecuteAsync(
+                new ToolExecutionRequest(
+                    run,
+                    invocation,
                     options.CommandTimeoutSeconds,
                     options.MaxCommandOutputChars),
-                invocation.ArgumentsJson,
                 ct);
+            safety = scheduled.Safety;
+            invocation.SafetyLevel = safety.Level;
+            invocation.SafetySummary = safety.Summary;
+            invocation.SafetyJson = SecretRedactor.RedactJson(safety.PreviewJson);
+            result = scheduled.Result;
+            if (safety.IsBlocked)
+            {
+                await LogAgentEventAsync(
+                    run,
+                    AgentEventTypes.Error,
+                    $"Safety policy blocked {invocation.ToolName}: {safety.Summary}",
+                    new { safety.Warning, safety.PreviewJson },
+                    step.Id,
+                    invocation.Id,
+                    severity: AgentEventSeverities.Warning,
+                    ct: ct);
+            }
             invocation.Status = result.Success
                 ? ToolInvocationStatuses.Completed
                 : ToolInvocationStatuses.Failed;
@@ -1155,7 +1295,7 @@ public class LlmService : ILlmService
                 : AgentStepStatuses.Failed;
         }
 
-        await CompleteInvocationWithResultAsync(run, invocation, step, result, state, ct);
+        await CompleteInvocationWithResultAsync(run, invocation, step, result, state, options, ct);
     }
 
     private async Task CompleteInvocationWithResultAsync(
@@ -1164,6 +1304,7 @@ public class LlmService : ILlmService
         AgentStep step,
         AgentToolResult result,
         AgentExecutionState state,
+        AgentRunOptions options,
         CancellationToken ct)
     {
         if (invocation.Status != ToolInvocationStatuses.Denied)
@@ -1180,12 +1321,39 @@ public class LlmService : ILlmService
                 : AgentStepStatuses.Failed;
         }
 
-        invocation.ResultJson = result.ToJson();
+        var contextResult = result;
+        var persistence = await _toolResultPersistence.PersistForContextAsync(
+            _sandboxCommandService,
+            run.ChatId,
+            invocation,
+            result,
+            Math.Max(512, options.MaxToolResultCharsInContext),
+            ct);
+        if (persistence.Persisted)
+        {
+            contextResult = persistence.ContextResult;
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.ToolResultPersisted,
+                $"Large tool output was persisted for {invocation.ToolName}.",
+                new
+                {
+                    invocation.ToolName,
+                    persistence.PersistedPath,
+                    artifact = persistence.PersistedArtifact
+                },
+                step.Id,
+                invocation.Id,
+                severity: AgentEventSeverities.Info,
+                ct: ct);
+        }
+
+        invocation.ResultJson = contextResult.ToJson();
         invocation.CompletedAt = DateTime.UtcNow;
         step.OutputJson = invocation.ResultJson;
         step.CompletedAt = DateTime.UtcNow;
         run.UpdatedAt = DateTime.UtcNow;
-        var toolContent = FormatToolResultMessage(step.StepNumber, invocation.ToolName, result);
+        var toolContent = FormatToolResultMessage(step.StepNumber, invocation.ToolName, contextResult);
         _db.Set<Message>().Add(new Message
         {
             ChatId = run.ChatId,
@@ -1196,27 +1364,27 @@ public class LlmService : ILlmService
         });
         state.Messages.Add(new MessagePayload(
             "tool",
-            result.ToJson(),
+            contextResult.ToJson(),
             invocation.ProviderCallId));
-        await UpsertArtifactsAsync(run.Id, result.Artifacts, ct);
+        await UpsertArtifactsAsync(run.Id, contextResult.Artifacts, ct);
         await SaveCheckpointAsync(run, state, ct);
         await _db.SaveChangesAsync(ct);
         await LogAgentEventAsync(
             run,
             AgentEventTypes.ToolResult,
-            result.Success
+            contextResult.Success
                 ? $"Tool {invocation.ToolName} completed."
                 : $"Tool {invocation.ToolName} failed.",
             new
             {
                 invocation.ToolName,
-                result.Success,
-                error = result.Error,
-                artifactCount = result.Artifacts?.Count ?? 0
+                contextResult.Success,
+                error = contextResult.Error,
+                artifactCount = contextResult.Artifacts?.Count ?? 0
             },
             step.Id,
             invocation.Id,
-            severity: result.Success ? AgentEventSeverities.Info : AgentEventSeverities.Error,
+            severity: contextResult.Success ? AgentEventSeverities.Info : AgentEventSeverities.Error,
             ct: ct);
     }
 
@@ -1282,6 +1450,14 @@ public class LlmService : ILlmService
             run.MaxSteps,
             sandboxRoot = _sandboxCommandService.GetSandboxRoot(run.ChatId),
             tools = _agentTools.Definitions,
+            toolMetadata = _agentTools.Metadata,
+            context = new
+            {
+                contextBudgetTokens = 32_000,
+                autoCompact = true,
+                largeToolOutputPersistence = true,
+                projectMemory = true
+            },
             steps
         }, apiKey);
 
@@ -1319,13 +1495,7 @@ public class LlmService : ILlmService
         AgentExecutionState state,
         CancellationToken ct)
     {
-        _db.Set<AgentCheckpoint>().Add(new AgentCheckpoint
-        {
-            AgentRunId = run.Id,
-            StepNumber = run.CurrentStep,
-            StateJson = JsonSerializer.Serialize(state)
-        });
-        await _db.SaveChangesAsync(ct);
+        await _checkpointStore.SaveAsync(run, run.CurrentStep, JsonSerializer.Serialize(state), ct);
     }
 
     private async Task UpsertArtifactsAsync(
@@ -1507,12 +1677,14 @@ public class LlmService : ILlmService
             effective.BaseUrl,
             replay.Model ?? effective.Model);
 
-        var llmResult = await provider.ChatAsync(
-            replay.Messages,
-            replay.SystemPrompt,
-            replay.Temperature ?? effective.Temperature,
-            replay.MaxTokens ?? effective.MaxTokens,
-            ct: ct);
+        var llmResult = await _providerStreamAdapter.ChatAsync(
+            new ProviderStreamRequest(
+                provider,
+                replay.Messages,
+                replay.SystemPrompt,
+                replay.Temperature ?? effective.Temperature,
+                replay.MaxTokens ?? effective.MaxTokens),
+            ct);
 
         var storedRequest = new RawRequest
         {
@@ -1575,12 +1747,14 @@ public class LlmService : ILlmService
             EnsureProviderReady(plainKey, baseUrl, model);
             var httpClient = _httpClientFactory.CreateClient("LLM");
             var llmProvider = LlmProviderFactory.Create(httpClient, provider, plainKey, baseUrl, model);
-            var result = await llmProvider.ChatAsync(
-                new List<MessagePayload> { new("user", "Reply with OK.") },
-                "You are testing whether this API connection works.",
-                temperature: 0,
-                maxTokens: 16,
-                ct: ct);
+            var result = await _providerStreamAdapter.ChatAsync(
+                new ProviderStreamRequest(
+                    llmProvider,
+                    [new MessagePayload("user", "Reply with OK.")],
+                    "You are testing whether this API connection works.",
+                    0,
+                    16),
+                ct);
 
             var ok = result.HttpStatus is >= 200 and < 300 && string.IsNullOrWhiteSpace(result.Error);
             return new ConnectionTestResult(
@@ -1696,13 +1870,18 @@ public class LlmService : ILlmService
         var messagesForLlm = history
             .Select(ToProviderMessage)
             .ToList();
+        messagesForLlm = _agentContextManager
+            .Prepare(messagesForLlm, BuildContextOptions(), forceCompact: false)
+            .Messages;
 
-        var llmResult = await provider.ChatAsync(
-            messages: messagesForLlm,
-            systemPrompt: systemPrompt,
-            temperature: effective.Temperature,
-            maxTokens: effective.MaxTokens,
-            ct: ct);
+        var llmResult = await _providerStreamAdapter.ChatAsync(
+            new ProviderStreamRequest(
+                provider,
+                messagesForLlm,
+                systemPrompt,
+                effective.Temperature,
+                effective.MaxTokens),
+            ct);
 
         var rawRequest = new RawRequest
         {
@@ -1782,27 +1961,16 @@ public class LlmService : ILlmService
         string severity = AgentEventSeverities.Info,
         CancellationToken ct = default)
     {
-        var sequenceNumber = await _db.Set<AgentEvent>()
-            .Where(e => e.AgentRunId == run.Id)
-            .Select(e => (int?)e.SequenceNumber)
-            .MaxAsync(ct) ?? 0;
-        var dataJson = data == null
-            ? "{}"
-            : SecretRedactor.RedactJson(JsonSerializer.Serialize(data));
-        var agentEvent = new AgentEvent
-        {
-            AgentRunId = run.Id,
-            AgentStepId = stepId,
-            ToolInvocationId = toolInvocationId,
-            SequenceNumber = sequenceNumber + 1,
-            EventType = eventType,
-            Severity = severity,
-            Summary = SecretRedactor.RedactText(summary),
-            DataJson = dataJson,
-            CreatedAt = DateTime.UtcNow
-        };
-        _db.Set<AgentEvent>().Add(agentEvent);
-        await _db.SaveChangesAsync(ct);
+        var agentEvent = await _agentEventStream.AppendAsync(
+            new AgentEventAppendRequest(
+                run,
+                eventType,
+                summary,
+                data,
+                stepId,
+                toolInvocationId,
+                severity),
+            ct);
 
         if (AgentProgressSink.Value is { } progress)
         {
@@ -1868,15 +2036,46 @@ public class LlmService : ILlmService
             : "user";
     }
 
-    private static string BuildAgentSystemPrompt(string baseSystemPrompt, string sandboxRoot)
+    private static AgentContextOptions BuildContextOptions(AgentRunOptions? options = null) =>
+        new(
+            ContextBudgetTokens: options?.ContextBudgetTokens ?? 32_000,
+            AutoCompactTriggerTokens: options?.AutoCompactTriggerTokens ?? 24_000,
+            MaxToolResultCharsInContext: options?.MaxToolResultCharsInContext ?? 6_000);
+
+    private static string AppendProjectMemory(
+        string systemPrompt,
+        string memoryPath,
+        string projectMemory)
+    {
+        var memory = projectMemory.Trim();
+        if (memory.Length > 12_000)
+            memory = memory[^12_000..];
+
+        var builder = new StringBuilder(systemPrompt);
+        builder.AppendLine();
+        builder.AppendLine("Project memory file:");
+        builder.AppendLine(memoryPath);
+        builder.AppendLine("Project memory content:");
+        builder.AppendLine(memory);
+        return builder.ToString();
+    }
+
+    private static string BuildAgentSystemPrompt(
+        string baseSystemPrompt,
+        string sandboxRoot,
+        string memoryPath,
+        string projectMemory)
     {
         var builder = new StringBuilder();
-        builder.AppendLine(baseSystemPrompt);
+        builder.AppendLine(AppendProjectMemory(baseSystemPrompt, memoryPath, projectMemory));
         builder.AppendLine();
         builder.AppendLine("TLAH Agent Mode is enabled.");
-        builder.AppendLine("You may complete multi-step tasks with typed file, Git, HTTP, search, browser, terminal, and MCP tools.");
+        builder.AppendLine("You may complete multi-step tasks with typed memory, code, file, Git, HTTP, search, browser, terminal, and MCP tools.");
         builder.AppendLine($"Sandbox working directory: {sandboxRoot}");
         builder.AppendLine("Work only inside the sandbox directory. Never read host user files or attempt destructive, privileged, registry, service, shutdown, or system-configuration operations.");
+        builder.AppendLine($"Use {AgentToolNames.MemoryRead} and {AgentToolNames.MemoryWrite} for stable project facts, preferences, and recurring instructions. Write memory only for information that should persist.");
+        builder.AppendLine($"For development work, prefer {AgentToolNames.CodeRead}, {AgentToolNames.CodeGrep}, {AgentToolNames.CodeGlob}, {AgentToolNames.CodeDiff}, {AgentToolNames.CodeEdit}, {AgentToolNames.CodeMultiEdit}, {AgentToolNames.CodeApplyPatch}, {AgentToolNames.CodeRollback}, and {AgentToolNames.CodeDiagnostics} before terminal commands.");
+        builder.AppendLine("Use diff or diagnostics before risky code changes, and mention rollback backup ids when an edit returns them.");
         builder.AppendLine($"Prefer {AgentToolNames.FileList}, {AgentToolNames.FileRead}, {AgentToolNames.FileWrite}, {AgentToolNames.FileSend}, and {AgentToolNames.FileSearch} over terminal commands for file work.");
         builder.AppendLine($"When you create a file the user should see, preview, download, or use outside the sandbox, call {AgentToolNames.FileSend} with the relative sandbox path before giving the final answer.");
         builder.AppendLine($"Use {AgentToolNames.TerminalExec} only when a typed tool cannot complete the task. Use {AgentToolNames.McpListTools} before {AgentToolNames.McpCall}.");

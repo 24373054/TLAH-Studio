@@ -110,6 +110,17 @@ public static partial class ToolSafetyKernel
             AgentToolNames.BrowserRead => ToolSafetyAssessment.Medium("network", true, false, "Read-only page fetch through the configured allowlist."),
             AgentToolNames.McpListTools => ToolSafetyAssessment.Medium("mcp", true, false, "Read MCP tool metadata from configured servers."),
             AgentToolNames.McpCall => ToolSafetyAssessment.High("mcp", true, "Call an external MCP tool.", "MCP tools can perform actions outside TLAH Studio depending on the server."),
+            AgentToolNames.MemoryRead => ToolSafetyAssessment.LowRead("memory", "Read the project memory file."),
+            AgentToolNames.MemoryWrite => ToolSafetyAssessment.Medium("memory", false, true, "Update the project memory file."),
+            AgentToolNames.CodeRead or
+            AgentToolNames.CodeGrep or
+            AgentToolNames.CodeGlob or
+            AgentToolNames.CodeDiff or
+            AgentToolNames.CodeDiagnostics => AssessPathRead(sandbox, chatId, root, normalizedTool),
+            AgentToolNames.CodeEdit or
+            AgentToolNames.CodeMultiEdit => AssessCodeWrite(sandbox, chatId, root, normalizedTool),
+            AgentToolNames.CodeApplyPatch => AssessCodePatch(sandbox, chatId, root),
+            AgentToolNames.CodeRollback => AssessCodeRollback(sandbox, chatId, root),
             _ => ToolSafetyAssessment.Blocked("tool", $"Unknown tool: {toolName}", "The requested tool is not registered.")
         };
     }
@@ -327,6 +338,90 @@ public static partial class ToolSafetyKernel
         return method is "GET" or "HEAD"
             ? ToolSafetyAssessment.Medium("network", true, false, $"HTTP {method} request is read-only and allowlist-checked.", new { method, url })
             : ToolSafetyAssessment.High("network", true, $"HTTP {method} can change remote state.", "Review the target domain, request body, and credential before allowing.", new { method, url });
+    }
+
+    private static ToolSafetyAssessment AssessCodeWrite(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root,
+        string toolName)
+    {
+        var rawPath = ReadString(root, "path");
+        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        if (resolved.Error != null)
+            return ToolSafetyAssessment.Blocked("path", $"{toolName} path escapes the chat sandbox.", resolved.Error);
+
+        var oldBytes = File.Exists(resolved.FullPath!)
+            ? new FileInfo(resolved.FullPath!).Length
+            : 0;
+        var writeCount = 1;
+        if (root.TryGetProperty("edits", out var edits) && edits.ValueKind == JsonValueKind.Array)
+            writeCount = edits.GetArrayLength();
+
+        return ToolSafetyAssessment.Medium(
+            "code_write",
+            isReadOnly: false,
+            isWrite: true,
+            $"{toolName} will write {resolved.RelativePath} and create a rollback backup.",
+            new
+            {
+                path = resolved.RelativePath,
+                existed = File.Exists(resolved.FullPath!),
+                oldBytes,
+                writeCount
+            });
+    }
+
+    private static ToolSafetyAssessment AssessCodePatch(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root)
+    {
+        var patch = ReadString(root, "patch");
+        if (string.IsNullOrWhiteSpace(patch))
+            return ToolSafetyAssessment.Blocked("code_patch", "Patch is empty.", "The patch argument is required.");
+
+        var paths = WorkspaceCodeToolSupport.ExtractPatchPaths(patch);
+        if (paths.Count == 0)
+            return ToolSafetyAssessment.Blocked("code_patch", "Patch does not declare any file paths.", "Use a unified diff with relative paths.");
+
+        var resolved = new List<string>();
+        foreach (var path in paths)
+        {
+            var item = ResolvePath(sandbox, chatId, path);
+            if (item.Error != null)
+                return ToolSafetyAssessment.Blocked("path", "Patch path escapes the chat sandbox.", item.Error);
+            resolved.Add(item.RelativePath!);
+        }
+
+        return ToolSafetyAssessment.Medium(
+            "code_patch",
+            isReadOnly: false,
+            isWrite: true,
+            $"Patch will update {resolved.Count} workspace file(s) and create rollback backups.",
+            new { paths = resolved });
+    }
+
+    private static ToolSafetyAssessment AssessCodeRollback(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root)
+    {
+        var rawPath = ReadString(root, "path");
+        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        if (resolved.Error != null)
+            return ToolSafetyAssessment.Blocked("path", "Rollback path escapes the chat sandbox.", resolved.Error);
+
+        return ToolSafetyAssessment.Medium(
+            "code_rollback",
+            isReadOnly: false,
+            isWrite: true,
+            $"Rollback may restore or delete {resolved.RelativePath} from a previous backup.",
+            new
+            {
+                path = resolved.RelativePath,
+                backupId = ReadString(root, "backup_id")
+            });
     }
 
     private static bool TryParseObject(
