@@ -947,17 +947,117 @@ public sealed partial class ChatPage : UserControl
         };
         grid.Children.Add(tag);
 
-        var text = new TextBlock
+        var content = new StackPanel { Spacing = 5 };
+        content.Children.Add(new TextBlock
         {
             Text = line.Text,
             TextWrapping = TextWrapping.Wrap,
             Foreground = TextPrimaryBrush(),
             FontSize = IsCompactDensity() ? 12 : 13,
             LineHeight = IsCompactDensity() ? 18 : 20
-        };
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
+        });
+        var toolPreview = BuildAgentToolPreview(line);
+        if (toolPreview != null)
+            content.Children.Add(toolPreview);
+        Grid.SetColumn(content, 1);
+        grid.Children.Add(content);
         return grid;
+    }
+
+    private UIElement? BuildAgentToolPreview(AgentProgressLine line)
+    {
+        if (string.IsNullOrWhiteSpace(line.ToolTitle) &&
+            string.IsNullOrWhiteSpace(line.Preview) &&
+            string.IsNullOrWhiteSpace(line.PrimaryPath))
+        {
+            return null;
+        }
+
+        var stack = new StackPanel { Spacing = 4 };
+        if (!string.IsNullOrWhiteSpace(line.ToolTitle) ||
+            !string.IsNullOrWhiteSpace(line.PrimaryPath))
+        {
+            var title = new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(line.PrimaryPath)
+                    ? line.ToolTitle
+                    : $"{line.ToolTitle} · {line.PrimaryPath}",
+                Foreground = TextPrimaryBrush(),
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            stack.Children.Add(title);
+        }
+
+        if (!string.IsNullOrWhiteSpace(line.Preview))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = line.IsTruncated ? $"{line.Preview} [truncated]" : line.Preview,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = TextSecondaryBrush(),
+                FontSize = 12,
+                LineHeight = 18,
+                MaxLines = 3
+            });
+        }
+
+        return new Border
+        {
+            CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(10, 8, 10, 8),
+            BorderThickness = new Thickness(1),
+            BorderBrush = ToolPreviewBorderBrush(line.RenderHint),
+            Background = ToolPreviewBackgroundBrush(line.RenderHint),
+            Child = stack
+        };
+    }
+
+    private Brush ToolPreviewBackgroundBrush(string? renderHint)
+    {
+        var dark = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xDC, 0x08, 0x10, 0x1F),
+            AgentToolRenderHints.File => Color.FromArgb(0xDC, 0x0E, 0x1A, 0x2A),
+            AgentToolRenderHints.Network => Color.FromArgb(0xDC, 0x0C, 0x16, 0x25),
+            AgentToolRenderHints.Git => Color.FromArgb(0xDC, 0x14, 0x13, 0x24),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xDC, 0x12, 0x14, 0x22),
+            _ => Color.FromArgb(0xDC, 0x10, 0x18, 0x28)
+        };
+        var light = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xF5, 0xF7, 0xFB, 0xFF),
+            AgentToolRenderHints.File => Color.FromArgb(0xF5, 0xF7, 0xFA, 0xFD),
+            AgentToolRenderHints.Network => Color.FromArgb(0xF5, 0xF5, 0xFA, 0xFF),
+            AgentToolRenderHints.Git => Color.FromArgb(0xF5, 0xFB, 0xF7, 0xFF),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xF5, 0xF8, 0xF7, 0xFF),
+            _ => Color.FromArgb(0xF5, 0xF7, 0xFA, 0xFD)
+        };
+        return ThemeBrush(light, dark);
+    }
+
+    private Brush ToolPreviewBorderBrush(string? renderHint)
+    {
+        var dark = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xA0, 0x46, 0x5F, 0x83),
+            AgentToolRenderHints.File => Color.FromArgb(0xA0, 0x3A, 0x61, 0x83),
+            AgentToolRenderHints.Network => Color.FromArgb(0xA0, 0x3B, 0x5D, 0x8A),
+            AgentToolRenderHints.Git => Color.FromArgb(0xA0, 0x5C, 0x54, 0x8A),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xA0, 0x56, 0x56, 0x83),
+            _ => Color.FromArgb(0xA0, 0x3A, 0x4C, 0x66)
+        };
+        var light = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xFF, 0xD7, 0xE2, 0xF0),
+            AgentToolRenderHints.File => Color.FromArgb(0xFF, 0xD4, 0xE1, 0xEE),
+            AgentToolRenderHints.Network => Color.FromArgb(0xFF, 0xD3, 0xE0, 0xF2),
+            AgentToolRenderHints.Git => Color.FromArgb(0xFF, 0xDF, 0xD9, 0xF1),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xFF, 0xDC, 0xDF, 0xEF),
+            _ => Color.FromArgb(0xFF, 0xD8, 0xE1, 0xEC)
+        };
+        return ThemeBrush(light, dark);
     }
 
     private Button ActionButton(Symbol symbol, string tooltip, bool onAccent, Func<Task> action)

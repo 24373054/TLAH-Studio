@@ -70,6 +70,22 @@ public static class AgentToolResultPersistenceModes
     public const string Artifact = "artifact";
 }
 
+public static class AgentToolInterruptBehaviors
+{
+    public const string AllowCancel = "allow_cancel";
+    public const string PreferGracefulStop = "prefer_graceful_stop";
+    public const string FinishAtomicOperation = "finish_atomic_operation";
+}
+
+public sealed record AgentToolRenderBlock(
+    string Title,
+    string Subtitle,
+    string Body,
+    string RenderHint,
+    string? PrimaryPath = null,
+    bool IsTruncated = false,
+    IReadOnlyList<AgentToolArtifact>? Artifacts = null);
+
 public sealed record AgentToolMetadata(
     string Name,
     bool RequiresApproval,
@@ -79,8 +95,21 @@ public sealed record AgentToolMetadata(
     string RenderHint,
     int MaxResultSizeChars,
     string ResultPersistence,
-    bool IsOpenWorld = false)
+    bool IsOpenWorld = false,
+    string UserFacingName = "",
+    string ActivityDescription = "",
+    string InterruptBehavior = AgentToolInterruptBehaviors.AllowCancel)
 {
+    public string DisplayName =>
+        string.IsNullOrWhiteSpace(UserFacingName)
+            ? AgentToolUx.UserFacingName(Name)
+            : UserFacingName;
+
+    public string DefaultActivityDescription =>
+        string.IsNullOrWhiteSpace(ActivityDescription)
+            ? AgentToolUx.ActivityDescription(Name)
+            : ActivityDescription;
+
     public static AgentToolMetadata For(string name, bool requiresApproval)
     {
         var normalized = AgentToolNames.Normalize(name);
@@ -209,6 +238,167 @@ public sealed record AgentToolMetadata(
     }
 }
 
+public static class AgentToolUx
+{
+    public static string UserFacingName(string toolName)
+    {
+        var normalized = AgentToolNames.Normalize(toolName);
+        return normalized switch
+        {
+            AgentToolNames.SandboxExec => "Sandbox command",
+            AgentToolNames.TerminalExec => "Terminal command",
+            AgentToolNames.FileList => "List files",
+            AgentToolNames.FileRead => "Read file",
+            AgentToolNames.FileWrite => "Write file",
+            AgentToolNames.FileSend => "Send file",
+            AgentToolNames.FileSearch => "Search files",
+            AgentToolNames.Git => "Git operation",
+            AgentToolNames.HttpRequest => "HTTP request",
+            AgentToolNames.WebSearch => "Web search",
+            AgentToolNames.BrowserRead => "Read web page",
+            AgentToolNames.McpListTools => "List MCP tools",
+            AgentToolNames.McpCall => "Call MCP tool",
+            AgentToolNames.MemoryRead => "Read project memory",
+            AgentToolNames.MemoryWrite => "Write project memory",
+            AgentToolNames.CodeRead => "Read code",
+            AgentToolNames.CodeGrep => "Search code",
+            AgentToolNames.CodeGlob => "Find files",
+            AgentToolNames.CodeDiff => "Preview diff",
+            AgentToolNames.CodeEdit => "Edit file",
+            AgentToolNames.CodeMultiEdit => "Edit multiple ranges",
+            AgentToolNames.CodeApplyPatch => "Apply patch",
+            AgentToolNames.CodeRollback => "Rollback edit",
+            AgentToolNames.CodeDiagnostics => "Run diagnostics",
+            _ => normalized
+        };
+    }
+
+    public static string ActivityDescription(string toolName)
+    {
+        var normalized = AgentToolNames.Normalize(toolName);
+        return normalized switch
+        {
+            AgentToolNames.SandboxExec or AgentToolNames.TerminalExec => "Running command",
+            AgentToolNames.FileList or AgentToolNames.CodeGlob => "Listing workspace paths",
+            AgentToolNames.FileRead or AgentToolNames.CodeRead => "Reading file",
+            AgentToolNames.FileWrite or AgentToolNames.CodeEdit or AgentToolNames.CodeMultiEdit => "Writing file",
+            AgentToolNames.FileSend => "Preparing attachment",
+            AgentToolNames.FileSearch or AgentToolNames.CodeGrep => "Searching text",
+            AgentToolNames.CodeDiff => "Building diff preview",
+            AgentToolNames.CodeApplyPatch => "Applying patch",
+            AgentToolNames.CodeRollback => "Restoring backup",
+            AgentToolNames.CodeDiagnostics => "Checking diagnostics",
+            AgentToolNames.Git => "Running Git",
+            AgentToolNames.HttpRequest => "Calling HTTP endpoint",
+            AgentToolNames.WebSearch => "Searching the web",
+            AgentToolNames.BrowserRead => "Reading web content",
+            AgentToolNames.McpListTools => "Discovering MCP tools",
+            AgentToolNames.McpCall => "Calling MCP server",
+            AgentToolNames.MemoryRead => "Loading memory",
+            AgentToolNames.MemoryWrite => "Saving memory",
+            _ => $"Running {normalized}"
+        };
+    }
+
+    public static AgentToolRenderBlock RenderUse(
+        IAgentTool tool,
+        string argumentsJson,
+        ToolSafetyAssessment? safety = null)
+    {
+        var reason = TryReadString(argumentsJson, "reason");
+        var primaryPath = TryReadString(argumentsJson, "path");
+        var body = PrettyJson(argumentsJson);
+        var subtitle = string.IsNullOrWhiteSpace(reason)
+            ? tool.Metadata.DefaultActivityDescription
+            : reason.Trim();
+        if (safety != null)
+        {
+            subtitle = $"{subtitle} · {safety.Level}";
+        }
+
+        return new AgentToolRenderBlock(
+            tool.Metadata.DisplayName,
+            subtitle,
+            body,
+            tool.Metadata.RenderHint,
+            string.IsNullOrWhiteSpace(primaryPath) ? null : primaryPath);
+    }
+
+    public static AgentToolRenderBlock RenderResult(IAgentTool tool, AgentToolResult result)
+    {
+        var title = result.Success
+            ? $"{tool.Metadata.DisplayName} completed"
+            : $"{tool.Metadata.DisplayName} failed";
+        var subtitle = result.Artifacts is { Count: > 0 }
+            ? $"{result.Artifacts.Count} artifact{(result.Artifacts.Count == 1 ? string.Empty : "s")}"
+            : result.Success
+                ? "Result ready"
+                : result.Error ?? "Tool failed";
+        var body = string.IsNullOrWhiteSpace(result.Output)
+            ? result.Error ?? string.Empty
+            : result.Output.TrimEnd();
+
+        return new AgentToolRenderBlock(
+            title,
+            subtitle,
+            body,
+            tool.Metadata.RenderHint,
+            result.Artifacts?.FirstOrDefault()?.RelativePath,
+            IsResultTruncated(result),
+            result.Artifacts);
+    }
+
+    public static bool InputsEquivalent(string leftJson, string rightJson)
+    {
+        try
+        {
+            using var left = JsonDocument.Parse(leftJson);
+            using var right = JsonDocument.Parse(rightJson);
+            return JsonSerializer.Serialize(left.RootElement) ==
+                   JsonSerializer.Serialize(right.RootElement);
+        }
+        catch
+        {
+            return string.Equals(leftJson, rightJson, StringComparison.Ordinal);
+        }
+    }
+
+    public static bool IsResultTruncated(AgentToolResult result) =>
+        result.Output.Contains("[output truncated", StringComparison.OrdinalIgnoreCase) ||
+        result.Output.Contains("[tool output truncated", StringComparison.OrdinalIgnoreCase);
+
+    private static string? TryReadString(string argumentsJson, string name)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(argumentsJson);
+            return doc.RootElement.TryGetProperty(name, out var value) &&
+                   value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string PrettyJson(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(
+                doc.RootElement,
+                new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return json;
+        }
+    }
+}
+
 public sealed record AgentToolValidationResult(bool Success, string? Error = null)
 {
     public static AgentToolValidationResult Ok { get; } = new(true);
@@ -242,6 +432,9 @@ public interface IAgentTool
     string RenderHint => Metadata.RenderHint;
     int MaxResultSizeChars => Metadata.MaxResultSizeChars;
     string ResultPersistence => Metadata.ResultPersistence;
+    string UserFacingName => Metadata.DisplayName;
+    string ActivityDescription => Metadata.DefaultActivityDescription;
+    string InterruptBehavior => Metadata.InterruptBehavior;
 
     AgentToolValidationResult ValidateInput(string argumentsJson)
     {
@@ -256,6 +449,18 @@ public interface IAgentTool
         AgentToolExecutionContext context,
         string argumentsJson,
         CancellationToken ct = default);
+
+    AgentToolRenderBlock RenderToolUse(string argumentsJson, ToolSafetyAssessment? safety = null) =>
+        AgentToolUx.RenderUse(this, argumentsJson, safety);
+
+    AgentToolRenderBlock RenderToolResult(AgentToolResult result) =>
+        AgentToolUx.RenderResult(this, result);
+
+    bool IsResultTruncated(AgentToolResult result) =>
+        AgentToolUx.IsResultTruncated(result);
+
+    bool InputsEquivalent(string leftArgumentsJson, string rightArgumentsJson) =>
+        AgentToolUx.InputsEquivalent(leftArgumentsJson, rightArgumentsJson);
 }
 
 public interface IAgentToolRegistry

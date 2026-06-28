@@ -165,9 +165,7 @@ public partial class ChatPageViewModel : ObservableObject
                 result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
 
             await stream.WaitForFinalDrainAsync(_sendCts.Token);
-
-            // Reload so persisted assistant thinking blocks, agent tool requests, and sandbox results appear in order.
-            await ReloadCurrentChatAsync();
+            ApplySendResultToLiveMessages(result, optimisticMessage, stream);
 
             // Notify debug panel of the new turn
             TurnCreated?.Invoke(this, result.Turn.Id);
@@ -224,7 +222,7 @@ public partial class ChatPageViewModel : ObservableObject
                 _sendCts.Token);
             result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
             await stream.WaitForFinalDrainAsync(_sendCts.Token);
-            await ReloadCurrentChatAsync();
+            ApplySendResultToLiveMessages(result, userMessage: null, stream);
             TurnCreated?.Invoke(this, result.Turn.Id);
         }
         catch (OperationCanceledException)
@@ -368,6 +366,44 @@ public partial class ChatPageViewModel : ObservableObject
     {
         if (_appState.CurrentChatId != null)
             await LoadChatAsync(_appState.CurrentChatId.Value);
+    }
+
+    private void ApplySendResultToLiveMessages(
+        SendMessageResult result,
+        Message? userMessage,
+        AssistantStreamState? stream)
+    {
+        if (userMessage != null)
+            CopyPersistedMessage(result.UserMessage, userMessage);
+
+        if (stream?.Message != null)
+        {
+            CopyPersistedMessage(result.AssistantMessage, stream.Message);
+            lock (stream.Gate)
+            {
+                stream.TextBuilder.Clear();
+                stream.ThinkingBuilder.Clear();
+                stream.PendingTextChars.Clear();
+                stream.PendingThinkingChars.Clear();
+                stream.FinalSnapshot = result.AssistantMessage.Content;
+                stream.FinalReceived = true;
+                stream.TryCompleteFinalDrainLocked();
+            }
+        }
+
+        UpdateAgentStatus(result.AgentRun);
+        StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static void CopyPersistedMessage(Message source, Message target)
+    {
+        target.Id = source.Id;
+        target.ChatId = source.ChatId;
+        target.Role = source.Role;
+        target.Content = source.Content;
+        target.TurnId = source.TurnId;
+        target.SequenceNum = source.SequenceNum;
+        target.CreatedAt = source.CreatedAt;
     }
 
     private async Task<SendMessageResult> CompleteApprovalFlowAsync(
@@ -652,6 +688,7 @@ public partial class ChatPageViewModel : ObservableObject
             AgentEventTypes.ToolStarted => "Run",
             AgentEventTypes.ToolResult => "Result",
             AgentEventTypes.ProtocolRepair => "Repair",
+            AgentEventTypes.RuntimeMetrics => "Metrics",
             AgentEventTypes.RunCompleted => "Done",
             AgentEventTypes.RunPaused => "Paused",
             AgentEventTypes.RunCancelled => "Stopped",
@@ -659,16 +696,18 @@ public partial class ChatPageViewModel : ObservableObject
             _ => "Event"
         };
 
+        var render = TryReadRender(update.DataJson);
         var text = update.EventType switch
         {
             AgentEventTypes.ModelRequest => $"Planning step {Math.Max(update.Run.CurrentStep + 1, 1)}...",
             AgentEventTypes.ModelResponse => TryReadToolCount(update.DataJson) > 0
                 ? "Model selected a tool call."
                 : "Model returned a response.",
-            AgentEventTypes.ToolRequest => CleanSummary(update.Summary),
-            AgentEventTypes.ToolStarted => CleanSummary(update.Summary),
-            AgentEventTypes.ToolResult => CleanSummary(update.Summary),
-            AgentEventTypes.ApprovalRequested => CleanSummary(update.Summary),
+            AgentEventTypes.ToolRequest => render?.Activity ?? CleanSummary(update.Summary),
+            AgentEventTypes.ToolStarted => render?.Activity ?? CleanSummary(update.Summary),
+            AgentEventTypes.ToolResult => render?.Activity ?? CleanSummary(update.Summary),
+            AgentEventTypes.ApprovalRequested => render?.Activity ?? CleanSummary(update.Summary),
+            AgentEventTypes.RuntimeMetrics => TryReadRuntimeMetrics(update.DataJson) ?? "Runtime metrics captured.",
             AgentEventTypes.RunCompleted => "Agent completed the task.",
             AgentEventTypes.RunPaused => "Agent paused at the step limit.",
             AgentEventTypes.RunCancelled => "Agent run stopped.",
@@ -685,7 +724,12 @@ public partial class ChatPageViewModel : ObservableObject
             label,
             text,
             update.Severity,
-            update.CreatedAt);
+            update.CreatedAt,
+            render?.Title,
+            render?.Preview,
+            render?.RenderHint,
+            render?.IsTruncated ?? false,
+            render?.PrimaryPath);
     }
 
     private static string CleanSummary(string summary) =>
@@ -707,6 +751,101 @@ public partial class ChatPageViewModel : ObservableObject
             return 0;
         }
     }
+
+    private static string? TryReadRuntimeMetrics(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var eventCount = TryReadInt(root, "EventCount");
+            var dbWriteMs = TryReadDouble(root, "dbWriteMs");
+            var elapsedMs = TryReadDouble(root, "elapsedMs");
+            if (eventCount == null && dbWriteMs == null && elapsedMs == null)
+                return null;
+            return $"Events {eventCount ?? 0} · DB {dbWriteMs ?? 0:0}ms · elapsed {elapsedMs ?? 0:0}ms";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static AgentProgressRender? TryReadRender(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("render", out var render) ||
+                render.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var title = TryReadString(render, "Title") ?? TryReadString(render, "title");
+            var activity = TryReadString(render, "Subtitle") ?? TryReadString(render, "subtitle");
+            var body = TryReadString(render, "Body") ?? TryReadString(render, "body");
+            var hint = TryReadString(render, "RenderHint") ?? TryReadString(render, "renderHint");
+            var path = TryReadString(render, "PrimaryPath") ?? TryReadString(render, "primaryPath");
+            var truncated = TryReadBool(render, "IsTruncated") ?? TryReadBool(render, "isTruncated") ?? false;
+            var preview = PreviewText(body);
+
+            if (string.IsNullOrWhiteSpace(title) &&
+                string.IsNullOrWhiteSpace(activity) &&
+                string.IsNullOrWhiteSpace(preview))
+                return null;
+
+            return new AgentProgressRender(
+                title ?? string.Empty,
+                activity ?? string.Empty,
+                preview ?? string.Empty,
+                hint ?? string.Empty,
+                truncated,
+                path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? PreviewText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var compact = string.Join(
+            " ",
+            text.Replace("\r", "\n")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        if (compact.Length <= 180)
+            return compact;
+        return compact[..180] + "...";
+    }
+
+    private static string? TryReadString(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static int? TryReadInt(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number &&
+        value.TryGetInt32(out var result)
+            ? result
+            : null;
+
+    private static double? TryReadDouble(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number &&
+        value.TryGetDouble(out var result)
+            ? result
+            : null;
+
+    private static bool? TryReadBool(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) &&
+        (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False)
+            ? value.GetBoolean()
+            : null;
 
     private void UpdateAgentStatus(AgentRunSnapshot? run)
     {
@@ -815,7 +954,20 @@ public sealed record AgentProgressLine(
     string Label,
     string Text,
     string Severity,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? ToolTitle = null,
+    string? Preview = null,
+    string? RenderHint = null,
+    bool IsTruncated = false,
+    string? PrimaryPath = null);
+
+internal sealed record AgentProgressRender(
+    string Title,
+    string Activity,
+    string Preview,
+    string RenderHint,
+    bool IsTruncated,
+    string? PrimaryPath);
 
 public enum AgentApprovalChoice
 {

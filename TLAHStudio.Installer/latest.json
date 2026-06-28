@@ -1,14 +1,14 @@
 {
-  "version": "2.2.0",
+  "version": "2.4.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.2.0.exe",
-  "sha256": "379e481e099f093e444b99848369613714a1c647242ae1e71d0ccdb6e8945a38",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.4.0.exe",
+  "sha256": "749a491a2c800b9f06be7071d5f3f41cf60eb6cd8aa478a0c3921b4e437e4af3",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Experience and sound design refresh.\n\nHighlights:\n- Added a generated local soundscape for launch, navigation, send, receive, completion, approval, delete, and error states\n- Added Settings controls for enabling sound effects and adjusting volume\n- Refined the Windows 11 visual system with richer dark surfaces, cleaner light mode contrast, tighter borders, elevated controls, and a more polished title bar/sidebar/input dock\n- Improved message and agent activity card styling for clearer hierarchy and a more modern native desktop feel",
+  "releaseNotes": "Runtime streaming and tool UX protocol release.\n\nHighlights:\n- Agent event stream now batches database writes during runs and emits runtime metrics for event count, DB write time, elapsed time, first-token timing, and streaming throughput\n- Send/resume no longer rely on a final chat reload; live streamed messages are promoted to persisted messages in place\n- Tool protocol now carries user-facing names, activity descriptions, render hints, truncation flags, interrupt behavior, and argument equivalence helpers\n- Live agent activity renders tool-specific previews for terminal, file, Git, network, and MCP operations\n\nFixes:\n- Reduced end-of-run UI flicker caused by reloading the full chat after streaming\n- Added regression coverage for event stream batching and tool UX rendering",
   "forceUpdate": true,
-  "minSupportedVersion": "2.2.0",
+  "minSupportedVersion": "2.4.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96871760
+  "installerSizeBytes": 96885488
 }

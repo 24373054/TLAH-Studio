@@ -24,25 +24,78 @@ public sealed record AgentRuntimeStreamUpdate(
 public interface IAgentEventStream
 {
     Task<AgentEvent> AppendAsync(AgentEventAppendRequest request, CancellationToken ct = default);
+    IDisposable BeginRun(AgentRun run);
+    Task FlushAsync(CancellationToken ct = default);
+    AgentEventStreamMetrics GetMetrics();
 }
 
 public sealed class AgentEventStream : IAgentEventStream
 {
+    private sealed class EventBuffer
+    {
+        public Guid RunId { get; init; }
+        public int NextSequenceNumber { get; set; }
+        public List<AgentEvent> Pending { get; } = [];
+        public int AppendedCount { get; set; }
+        public int FlushCount { get; set; }
+        public TimeSpan DbWriteTime { get; set; }
+        public DateTime StartedAt { get; init; } = DateTime.UtcNow;
+    }
+
+    private sealed class EventBufferScope : IDisposable
+    {
+        private readonly EventBuffer? _previous;
+        private bool _disposed;
+
+        public EventBufferScope(EventBuffer? previous)
+        {
+            _previous = previous;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            CurrentBuffer.Value = _previous;
+            _disposed = true;
+        }
+    }
+
+    private static readonly AsyncLocal<EventBuffer?> CurrentBuffer = new();
     private readonly DbContext _db;
+    private AgentEventStreamMetrics _lastMetrics = AgentEventStreamMetrics.Empty;
 
     public AgentEventStream(DbContext db)
     {
         _db = db;
     }
 
+    public IDisposable BeginRun(AgentRun run)
+    {
+        var sequenceNumber = _db.Set<AgentEvent>()
+            .Where(e => e.AgentRunId == run.Id)
+            .Select(e => (int?)e.SequenceNumber)
+            .Max() ?? 0;
+        var previous = CurrentBuffer.Value;
+        CurrentBuffer.Value = new EventBuffer
+        {
+            RunId = run.Id,
+            NextSequenceNumber = sequenceNumber + 1
+        };
+        return new EventBufferScope(previous);
+    }
+
     public async Task<AgentEvent> AppendAsync(
         AgentEventAppendRequest request,
         CancellationToken ct = default)
     {
-        var sequenceNumber = await _db.Set<AgentEvent>()
-            .Where(e => e.AgentRunId == request.Run.Id)
-            .Select(e => (int?)e.SequenceNumber)
-            .MaxAsync(ct) ?? 0;
+        var buffer = CurrentBuffer.Value;
+        var sequenceNumber = buffer?.RunId == request.Run.Id
+            ? buffer.NextSequenceNumber++
+            : await _db.Set<AgentEvent>()
+                .Where(e => e.AgentRunId == request.Run.Id)
+                .Select(e => (int?)e.SequenceNumber)
+                .MaxAsync(ct) ?? 0;
         var dataJson = request.Data == null
             ? "{}"
             : SecretRedactor.RedactJson(JsonSerializer.Serialize(request.Data));
@@ -51,17 +104,70 @@ public sealed class AgentEventStream : IAgentEventStream
             AgentRunId = request.Run.Id,
             AgentStepId = request.StepId,
             ToolInvocationId = request.ToolInvocationId,
-            SequenceNumber = sequenceNumber + 1,
+            SequenceNumber = buffer?.RunId == request.Run.Id ? sequenceNumber : sequenceNumber + 1,
             EventType = request.EventType,
             Severity = request.Severity,
             Summary = SecretRedactor.RedactText(request.Summary),
             DataJson = dataJson,
             CreatedAt = DateTime.UtcNow
         };
+
+        if (buffer?.RunId == request.Run.Id)
+        {
+            buffer.Pending.Add(agentEvent);
+            buffer.AppendedCount++;
+            return agentEvent;
+        }
+
         _db.Set<AgentEvent>().Add(agentEvent);
         await _db.SaveChangesAsync(ct);
         return agentEvent;
     }
+
+    public async Task FlushAsync(CancellationToken ct = default)
+    {
+        var buffer = CurrentBuffer.Value;
+        if (buffer == null || buffer.Pending.Count == 0)
+            return;
+
+        var pending = buffer.Pending.ToArray();
+        buffer.Pending.Clear();
+        var started = DateTime.UtcNow;
+        _db.Set<AgentEvent>().AddRange(pending);
+        await _db.SaveChangesAsync(ct);
+        buffer.FlushCount++;
+        buffer.DbWriteTime += DateTime.UtcNow - started;
+        _lastMetrics = new AgentEventStreamMetrics(
+            buffer.AppendedCount,
+            buffer.FlushCount,
+            buffer.Pending.Count,
+            buffer.DbWriteTime,
+            DateTime.UtcNow - buffer.StartedAt);
+    }
+
+    public AgentEventStreamMetrics GetMetrics()
+    {
+        var buffer = CurrentBuffer.Value;
+        return buffer == null
+            ? _lastMetrics
+            : new AgentEventStreamMetrics(
+                buffer.AppendedCount,
+                buffer.FlushCount,
+                buffer.Pending.Count,
+                buffer.DbWriteTime,
+                DateTime.UtcNow - buffer.StartedAt);
+    }
+}
+
+public sealed record AgentEventStreamMetrics(
+    int EventCount,
+    int FlushCount,
+    int PendingCount,
+    TimeSpan DbWriteTime,
+    TimeSpan Elapsed)
+{
+    public static AgentEventStreamMetrics Empty { get; } =
+        new(0, 0, 0, TimeSpan.Zero, TimeSpan.Zero);
 }
 
 public interface ICheckpointStore
@@ -364,18 +470,55 @@ public interface IAgentRunEngine
 {
     Task<SendMessageResult> ContinueAsync(
         AgentRun run,
+        IAgentEventStream eventStream,
         Func<CancellationToken, Task<SendMessageResult>> continuation,
         CancellationToken ct = default);
 }
 
 public sealed class AgentRunEngine : IAgentRunEngine
 {
-    public Task<SendMessageResult> ContinueAsync(
+    public async Task<SendMessageResult> ContinueAsync(
         AgentRun run,
+        IAgentEventStream eventStream,
         Func<CancellationToken, Task<SendMessageResult>> continuation,
         CancellationToken ct = default)
     {
+        using var scope = eventStream.BeginRun(run);
         run.UpdatedAt = DateTime.UtcNow;
-        return continuation(ct);
+        try
+        {
+            var result = await continuation(ct);
+            await AppendRuntimeMetricsAsync(run, eventStream, ct);
+            await eventStream.FlushAsync(ct);
+            return result;
+        }
+        catch
+        {
+            await AppendRuntimeMetricsAsync(run, eventStream, CancellationToken.None);
+            await eventStream.FlushAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    private static Task AppendRuntimeMetricsAsync(
+        AgentRun run,
+        IAgentEventStream eventStream,
+        CancellationToken ct)
+    {
+        var metrics = eventStream.GetMetrics();
+        return eventStream.AppendAsync(
+            new AgentEventAppendRequest(
+                run,
+                AgentEventTypes.RuntimeMetrics,
+                "Agent runtime metrics captured.",
+                new
+                {
+                    metrics.EventCount,
+                    metrics.FlushCount,
+                    metrics.PendingCount,
+                    dbWriteMs = Math.Round(metrics.DbWriteTime.TotalMilliseconds, 2),
+                    elapsedMs = Math.Round(metrics.Elapsed.TotalMilliseconds, 2)
+                }),
+            ct);
     }
 }

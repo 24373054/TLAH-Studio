@@ -326,6 +326,7 @@ public class LlmService : ILlmService
         await SaveCheckpointAsync(run, state, ct);
         return await _agentRunEngine.ContinueAsync(
             run,
+            _agentEventStream,
             token => ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, token),
             ct);
     }
@@ -370,6 +371,7 @@ public class LlmService : ILlmService
 
         return await _agentRunEngine.ContinueAsync(
             run,
+            _agentEventStream,
             token => ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, token),
             ct);
     }
@@ -604,6 +606,7 @@ public class LlmService : ILlmService
                     },
                     step.Id,
                     ct: ct);
+                var modelOutputStream = CreateTrackedStream(options.OutputStream, out var streamMetrics);
                 lastResponse = await _providerStreamAdapter.ChatAsync(
                     new ProviderStreamRequest(
                         provider,
@@ -612,7 +615,7 @@ public class LlmService : ILlmService
                         effective.Temperature,
                         effective.MaxTokens,
                         guard.Tools,
-                        options.OutputStream,
+                        modelOutputStream,
                         Reasoning: BuildReasoningOptions(effective)),
                     ct);
                 if (_agentContextManager.IsContextLimitError(lastResponse))
@@ -641,6 +644,7 @@ public class LlmService : ILlmService
                         var retryGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
                         if (!retryGuard.IsRejected)
                         {
+                            modelOutputStream = CreateTrackedStream(options.OutputStream, out streamMetrics);
                             lastResponse = await _providerStreamAdapter.ChatAsync(
                                 new ProviderStreamRequest(
                                     provider,
@@ -649,7 +653,7 @@ public class LlmService : ILlmService
                                     effective.Temperature,
                                     effective.MaxTokens,
                                     retryGuard.Tools,
-                                    options.OutputStream,
+                                    modelOutputStream,
                                     Reasoning: BuildReasoningOptions(effective)),
                                 ct);
                         }
@@ -665,6 +669,7 @@ public class LlmService : ILlmService
                         stepNumber,
                         lastResponse.HttpStatus,
                         lastResponse.LatencyMs,
+                        streaming = streamMetrics.Snapshot(lastResponse),
                         toolCallCount = lastResponse.ToolCalls?.Count ?? 0,
                         hasError = !string.IsNullOrWhiteSpace(lastResponse.Error)
                     },
@@ -823,6 +828,7 @@ public class LlmService : ILlmService
                     run.ChatId,
                     toolCall.Name,
                     toolCall.ArgumentsJson);
+                var toolUseRender = tool.RenderToolUse(toolCall.ArgumentsJson, safety);
                 var invocation = new ToolInvocation
                 {
                     AgentRunId = run.Id,
@@ -842,7 +848,7 @@ public class LlmService : ILlmService
                     ChatId = run.ChatId,
                     Role = "assistant",
                     Content = AssistantContentFormatter.Compose(
-                        FormatToolRequestMessage(stepNumber, toolCall, safety),
+                        FormatToolRequestMessage(stepNumber, toolCall, safety, toolUseRender),
                         lastResponse.ReasoningText),
                     TurnId = turn.Id,
                     SequenceNum = state.SequenceNum++
@@ -863,13 +869,18 @@ public class LlmService : ILlmService
                     new
                     {
                         toolCall.Name,
+                        displayName = tool.UserFacingName,
+                        activity = tool.ActivityDescription,
+                        renderHint = tool.RenderHint,
+                        interruptBehavior = tool.InterruptBehavior,
                         reason = ReadToolReason(toolCall.ArgumentsJson),
                         safety.Level,
                         safety.Category,
                         safety.IsReadOnly,
                         safety.IsWriteOperation,
                         safety.RequiresExplicitApproval,
-                        safety.IsBlocked
+                        safety.IsBlocked,
+                        render = toolUseRender
                     },
                     step.Id,
                     invocation.Id,
@@ -944,10 +955,15 @@ public class LlmService : ILlmService
                         new
                         {
                             toolCall.Name,
+                            displayName = tool.UserFacingName,
+                            activity = tool.ActivityDescription,
+                            renderHint = tool.RenderHint,
+                            interruptBehavior = tool.InterruptBehavior,
                             safety.Level,
                             safety.Warning,
                             autoApproveRequested = options.AutoApproveTools,
-                            policy.Scope
+                            policy.Scope,
+                            render = toolUseRender
                         },
                         step.Id,
                         invocation.Id,
@@ -965,7 +981,14 @@ public class LlmService : ILlmService
                     run,
                     AgentEventTypes.ApprovalGranted,
                     $"Tool invocation approved automatically for {toolCall.Name}.",
-                    new { toolCall.Name, policy.Scope, safety.Level },
+                    new
+                    {
+                        toolCall.Name,
+                        displayName = tool.UserFacingName,
+                        policy.Scope,
+                        safety.Level,
+                        render = toolUseRender
+                    },
                     step.Id,
                     invocation.Id,
                     ct: ct);
@@ -1101,6 +1124,7 @@ public class LlmService : ILlmService
                 step.Id,
                 ct: ct);
 
+            var modelOutputStream = CreateTrackedStream(options.OutputStream, out var streamMetrics);
             var response = await _providerStreamAdapter.ChatAsync(
                 new ProviderStreamRequest(
                     provider,
@@ -1109,10 +1133,24 @@ public class LlmService : ILlmService
                     Math.Min(temperature, 0.4),
                     Math.Max(512, Math.Min(maxTokens, 2048)),
                     Tools: null,
-                    OutputStream: options.OutputStream,
+                    OutputStream: modelOutputStream,
                     Reasoning: reasoning),
                 ct);
             step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(response.RawResponse));
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.ModelResponse,
+                $"Model returned final summary HTTP {response.HttpStatus}.",
+                new
+                {
+                    stepNumber,
+                    response.HttpStatus,
+                    response.LatencyMs,
+                    streaming = streamMetrics.Snapshot(response)
+                },
+                step.Id,
+                severity: response.HttpStatus is >= 200 and < 300 ? AgentEventSeverities.Info : AgentEventSeverities.Warning,
+                ct: ct);
 
             if (response.HttpStatus is < 200 or >= 300 ||
                 !string.IsNullOrWhiteSpace(response.Error) ||
@@ -1259,12 +1297,16 @@ public class LlmService : ILlmService
                 new
                 {
                     invocation.ToolName,
+                    displayName = tool.UserFacingName,
+                    activity = tool.ActivityDescription,
                     tool.Metadata.RenderHint,
+                    tool.InterruptBehavior,
                     tool.Metadata.IsConcurrencySafe,
                     safety.Level,
                     safety.Category,
                     safety.IsReadOnly,
-                    safety.IsWriteOperation
+                    safety.IsWriteOperation,
+                    render = tool.RenderToolUse(invocation.ArgumentsJson, safety)
                 },
                 step.Id,
                 invocation.Id,
@@ -1359,7 +1401,13 @@ public class LlmService : ILlmService
         step.OutputJson = invocation.ResultJson;
         step.CompletedAt = DateTime.UtcNow;
         run.UpdatedAt = DateTime.UtcNow;
-        var toolContent = FormatToolResultMessage(step.StepNumber, invocation.ToolName, contextResult);
+        _agentTools.TryGet(invocation.ToolName, out var resultTool);
+        var resultRender = resultTool?.RenderToolResult(contextResult);
+        var toolContent = FormatToolResultMessage(
+            step.StepNumber,
+            invocation.ToolName,
+            contextResult,
+            resultRender);
         _db.Set<Message>().Add(new Message
         {
             ChatId = run.ChatId,
@@ -1384,9 +1432,14 @@ public class LlmService : ILlmService
             new
             {
                 invocation.ToolName,
+                displayName = resultTool?.UserFacingName ?? AgentToolUx.UserFacingName(invocation.ToolName),
+                activity = resultTool?.ActivityDescription ?? AgentToolUx.ActivityDescription(invocation.ToolName),
+                renderHint = resultTool?.RenderHint ?? AgentToolMetadata.For(invocation.ToolName, true).RenderHint,
                 contextResult.Success,
+                isTruncated = resultTool?.IsResultTruncated(contextResult) ?? AgentToolUx.IsResultTruncated(contextResult),
                 error = contextResult.Error,
-                artifactCount = contextResult.Artifacts?.Count ?? 0
+                artifactCount = contextResult.Artifacts?.Count ?? 0,
+                render = resultRender
             },
             step.Id,
             invocation.Id,
@@ -2132,25 +2185,19 @@ public class LlmService : ILlmService
     private static string FormatToolRequestMessage(
         int step,
         LlmToolCall request,
-        ToolSafetyAssessment? safety = null)
+        ToolSafetyAssessment? safety = null,
+        AgentToolRenderBlock? render = null)
     {
         var reason = ReadToolReason(request.ArgumentsJson) ?? "No reason provided.";
-        var details = request.ArgumentsJson;
-        try
-        {
-            using var document = JsonDocument.Parse(request.ArgumentsJson);
-            details = JsonSerializer.Serialize(
-                document.RootElement,
-                new JsonSerializerOptions { WriteIndented = true });
-        }
-        catch
-        {
-        }
+        var details = render?.Body ?? request.ArgumentsJson;
+        var toolTitle = render?.Title ?? request.Name;
+        var activity = render?.Subtitle ?? reason;
 
         var sb = new StringBuilder();
         sb.AppendLine($"""
         Agent tool request #{step}
-        Tool: {request.Name}
+        Tool: {toolTitle} ({request.Name})
+        Activity: {activity}
         Reason: {reason}
 
         ```json
@@ -2206,14 +2253,18 @@ public class LlmService : ILlmService
     private static string FormatToolResultMessage(
         int step,
         string toolName,
-        AgentToolResult result)
+        AgentToolResult result,
+        AgentToolRenderBlock? render = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Agent tool result #{step}");
-        sb.AppendLine($"Tool: {toolName}");
+        sb.AppendLine($"Tool: {render?.Title ?? toolName}");
+        if (!string.IsNullOrWhiteSpace(render?.Subtitle))
+            sb.AppendLine($"Summary: {render.Subtitle}");
         sb.AppendLine($"Success: {result.Success}");
-        if (!string.IsNullOrWhiteSpace(result.Output))
-            sb.AppendLine(result.Output.TrimEnd());
+        var output = render?.Body ?? result.Output;
+        if (!string.IsNullOrWhiteSpace(output))
+            sb.AppendLine(output.TrimEnd());
         if (!string.IsNullOrWhiteSpace(result.Error))
             sb.AppendLine($"Error: {result.Error}");
         if (result.Artifacts is { Count: > 0 })
@@ -2235,6 +2286,80 @@ public class LlmService : ILlmService
 
         return text;
     }
+
+    private static IProgress<LlmStreamUpdate>? CreateTrackedStream(
+        IProgress<LlmStreamUpdate>? stream,
+        out LlmStreamingMetrics metrics)
+    {
+        metrics = new LlmStreamingMetrics();
+        return stream == null
+            ? null
+            : new TrackedLlmStreamProgress(stream, metrics);
+    }
+
+    private sealed class TrackedLlmStreamProgress(
+        IProgress<LlmStreamUpdate> inner,
+        LlmStreamingMetrics metrics)
+        : IProgress<LlmStreamUpdate>
+    {
+        public void Report(LlmStreamUpdate value)
+        {
+            metrics.Observe(value);
+            inner.Report(value);
+        }
+    }
+
+    private sealed class LlmStreamingMetrics
+    {
+        private readonly DateTime _startedAt = DateTime.UtcNow;
+        private DateTime? _firstDeltaAt;
+        private DateTime? _finalAt;
+        private int _textChars;
+        private int _thinkingChars;
+        private int _events;
+
+        public void Observe(LlmStreamUpdate update)
+        {
+            _events++;
+            if (!string.IsNullOrEmpty(update.Delta))
+            {
+                _firstDeltaAt ??= DateTime.UtcNow;
+                if (update.EventType == LlmStreamEventTypes.ThinkingDelta)
+                    _thinkingChars += update.Delta.Length;
+                else if (update.EventType == LlmStreamEventTypes.TextDelta)
+                    _textChars += update.Delta.Length;
+            }
+
+            if (update.IsFinal)
+                _finalAt = DateTime.UtcNow;
+        }
+
+        public LlmStreamingMetricsSnapshot Snapshot(LlmResponse response)
+        {
+            var end = _finalAt ?? DateTime.UtcNow;
+            var elapsed = Math.Max(0.001, (end - _startedAt).TotalSeconds);
+            var charCount = Math.Max(_textChars + _thinkingChars, response.AssistantText?.Length ?? 0);
+            return new LlmStreamingMetricsSnapshot(
+                _firstDeltaAt == null
+                    ? null
+                    : Math.Round((_firstDeltaAt.Value - _startedAt).TotalMilliseconds, 2),
+                Math.Round(charCount / elapsed, 2),
+                _events,
+                _textChars,
+                _thinkingChars,
+                charCount,
+                _finalAt != null);
+        }
+    }
+
+    private sealed record LlmStreamingMetricsSnapshot(
+        double? FirstTokenMs,
+        double CharsPerSecond,
+        int EventCount,
+        int TextChars,
+        int ThinkingChars,
+        int TotalChars,
+        bool FinalSeen);
 
     private static void EnsureProviderReady(string apiKey, string baseUrl, string model)
     {
