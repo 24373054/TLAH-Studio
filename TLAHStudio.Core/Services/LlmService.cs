@@ -408,14 +408,15 @@ public class LlmService : ILlmService
         invocation.AgentRun.Status = AgentRunStatuses.Paused;
         invocation.AgentRun.UpdatedAt = DateTime.UtcNow;
 
-        if (approved && policyScope != "once")
+        if (approved && policyScope != ToolPolicyScopes.Once)
         {
             await _toolPlatform.SavePolicyAsync(
                 invocation.AgentRun.ChatId,
                 invocation.ToolName,
                 policyScope,
                 ToolPolicyDecisions.Allow,
-                ct);
+                description: "Approved from the agent permission prompt.",
+                ct: ct);
         }
         else if (!approved && policyScope == ToolPolicyScopes.Global)
         {
@@ -424,7 +425,8 @@ public class LlmService : ILlmService
                 invocation.ToolName,
                 ToolPolicyScopes.Global,
                 ToolPolicyDecisions.Deny,
-                ct);
+                description: "Always denied from the agent permission prompt.",
+                ct: ct);
         }
 
         await _db.SaveChangesAsync(ct);
@@ -432,7 +434,14 @@ public class LlmService : ILlmService
             invocation.AgentRun,
             approved ? AgentEventTypes.ApprovalGranted : AgentEventTypes.ApprovalDenied,
             approved ? "User approved an agent tool invocation." : "User denied an agent tool invocation.",
-            new { invocation.ToolName, policyScope },
+            new
+            {
+                invocation.ToolName,
+                policyScope,
+                invocation.SafetyLevel,
+                invocation.SafetySummary,
+                safetyPreview = invocation.SafetyJson
+            },
             toolInvocationId: invocation.Id,
             severity: approved ? AgentEventSeverities.Info : AgentEventSeverities.Warning,
             ct: ct);
@@ -888,7 +897,7 @@ public class LlmService : ILlmService
                     ct: ct);
 
                 var policy = await _toolPlatform.EvaluatePolicyAsync(
-                    run.ChatId, toolCall.Name, ct);
+                    run.ChatId, toolCall.Name, toolCall.ArgumentsJson, safety, ct);
                 if (policy.IsDenied)
                 {
                     invocation.Approved = false;
@@ -899,7 +908,14 @@ public class LlmService : ILlmService
                         run,
                         AgentEventTypes.ApprovalDenied,
                         "Tool invocation denied by policy.",
-                        new { toolCall.Name, policy.Scope },
+                        new
+                        {
+                            toolCall.Name,
+                            policy.Scope,
+                            policy.SubjectKind,
+                            policy.Pattern,
+                            policy.MatchedValue
+                        },
                         step.Id,
                         invocation.Id,
                         severity: AgentEventSeverities.Warning,
@@ -963,6 +979,9 @@ public class LlmService : ILlmService
                             safety.Warning,
                             autoApproveRequested = options.AutoApproveTools,
                             policy.Scope,
+                            policy.SubjectKind,
+                            policy.Pattern,
+                            policy.MatchedValue,
                             render = toolUseRender
                         },
                         step.Id,
@@ -1599,7 +1618,14 @@ public class LlmService : ILlmService
                         i.Status == ToolInvocationStatuses.AwaitingApproval)
             .OrderBy(i => i.CreatedAt)
             .Select(i => new ToolInvocationSnapshot(
-                i.Id, i.ToolName, i.ArgumentsJson, i.Status))
+                i.Id,
+                i.ToolName,
+                i.ArgumentsJson,
+                i.Status,
+                i.SafetyLevel,
+                i.SafetySummary,
+                i.SafetyJson,
+                null))
             .FirstOrDefaultAsync(ct);
         var artifactCount = await _db.Set<AgentArtifact>()
             .CountAsync(a => a.AgentRunId == run.Id, ct);

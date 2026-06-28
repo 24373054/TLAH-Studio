@@ -11,15 +11,21 @@ public partial class ToolPlatformViewModel : ObservableObject
     private readonly IToolPlatformService _platform;
     private readonly IExecutionBackendRouter _backends;
     private readonly IMcpClientService _mcp;
+    private readonly IAppStateService _appState;
+    private readonly IChatService _chatService;
 
     public ToolPlatformViewModel(
         IToolPlatformService platform,
         IExecutionBackendRouter backends,
-        IMcpClientService mcp)
+        IMcpClientService mcp,
+        IAppStateService appState,
+        IChatService chatService)
     {
         _platform = platform;
         _backends = backends;
         _mcp = mcp;
+        _appState = appState;
+        _chatService = chatService;
     }
 
     public IReadOnlyList<string> BackendOptions { get; } =
@@ -34,6 +40,26 @@ public partial class ToolPlatformViewModel : ObservableObject
     [
         McpTransportTypes.Stdio,
         McpTransportTypes.StreamableHttp
+    ];
+
+    public IReadOnlyList<string> PolicySubjectOptions { get; } =
+    [
+        ToolPolicySubjects.Tool,
+        ToolPolicySubjects.Path,
+        ToolPolicySubjects.Domain
+    ];
+
+    public IReadOnlyList<string> PolicyScopeOptions { get; } =
+    [
+        ToolPolicyScopes.Global,
+        ToolPolicyScopes.Project,
+        ToolPolicyScopes.Chat
+    ];
+
+    public IReadOnlyList<string> PolicyDecisionOptions { get; } =
+    [
+        ToolPolicyDecisions.Allow,
+        ToolPolicyDecisions.Deny
     ];
 
     public IReadOnlyList<McpExampleOption> McpExamples { get; } =
@@ -66,6 +92,11 @@ public partial class ToolPlatformViewModel : ObservableObject
     [ObservableProperty] private string credentialSecret = string.Empty;
     [ObservableProperty] private string credentialDomains = string.Empty;
     [ObservableProperty] private string credentialTools = string.Empty;
+    [ObservableProperty] private string newPolicySubjectKind = ToolPolicySubjects.Tool;
+    [ObservableProperty] private string newPolicyPattern = "tool(*)";
+    [ObservableProperty] private string newPolicyScope = ToolPolicyScopes.Global;
+    [ObservableProperty] private string newPolicyDecision = ToolPolicyDecisions.Allow;
+    [ObservableProperty] private string newPolicyDescription = string.Empty;
     [ObservableProperty] private string statusMessage = string.Empty;
 
     partial void OnSelectedCredentialChanged(CredentialEntryDto? value)
@@ -279,6 +310,38 @@ public partial class ToolPlatformViewModel : ObservableObject
         await _platform.DeletePolicyAsync(id, ct);
         await ReloadPoliciesAsync(ct);
         StatusMessage = "Permission rule removed.";
+    }
+
+    public async Task SavePolicyRuleAsync(CancellationToken ct = default)
+    {
+        Guid? chatId = null;
+        Guid? projectId = null;
+        if (NewPolicyScope == ToolPolicyScopes.Chat)
+        {
+            chatId = _appState.CurrentChatId
+                ?? throw new InvalidOperationException("Select a chat before creating a chat-scoped permission rule.");
+        }
+        if (NewPolicyScope == ToolPolicyScopes.Project)
+        {
+            var currentChatId = _appState.CurrentChatId
+                ?? throw new InvalidOperationException("Select a project chat before creating a project-scoped permission rule.");
+            var chat = await _chatService.GetChatAsync(currentChatId, ct);
+            projectId = chat?.ProjectSpaceId;
+            if (projectId == null)
+                throw new InvalidOperationException("The selected chat is not assigned to a project workspace.");
+        }
+
+        var saved = await _platform.SavePolicyRuleAsync(new ToolPolicyRuleUpdate(
+            null,
+            NewPolicySubjectKind,
+            NewPolicyPattern,
+            NewPolicyScope,
+            NewPolicyDecision,
+            NewPolicyDescription,
+            chatId,
+            projectId), ct);
+        await ReloadPoliciesAsync(ct);
+        StatusMessage = $"Permission rule saved: {saved.SubjectKind} {saved.Pattern} {saved.Decision}.";
     }
 
     private async Task ReloadCollectionsAsync(CancellationToken ct)

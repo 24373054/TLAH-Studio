@@ -12,6 +12,7 @@ public static class ToolExecutionBackends
 
 public static class ToolPolicyScopes
 {
+    public const string Once = "once";
     public const string Chat = "chat";
     public const string Project = "project";
     public const string Global = "global";
@@ -21,6 +22,13 @@ public static class ToolPolicyDecisions
 {
     public const string Allow = "allow";
     public const string Deny = "deny";
+}
+
+public static class ToolPolicySubjects
+{
+    public const string Tool = "tool";
+    public const string Path = "path";
+    public const string Domain = "domain";
 }
 
 public static class McpTransportTypes
@@ -73,10 +81,19 @@ public class ToolPolicyRule
     public string ToolName { get; set; } = string.Empty;
 
     [MaxLength(40)]
+    public string SubjectKind { get; set; } = ToolPolicySubjects.Tool;
+
+    [MaxLength(500)]
+    public string Pattern { get; set; } = string.Empty;
+
+    [MaxLength(40)]
     public string Scope { get; set; } = ToolPolicyScopes.Chat;
 
     [MaxLength(40)]
     public string Decision { get; set; } = ToolPolicyDecisions.Allow;
+
+    [MaxLength(500)]
+    public string Description { get; set; } = string.Empty;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

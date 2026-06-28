@@ -1,14 +1,14 @@
 {
-  "version": "2.4.0",
+  "version": "2.6.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.4.0.exe",
-  "sha256": "749a491a2c800b9f06be7071d5f3f41cf60eb6cd8aa478a0c3921b4e437e4af3",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.6.0.exe",
+  "sha256": "d970065909fc37715bf2cdeeb7977f8db7b3b222d41929af68125d852bcd7de0",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Runtime streaming and tool UX protocol release.\n\nHighlights:\n- Agent event stream now batches database writes during runs and emits runtime metrics for event count, DB write time, elapsed time, first-token timing, and streaming throughput\n- Send/resume no longer rely on a final chat reload; live streamed messages are promoted to persisted messages in place\n- Tool protocol now carries user-facing names, activity descriptions, render hints, truncation flags, interrupt behavior, and argument equivalence helpers\n- Live agent activity renders tool-specific previews for terminal, file, Git, network, and MCP operations\n\nFixes:\n- Reduced end-of-run UI flicker caused by reloading the full chat after streaming\n- Added regression coverage for event stream batching and tool UX rendering",
+  "releaseNotes": "Permission System v2 and Workspace Code Reliability release.\n\nHighlights:\n- Added rule-based tool permissions for allow once, project allow, global allow, and always deny.\n- Permission rules now support tool names and patterns, MCP tools, path scopes, and network domain scopes.\n- Approval dialogs summarize intended reads, writes, network access, and safety risk before execution.\n- Workspace code tools now protect encoding, BOM, newline style, and expected file hashes.\n- Added conflict detection, patch preview, file snapshots, rollback previews, and one-click rollback support.\n- Added compiler-backed diagnostics for workspace code tools and regression tests for policy matching and code edits.",
   "forceUpdate": true,
-  "minSupportedVersion": "2.4.0",
+  "minSupportedVersion": "2.6.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96885488
+  "installerSizeBytes": 96897432
 }

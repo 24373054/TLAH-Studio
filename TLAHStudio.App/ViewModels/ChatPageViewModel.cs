@@ -421,7 +421,10 @@ public partial class ChatPageViewModel : ObservableObject
                 run.Id,
                 run.PendingApproval.Id,
                 run.PendingApproval.ToolName,
-                run.PendingApproval.ArgumentsJson);
+                run.PendingApproval.ArgumentsJson,
+                run.PendingApproval.SafetyLevel,
+                run.PendingApproval.SafetySummary,
+                run.PendingApproval.SafetyJson);
             AgentApprovalRequested?.Invoke(this, request);
             AgentApprovalChoice choice;
             using (ct.Register(() => request.Completion.TrySetCanceled(ct)))
@@ -429,15 +432,16 @@ public partial class ChatPageViewModel : ObservableObject
 
             await _llmService.SetAgentToolApprovalAsync(
                 request.InvocationId,
-                choice != AgentApprovalChoice.AlwaysDeny,
+                choice is AgentApprovalChoice.AllowOnce or AgentApprovalChoice.AllowForProject or AgentApprovalChoice.AllowGlobally,
                 choice switch
                 {
                     AgentApprovalChoice.AllowForProject => ToolPolicyScopes.Project,
+                    AgentApprovalChoice.AllowGlobally => ToolPolicyScopes.Global,
                     AgentApprovalChoice.AlwaysDeny => ToolPolicyScopes.Global,
-                    _ => "once"
+                    _ => ToolPolicyScopes.Once
                 },
                 ct);
-            AgentStatusText = choice == AgentApprovalChoice.AlwaysDeny
+            AgentStatusText = choice is AgentApprovalChoice.DenyOnce or AgentApprovalChoice.AlwaysDeny
                 ? "Tool denied. Asking the agent for a safer next step..."
                 : "Tool approved. Continuing the agent run...";
             result = await _llmService.ResumeAgentTaskAsync(
@@ -971,9 +975,11 @@ internal sealed record AgentProgressRender(
 
 public enum AgentApprovalChoice
 {
+    DenyOnce,
     AlwaysDeny,
     AllowOnce,
-    AllowForProject
+    AllowForProject,
+    AllowGlobally
 }
 
 public sealed class AgentApprovalRequest : EventArgs
@@ -982,18 +988,27 @@ public sealed class AgentApprovalRequest : EventArgs
         Guid agentRunId,
         Guid invocationId,
         string toolName,
-        string argumentsJson)
+        string argumentsJson,
+        string safetyLevel = "unknown",
+        string safetySummary = "",
+        string safetyJson = "{}")
     {
         AgentRunId = agentRunId;
         InvocationId = invocationId;
         ToolName = toolName;
         ArgumentsJson = argumentsJson;
+        SafetyLevel = safetyLevel;
+        SafetySummary = safetySummary;
+        SafetyJson = safetyJson;
     }
 
     public Guid AgentRunId { get; }
     public Guid InvocationId { get; }
     public string ToolName { get; }
     public string ArgumentsJson { get; }
+    public string SafetyLevel { get; }
+    public string SafetySummary { get; }
+    public string SafetyJson { get; }
     public TaskCompletionSource<AgentApprovalChoice> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

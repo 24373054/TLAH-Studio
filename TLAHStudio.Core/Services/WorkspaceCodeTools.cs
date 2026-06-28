@@ -18,16 +18,109 @@ internal static partial class WorkspaceCodeToolSupport
 
     public static async Task<string> ReadTextAsync(string path, CancellationToken ct)
     {
-        await using var stream = File.OpenRead(path);
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        return await reader.ReadToEndAsync(ct);
+        var snapshot = await ReadTextSnapshotAsync(path, ct);
+        return snapshot.Content;
+    }
+
+    public static async Task<WorkspaceTextSnapshot> ReadTextSnapshotAsync(string path, CancellationToken ct)
+    {
+        var existed = File.Exists(path);
+        if (!existed)
+        {
+            return new WorkspaceTextSnapshot(
+                string.Empty,
+                new UTF8Encoding(false),
+                HasBom: false,
+                NewLine: Environment.NewLine,
+                Sha256: string.Empty,
+                LastWriteTimeUtc: null,
+                Existed: false);
+        }
+
+        var bytes = await File.ReadAllBytesAsync(path, ct);
+        var detection = DetectEncoding(bytes);
+        var preambleLength = detection.HasBom ? detection.Encoding.GetPreamble().Length : 0;
+        var content = detection.Encoding.GetString(bytes, preambleLength, bytes.Length - preambleLength);
+        return new WorkspaceTextSnapshot(
+            content,
+            detection.Encoding,
+            detection.HasBom,
+            DetectNewLine(content),
+            Sha256Bytes(bytes),
+            File.GetLastWriteTimeUtc(path),
+            true);
     }
 
     public static async Task WriteTextAsync(string path, string content, CancellationToken ct)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllTextAsync(path, content, new UTF8Encoding(false), ct);
+        await WriteTextPreservingAsync(path, content, null, ct);
     }
+
+    public static async Task WriteTextPreservingAsync(
+        string path,
+        string content,
+        WorkspaceTextSnapshot? previous,
+        CancellationToken ct)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var encoding = previous?.Encoding ?? new UTF8Encoding(false);
+        var normalized = NormalizeNewLines(content, previous?.NewLine ?? Environment.NewLine);
+        var bytes = encoding.GetBytes(normalized);
+        if (previous?.HasBom == true)
+        {
+            var preamble = encoding.GetPreamble();
+            if (preamble.Length > 0)
+            {
+                var withPreamble = new byte[preamble.Length + bytes.Length];
+                Buffer.BlockCopy(preamble, 0, withPreamble, 0, preamble.Length);
+                Buffer.BlockCopy(bytes, 0, withPreamble, preamble.Length, bytes.Length);
+                bytes = withPreamble;
+            }
+        }
+        await File.WriteAllBytesAsync(path, bytes, ct);
+    }
+
+    public static string ComputeFileSha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    public static string VerifyExpectedHash(
+        string path,
+        string expectedSha256)
+    {
+        if (string.IsNullOrWhiteSpace(expectedSha256))
+            return string.Empty;
+        if (!File.Exists(path))
+            return "The target file no longer exists; refusing to edit because the expected hash cannot be verified.";
+        var actual = ComputeFileSha256(path);
+        return actual.Equals(expectedSha256.Trim(), StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : $"File changed since it was inspected. Expected SHA256 {expectedSha256}, found {actual}.";
+    }
+
+    public static string NormalizeNewLines(string content, string newLine)
+    {
+        var normalized = content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        return newLine == "\n"
+            ? normalized
+            : normalized.Replace("\n", newLine, StringComparison.Ordinal);
+    }
+
+    public static string DisplayNewLine(string value) =>
+        value switch
+        {
+            "\r\n" => "CRLF",
+            "\n" => "LF",
+            "\r" => "CR",
+            _ => "unknown"
+        };
+
+    public static string FormatSnapshot(WorkspaceTextSnapshot snapshot) =>
+        snapshot.Existed
+            ? $"SHA256: {snapshot.Sha256}\nEncoding: {snapshot.Encoding.WebName}{(snapshot.HasBom ? " with BOM" : string.Empty)}\nNewline: {DisplayNewLine(snapshot.NewLine)}\nLast write UTC: {snapshot.LastWriteTimeUtc:O}"
+            : "File does not exist yet.";
 
     public static string BuildDiff(string oldContent, string newContent, string label = "file")
     {
@@ -58,6 +151,41 @@ internal static partial class WorkspaceCodeToolSupport
     public static string[] SplitLines(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
 
+    public static bool ShouldSkipPath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        return normalized.Contains("/.tlah_code_backups/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("/bin/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("/obj/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("/.git/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("/node_modules/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("/packages/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith("/.tlah_code_backups", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith("/bin", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith("/obj", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith("/.git", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith("/node_modules", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith("/packages", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static Dictionary<string, string> ReadExpectedHashes(JsonElement root)
+    {
+        var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!root.TryGetProperty("expected_sha256_by_path", out var element) ||
+            element.ValueKind != JsonValueKind.Object)
+        {
+            return hashes;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.String)
+                hashes[property.Name.Replace('\\', '/')] = property.Value.GetString() ?? string.Empty;
+        }
+
+        return hashes;
+    }
+
     public static string WildcardToRegex(string pattern)
     {
         var normalized = pattern.Replace('\\', '/');
@@ -73,6 +201,44 @@ internal static partial class WorkspaceCodeToolSupport
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(relativePath.Replace('\\', '/').ToLowerInvariant()));
         return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
     }
+
+    private static (Encoding Encoding, bool HasBom) DetectEncoding(byte[] bytes)
+    {
+        if (bytes.Length >= 3 &&
+            bytes[0] == 0xEF &&
+            bytes[1] == 0xBB &&
+            bytes[2] == 0xBF)
+        {
+            return (new UTF8Encoding(true), true);
+        }
+
+        if (bytes.Length >= 2)
+        {
+            if (bytes[0] == 0xFF && bytes[1] == 0xFE)
+                return (Encoding.Unicode, true);
+            if (bytes[0] == 0xFE && bytes[1] == 0xFF)
+                return (Encoding.BigEndianUnicode, true);
+        }
+
+        return (new UTF8Encoding(false), false);
+    }
+
+    private static string DetectNewLine(string content)
+    {
+        var rn = content.IndexOf("\r\n", StringComparison.Ordinal);
+        var n = content.IndexOf('\n');
+        var r = content.IndexOf('\r');
+        if (rn >= 0 && (n < 0 || rn <= n) && (r < 0 || rn <= r))
+            return "\r\n";
+        if (n >= 0 && (r < 0 || n <= r))
+            return "\n";
+        if (r >= 0)
+            return "\r";
+        return Environment.NewLine;
+    }
+
+    private static string Sha256Bytes(byte[] bytes) =>
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
     public static string ReadString(JsonElement root, string name, string fallback = "") =>
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
@@ -137,12 +303,26 @@ internal static partial class WorkspaceCodeToolSupport
     }
 }
 
+internal sealed record WorkspaceTextSnapshot(
+    string Content,
+    Encoding Encoding,
+    bool HasBom,
+    string NewLine,
+    string Sha256,
+    DateTime? LastWriteTimeUtc,
+    bool Existed);
+
 internal sealed record WorkspaceBackupMetadata(
     string Id,
     string RelativePath,
     bool Existed,
     DateTime CreatedAtUtc,
-    string? BackupRelativePath);
+    string? BackupRelativePath,
+    string Sha256 = "",
+    long SizeBytes = 0,
+    string EncodingName = "utf-8",
+    bool HasBom = false,
+    string NewLine = "\n");
 
 internal static class WorkspaceBackupStore
 {
@@ -159,6 +339,7 @@ internal static class WorkspaceBackupStore
         var backupDir = Path.Combine(root, ".tlah_code_backups", hash);
         Directory.CreateDirectory(backupDir);
         var existed = File.Exists(fullPath);
+        var snapshot = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(fullPath, ct);
         var backupPath = existed ? Path.Combine(backupDir, $"{stamp}.bak") : null;
         if (backupPath != null)
             File.Copy(fullPath, backupPath, overwrite: true);
@@ -168,7 +349,12 @@ internal static class WorkspaceBackupStore
             relative,
             existed,
             DateTime.UtcNow,
-            backupPath == null ? null : Path.GetRelativePath(root, backupPath));
+            backupPath == null ? null : Path.GetRelativePath(root, backupPath),
+            snapshot.Sha256,
+            existed ? new FileInfo(fullPath).Length : 0,
+            snapshot.Encoding.WebName,
+            snapshot.HasBom,
+            snapshot.NewLine);
         await File.WriteAllTextAsync(
             Path.Combine(backupDir, $"{stamp}.json"),
             JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }),
@@ -245,12 +431,12 @@ public sealed class CodeReadAgentTool : IAgentTool
             if (!File.Exists(path))
                 return new AgentToolResult(false, string.Empty, "File not found.");
 
-            var text = await WorkspaceCodeToolSupport.ReadTextAsync(path, ct);
-            var lines = WorkspaceCodeToolSupport.SplitLines(text);
+            var snapshot = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(path, ct);
+            var lines = WorkspaceCodeToolSupport.SplitLines(snapshot.Content);
             var start = Math.Max(1, WorkspaceCodeToolSupport.ReadInt(root, "start_line", 1));
             var count = Math.Clamp(WorkspaceCodeToolSupport.ReadInt(root, "line_count", 220), 1, 2000);
             var selected = lines.Skip(start - 1).Take(count).Select((line, index) => $"{start + index,5}: {line}");
-            var output = $"File: {WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path)}\nLines: {lines.Length}\n\n" +
+            var output = $"File: {WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path)}\nLines: {lines.Length}\n{WorkspaceCodeToolSupport.FormatSnapshot(snapshot)}\n\n" +
                          string.Join(Environment.NewLine, selected);
             return new AgentToolResult(true, AgentToolSupport.Limit(output, context.MaxOutputChars));
         }
@@ -299,6 +485,7 @@ public sealed class CodeGlobAgentTool : IAgentTool
             var baseRoot = _sandbox.GetSandboxRoot(context.ChatId);
             var matches = Directory
                 .EnumerateFileSystemEntries(searchRoot, "*", SearchOption.AllDirectories)
+                .Where(p => !WorkspaceCodeToolSupport.ShouldSkipPath(p))
                 .Select(p => Path.GetRelativePath(baseRoot, p).Replace('\\', '/'))
                 .Where(p => !p.StartsWith(".tlah_code_backups/", StringComparison.OrdinalIgnoreCase))
                 .Where(p => regex.IsMatch(p))
@@ -354,7 +541,9 @@ public sealed class CodeGrepAgentTool : IAgentTool
             var files = File.Exists(start)
                 ? [start]
                 : Directory.Exists(start)
-                    ? Directory.EnumerateFiles(start, "*", SearchOption.AllDirectories).ToArray()
+                    ? Directory.EnumerateFiles(start, "*", SearchOption.AllDirectories)
+                        .Where(p => !WorkspaceCodeToolSupport.ShouldSkipPath(p))
+                        .ToArray()
                     : [];
             var max = Math.Clamp(WorkspaceCodeToolSupport.ReadInt(root, "max_results", 200), 1, 2000);
             var caseSensitive = WorkspaceCodeToolSupport.ReadBool(root, "case_sensitive");
@@ -425,10 +614,13 @@ public sealed class CodeDiffAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var path = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path"));
-            var oldContent = File.Exists(path) ? await WorkspaceCodeToolSupport.ReadTextAsync(path, ct) : string.Empty;
+            var snapshot = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(path, ct);
+            var oldContent = snapshot.Content;
             var proposed = WorkspaceCodeToolSupport.ReadString(root, "proposed_content");
-            var diff = WorkspaceCodeToolSupport.BuildDiff(oldContent, proposed, WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path));
-            return new AgentToolResult(true, AgentToolSupport.Limit(diff, context.MaxOutputChars));
+            var normalizedProposed = WorkspaceCodeToolSupport.NormalizeNewLines(proposed, snapshot.NewLine);
+            var diff = WorkspaceCodeToolSupport.BuildDiff(oldContent, normalizedProposed, WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path));
+            var output = $"File: {WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path)}\n{WorkspaceCodeToolSupport.FormatSnapshot(snapshot)}\n\n{diff}";
+            return new AgentToolResult(true, AgentToolSupport.Limit(output, context.MaxOutputChars));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -456,6 +648,7 @@ public sealed class CodeEditAgentTool : IAgentTool
             ["new_text"] = AgentToolSupport.StringProperty("Replacement text or new file content."),
             ["replace_all"] = AgentToolSupport.BooleanProperty("Replace every occurrence instead of only the first."),
             ["create_if_missing"] = AgentToolSupport.BooleanProperty("Create the file if it does not exist."),
+            ["expected_sha256"] = AgentToolSupport.StringProperty("Optional SHA256 from a prior read/diff. The edit is rejected if the file changed."),
             ["reason"] = AgentToolSupport.StringProperty("Why this edit is needed.")
         },
         ["path", "new_text"]);
@@ -473,7 +666,13 @@ public sealed class CodeEditAgentTool : IAgentTool
             var newText = WorkspaceCodeToolSupport.ReadString(root, "new_text");
             var replaceAll = WorkspaceCodeToolSupport.ReadBool(root, "replace_all");
             var createIfMissing = WorkspaceCodeToolSupport.ReadBool(root, "create_if_missing");
-            var oldContent = File.Exists(path) ? await WorkspaceCodeToolSupport.ReadTextAsync(path, ct) : string.Empty;
+            var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");
+            var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(path, expectedHash);
+            if (!string.IsNullOrWhiteSpace(conflict))
+                return new AgentToolResult(false, string.Empty, conflict);
+
+            var before = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(path, ct);
+            var oldContent = before.Content;
             if (!File.Exists(path) && !createIfMissing)
                 return new AgentToolResult(false, string.Empty, "File not found. Set create_if_missing to true to create it.");
 
@@ -494,12 +693,12 @@ public sealed class CodeEditAgentTool : IAgentTool
             }
 
             var backup = await WorkspaceBackupStore.CreateAsync(_sandbox, context.ChatId, path, ct);
-            await WorkspaceCodeToolSupport.WriteTextAsync(path, newContent, ct);
+            await WorkspaceCodeToolSupport.WriteTextPreservingAsync(path, newContent, before, ct);
             var diff = WorkspaceCodeToolSupport.BuildDiff(oldContent, newContent, WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path));
             var artifact = await AgentToolSupport.ArtifactAsync(_sandbox.GetSandboxRoot(context.ChatId), path, ct);
             return new AgentToolResult(
                 true,
-                $"Edited {artifact.RelativePath}\nBackup: {backup.Id}\n\n{AgentToolSupport.Limit(diff, context.MaxOutputChars)}",
+                $"Edited {artifact.RelativePath}\nBackup: {backup.Id}\nBefore SHA256: {before.Sha256}\nAfter SHA256: {WorkspaceCodeToolSupport.ComputeFileSha256(path)}\nEncoding: {before.Encoding.WebName}{(before.HasBom ? " with BOM" : string.Empty)}\nNewline: {WorkspaceCodeToolSupport.DisplayNewLine(before.NewLine)}\n\n{AgentToolSupport.Limit(diff, context.MaxOutputChars)}",
                 Artifacts: [artifact]);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -549,6 +748,7 @@ public sealed class CodeMultiEditAgentTool : IAgentTool
                     ["additionalProperties"] = false
                 }
             },
+            ["expected_sha256"] = AgentToolSupport.StringProperty("Optional SHA256 from a prior read/diff. The edit is rejected if the file changed."),
             ["reason"] = AgentToolSupport.StringProperty("Why these edits are needed.")
         },
         ["path", "edits"]);
@@ -564,10 +764,15 @@ public sealed class CodeMultiEditAgentTool : IAgentTool
             var path = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path"));
             if (!File.Exists(path))
                 return new AgentToolResult(false, string.Empty, "File not found.");
+            var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");
+            var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(path, expectedHash);
+            if (!string.IsNullOrWhiteSpace(conflict))
+                return new AgentToolResult(false, string.Empty, conflict);
             if (!root.TryGetProperty("edits", out var editsElement) || editsElement.ValueKind != JsonValueKind.Array)
                 return new AgentToolResult(false, string.Empty, "edits must be an array.");
 
-            var oldContent = await WorkspaceCodeToolSupport.ReadTextAsync(path, ct);
+            var before = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(path, ct);
+            var oldContent = before.Content;
             var newContent = oldContent;
             var applied = 0;
             foreach (var edit in editsElement.EnumerateArray())
@@ -586,12 +791,12 @@ public sealed class CodeMultiEditAgentTool : IAgentTool
             }
 
             var backup = await WorkspaceBackupStore.CreateAsync(_sandbox, context.ChatId, path, ct);
-            await WorkspaceCodeToolSupport.WriteTextAsync(path, newContent, ct);
+            await WorkspaceCodeToolSupport.WriteTextPreservingAsync(path, newContent, before, ct);
             var diff = WorkspaceCodeToolSupport.BuildDiff(oldContent, newContent, WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path));
             var artifact = await AgentToolSupport.ArtifactAsync(_sandbox.GetSandboxRoot(context.ChatId), path, ct);
             return new AgentToolResult(
                 true,
-                $"Applied {applied} edits to {artifact.RelativePath}\nBackup: {backup.Id}\n\n{AgentToolSupport.Limit(diff, context.MaxOutputChars)}",
+                $"Applied {applied} edits to {artifact.RelativePath}\nBackup: {backup.Id}\nBefore SHA256: {before.Sha256}\nAfter SHA256: {WorkspaceCodeToolSupport.ComputeFileSha256(path)}\nEncoding: {before.Encoding.WebName}{(before.HasBom ? " with BOM" : string.Empty)}\nNewline: {WorkspaceCodeToolSupport.DisplayNewLine(before.NewLine)}\n\n{AgentToolSupport.Limit(diff, context.MaxOutputChars)}",
                 Artifacts: [artifact]);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -624,6 +829,13 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
         new Dictionary<string, object>
         {
             ["patch"] = AgentToolSupport.StringProperty("Unified diff patch. Paths must be relative to the workspace root."),
+            ["preview_only"] = AgentToolSupport.BooleanProperty("Validate the patch and list affected files without applying it."),
+            ["expected_sha256_by_path"] = new Dictionary<string, object>
+            {
+                ["type"] = "object",
+                ["description"] = "Optional map of relative path to SHA256 from a prior read/diff. The patch is rejected if any file changed.",
+                ["additionalProperties"] = new Dictionary<string, object> { ["type"] = "string" }
+            },
             ["reason"] = AgentToolSupport.StringProperty("Why this patch is needed.")
         },
         ["patch"]);
@@ -640,9 +852,50 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
             if (string.IsNullOrWhiteSpace(patch))
                 return new AgentToolResult(false, string.Empty, "patch is required.");
             var rootPath = _sandbox.GetSandboxRoot(context.ChatId);
+            var previewOnly = WorkspaceCodeToolSupport.ReadBool(root, "preview_only");
             var paths = WorkspaceCodeToolSupport.ExtractPatchPaths(patch);
             if (paths.Count == 0)
                 return new AgentToolResult(false, string.Empty, "No relative paths were found in the patch.");
+
+            var expectedHashes = WorkspaceCodeToolSupport.ReadExpectedHashes(root);
+            foreach (var relative in paths)
+            {
+                var normalized = relative.Replace('\\', '/');
+                if (!expectedHashes.TryGetValue(normalized, out var expectedHash) &&
+                    !expectedHashes.TryGetValue(Path.GetFileName(normalized), out expectedHash))
+                {
+                    continue;
+                }
+
+                var full = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, relative);
+                var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(full, expectedHash);
+                if (!string.IsNullOrWhiteSpace(conflict))
+                    return new AgentToolResult(false, string.Empty, $"{relative}: {conflict}");
+            }
+
+            var check = await RunGitApplyAsync(rootPath, patch, "apply --check --whitespace=nowarn -", ct);
+            if (check.ExitCode != 0)
+            {
+                return new AgentToolResult(
+                    false,
+                    AgentToolSupport.Limit($"Patch check failed.\nstdout:\n{check.Stdout}\n\nstderr:\n{check.Stderr}", context.MaxOutputChars),
+                    "git apply --check failed.");
+            }
+
+            if (previewOnly)
+            {
+                var preview = new StringBuilder();
+                preview.AppendLine("Patch check passed. No files were changed.");
+                foreach (var path in paths)
+                {
+                    var full = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, path);
+                    var snapshot = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(full, ct);
+                    preview.AppendLine($"- {path}: {(snapshot.Existed ? snapshot.Sha256 : "new file")}");
+                }
+
+                return new AgentToolResult(true, preview.ToString().TrimEnd());
+            }
+
             var backups = new List<WorkspaceBackupMetadata>();
             foreach (var path in paths)
             {
@@ -650,30 +903,10 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
                 backups.Add(await WorkspaceBackupStore.CreateAsync(_sandbox, context.ChatId, full, ct));
             }
 
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "git",
-                    Arguments = "apply --whitespace=nowarn --reject -",
-                    WorkingDirectory = rootPath,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
-                }
-            };
-            process.Start();
-            await process.StandardInput.WriteAsync(patch.AsMemory(), ct);
-            process.StandardInput.Close();
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-            var stderrTask = process.StandardError.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct);
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
+            var apply = await RunGitApplyAsync(rootPath, patch, "apply --whitespace=nowarn -", ct);
+            if (apply.ExitCode != 0)
+                await RestoreBackupsAsync(rootPath, backups, ct);
+
             var artifacts = new List<AgentToolArtifact>();
             foreach (var path in paths)
             {
@@ -682,22 +915,89 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
                     artifacts.Add(await AgentToolSupport.ArtifactAsync(rootPath, full, ct));
             }
 
+            var hashes = new StringBuilder();
+            foreach (var path in paths)
+            {
+                var full = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, path);
+                hashes.AppendLine(File.Exists(full)
+                    ? $"- {path}: {WorkspaceCodeToolSupport.ComputeFileSha256(full)}"
+                    : $"- {path}: deleted");
+            }
+
             var output = $"""
-                Exit code: {process.ExitCode}
+                Exit code: {apply.ExitCode}
                 Backups:
-                {string.Join(Environment.NewLine, backups.Select(b => $"- {b.RelativePath}: {b.Id}"))}
+                {string.Join(Environment.NewLine, backups.Select(b => $"- {b.RelativePath.Replace('\\', '/')}: {b.Id}"))}
+                Result SHA256:
+                {hashes}
 
                 stdout:
-                {stdout}
+                {apply.Stdout}
 
                 stderr:
-                {stderr}
+                {apply.Stderr}
                 """;
-            return new AgentToolResult(process.ExitCode == 0, AgentToolSupport.Limit(output, context.MaxOutputChars), process.ExitCode == 0 ? null : "git apply failed.", artifacts);
+            return new AgentToolResult(apply.ExitCode == 0, AgentToolSupport.Limit(output, context.MaxOutputChars), apply.ExitCode == 0 ? null : "git apply failed and changes were rolled back.", artifacts);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new AgentToolResult(false, string.Empty, ex.Message);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitApplyAsync(
+        string rootPath,
+        string patch,
+        string arguments,
+        CancellationToken ct)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = arguments,
+                WorkingDirectory = rootPath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            }
+        };
+        process.Start();
+        await process.StandardInput.WriteAsync(patch.AsMemory(), ct);
+        process.StandardInput.Close();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        return (process.ExitCode, await stdoutTask, await stderrTask);
+    }
+
+    private static async Task RestoreBackupsAsync(
+        string rootPath,
+        IReadOnlyList<WorkspaceBackupMetadata> backups,
+        CancellationToken ct)
+    {
+        foreach (var backup in backups)
+        {
+            var target = Path.GetFullPath(Path.Combine(rootPath, backup.RelativePath));
+            if (!backup.Existed)
+            {
+                if (File.Exists(target))
+                    File.Delete(target);
+                continue;
+            }
+
+            var backupPath = Path.GetFullPath(Path.Combine(rootPath, backup.BackupRelativePath ?? string.Empty));
+            if (!File.Exists(backupPath))
+                continue;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            await using var source = File.OpenRead(backupPath);
+            await using var destination = File.Create(target);
+            await source.CopyToAsync(destination, ct);
         }
     }
 }
@@ -718,6 +1018,8 @@ public sealed class CodeRollbackAgentTool : IAgentTool
         {
             ["path"] = AgentToolSupport.StringProperty("Relative file path. Used to find the latest backup when backup_id is omitted."),
             ["backup_id"] = AgentToolSupport.StringProperty("Backup id returned by a write tool, for example abcd1234/20260627010203000."),
+            ["preview_only"] = AgentToolSupport.BooleanProperty("Show what rollback would change without restoring files."),
+            ["expected_sha256"] = AgentToolSupport.StringProperty("Optional current SHA256. The rollback is rejected if the target changed."),
             ["reason"] = AgentToolSupport.StringProperty("Why this rollback is needed.")
         },
         ["path"]);
@@ -732,13 +1034,29 @@ public sealed class CodeRollbackAgentTool : IAgentTool
                 return new AgentToolResult(false, string.Empty, error);
             var pathArg = WorkspaceCodeToolSupport.ReadString(root, "path");
             var backupId = WorkspaceCodeToolSupport.ReadString(root, "backup_id");
+            var previewOnly = WorkspaceCodeToolSupport.ReadBool(root, "preview_only");
             var backup = await WorkspaceBackupStore.FindAsync(_sandbox, context.ChatId, pathArg, backupId, ct);
             if (backup == null)
                 return new AgentToolResult(false, string.Empty, "No matching backup was found.");
             var rootPath = _sandbox.GetSandboxRoot(context.ChatId);
             var target = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, backup.RelativePath);
+            var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");
+            var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(target, expectedHash);
+            if (!string.IsNullOrWhiteSpace(conflict))
+                return new AgentToolResult(false, string.Empty, conflict);
+
+            var current = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(target, ct);
             if (!backup.Existed)
             {
+                if (previewOnly)
+                {
+                    return new AgentToolResult(
+                        true,
+                        File.Exists(target)
+                            ? $"Rollback preview: {backup.RelativePath} would be deleted.\nCurrent SHA256: {current.Sha256}"
+                            : $"Rollback preview: {backup.RelativePath} is already absent.");
+                }
+
                 if (File.Exists(target))
                     File.Delete(target);
                 return new AgentToolResult(true, $"Rolled back {backup.RelativePath} by deleting the file created after backup {backup.Id}.");
@@ -747,10 +1065,24 @@ public sealed class CodeRollbackAgentTool : IAgentTool
             var backupPath = Path.Combine(rootPath, backup.BackupRelativePath ?? string.Empty);
             if (!File.Exists(backupPath))
                 return new AgentToolResult(false, string.Empty, "Backup content file is missing.");
+            var backupSnapshot = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(backupPath, ct);
+            if (previewOnly)
+            {
+                var diff = WorkspaceCodeToolSupport.BuildDiff(current.Content, backupSnapshot.Content, backup.RelativePath);
+                return new AgentToolResult(
+                    true,
+                    AgentToolSupport.Limit(
+                        $"Rollback preview for {backup.RelativePath}\nBackup: {backup.Id}\nCurrent SHA256: {current.Sha256}\nBackup SHA256: {backupSnapshot.Sha256}\n\n{diff}",
+                        context.MaxOutputChars));
+            }
+
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(backupPath, target, overwrite: true);
             var artifact = await AgentToolSupport.ArtifactAsync(rootPath, target, ct);
-            return new AgentToolResult(true, $"Restored {backup.RelativePath} from backup {backup.Id}.", Artifacts: [artifact]);
+            return new AgentToolResult(
+                true,
+                $"Restored {backup.RelativePath} from backup {backup.Id}.\nBefore SHA256: {current.Sha256}\nAfter SHA256: {WorkspaceCodeToolSupport.ComputeFileSha256(target)}",
+                Artifacts: [artifact]);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -774,6 +1106,7 @@ public sealed class CodeDiagnosticsAgentTool : IAgentTool
         new Dictionary<string, object>
         {
             ["path"] = AgentToolSupport.StringProperty("Relative file or directory path. Defaults to root."),
+            ["include_build"] = AgentToolSupport.BooleanProperty("Run dotnet build when a solution or project is present. Defaults to true."),
             ["reason"] = AgentToolSupport.StringProperty("Why diagnostics are needed.")
         });
 
@@ -786,11 +1119,13 @@ public sealed class CodeDiagnosticsAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var start = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path", "."));
+            var includeBuild = !root.TryGetProperty("include_build", out var includeBuildElement) ||
+                               includeBuildElement.ValueKind != JsonValueKind.False;
             var files = File.Exists(start)
                 ? [start]
                 : Directory.Exists(start)
                     ? Directory.EnumerateFiles(start, "*", SearchOption.AllDirectories)
-                        .Where(p => !p.Contains(Path.Combine(".tlah_code_backups", ""), StringComparison.OrdinalIgnoreCase))
+                        .Where(p => !WorkspaceCodeToolSupport.ShouldSkipPath(p))
                         .ToArray()
                     : [];
             var diagnostics = new StringBuilder();
@@ -826,11 +1161,126 @@ public sealed class CodeDiagnosticsAgentTool : IAgentTool
                 }
             }
 
-            return new AgentToolResult(true, diagnostics.Length == 0 ? "No diagnostics found." : diagnostics.ToString().TrimEnd());
+            if (includeBuild)
+            {
+                var rootPath = _sandbox.GetSandboxRoot(context.ChatId);
+                var buildTarget = FindDotnetBuildTarget(rootPath, start);
+                if (buildTarget != null)
+                {
+                    var build = await RunDotnetBuildAsync(rootPath, buildTarget, context.TimeoutSeconds, ct);
+                    diagnostics.AppendLine();
+                    diagnostics.AppendLine($"dotnet build {Path.GetRelativePath(rootPath, buildTarget)}");
+                    diagnostics.AppendLine($"Exit code: {build.ExitCode}");
+                    if (!string.IsNullOrWhiteSpace(build.Stdout))
+                        diagnostics.AppendLine(AgentToolSupport.Limit(build.Stdout.TrimEnd(), 12_000));
+                    if (!string.IsNullOrWhiteSpace(build.Stderr))
+                    {
+                        diagnostics.AppendLine("stderr:");
+                        diagnostics.AppendLine(AgentToolSupport.Limit(build.Stderr.TrimEnd(), 4_000));
+                    }
+                }
+            }
+
+            var output = diagnostics.ToString().Trim();
+            return new AgentToolResult(true, string.IsNullOrWhiteSpace(output) ? "No diagnostics found." : AgentToolSupport.Limit(output, context.MaxOutputChars));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new AgentToolResult(false, string.Empty, ex.Message);
         }
+    }
+
+    private static string? FindDotnetBuildTarget(string rootPath, string start)
+    {
+        var startDirectory = File.Exists(start)
+            ? Path.GetDirectoryName(start) ?? rootPath
+            : Directory.Exists(start) ? start : rootPath;
+
+        foreach (var directory in EnumerateParents(startDirectory, rootPath))
+        {
+            var solution = Directory.EnumerateFiles(directory, "*.sln", SearchOption.TopDirectoryOnly)
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+            if (solution != null)
+                return solution;
+
+            var project = Directory.EnumerateFiles(directory, "*.csproj", SearchOption.TopDirectoryOnly)
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+            if (project != null)
+                return project;
+        }
+
+        return Directory.EnumerateFiles(rootPath, "*.sln", SearchOption.AllDirectories)
+                   .Where(p => !WorkspaceCodeToolSupport.ShouldSkipPath(p))
+                   .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                   .FirstOrDefault()
+               ?? Directory.EnumerateFiles(rootPath, "*.csproj", SearchOption.AllDirectories)
+                   .Where(p => !WorkspaceCodeToolSupport.ShouldSkipPath(p))
+                   .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                   .FirstOrDefault();
+    }
+
+    private static IEnumerable<string> EnumerateParents(string startDirectory, string rootPath)
+    {
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var current = Path.GetFullPath(startDirectory);
+        while (current.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            yield return current;
+            var parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrWhiteSpace(parent) ||
+                parent.Equals(current, StringComparison.OrdinalIgnoreCase))
+            {
+                yield break;
+            }
+
+            current = parent;
+        }
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDotnetBuildAsync(
+        string rootPath,
+        string buildTarget,
+        int timeoutSeconds,
+        CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 15, 120)));
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"build \"{buildTarget}\" --no-restore -v:minimal",
+                WorkingDirectory = rootPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            }
+        };
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            return (-1, await SafeReadAsync(stdout), "dotnet build timed out.");
+        }
+
+        return (process.ExitCode, await SafeReadAsync(stdout), await SafeReadAsync(stderr));
+    }
+
+    private static async Task<string> SafeReadAsync(Task<string> task)
+    {
+        try { return await task; }
+        catch { return string.Empty; }
     }
 }

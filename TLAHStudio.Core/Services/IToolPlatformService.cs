@@ -15,11 +15,28 @@ public sealed record ToolPlatformSettingsUpdate(
     string RemoteEndpoint,
     string RemoteCredentialName);
 
-public sealed record ToolPolicyEvaluation(string? Decision, string? Scope)
+public sealed record ToolPolicyEvaluation(
+    string? Decision,
+    string? Scope,
+    Guid? RuleId = null,
+    string? SubjectKind = null,
+    string? Pattern = null,
+    string? MatchedValue = null,
+    string? Description = null)
 {
     public bool IsAllowed => Decision == ToolPolicyDecisions.Allow;
     public bool IsDenied => Decision == ToolPolicyDecisions.Deny;
 }
+
+public sealed record ToolPolicyRuleUpdate(
+    Guid? Id,
+    string SubjectKind,
+    string Pattern,
+    string Scope,
+    string Decision,
+    string Description = "",
+    Guid? ChatId = null,
+    Guid? ProjectSpaceId = null);
 
 public sealed record McpServerConfigDto(
     Guid Id,
@@ -50,6 +67,8 @@ public interface IToolPlatformService
     Task<ToolPolicyEvaluation> EvaluatePolicyAsync(
         Guid chatId,
         string toolName,
+        string argumentsJson = "{}",
+        ToolSafetyAssessment? safety = null,
         CancellationToken ct = default);
 
     Task SavePolicyAsync(
@@ -57,6 +76,13 @@ public interface IToolPlatformService
         string toolName,
         string scope,
         string decision,
+        string? subjectKind = null,
+        string? pattern = null,
+        string? description = null,
+        CancellationToken ct = default);
+
+    Task<ToolPolicyRule> SavePolicyRuleAsync(
+        ToolPolicyRuleUpdate update,
         CancellationToken ct = default);
 
     Task<IReadOnlyList<ToolPolicyRule>> ListPoliciesAsync(CancellationToken ct = default);

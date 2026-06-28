@@ -125,13 +125,40 @@ public sealed partial class MainWindow : Window
             {
             }
 
-            var content = new StackPanel { Spacing = 12, MaxWidth = 620 };
+            var content = new StackPanel { Spacing = 12, MaxWidth = 680 };
             content.Children.Add(new TextBlock
             {
-                Text = $"The agent wants to use {request.ToolName}. Review the exact arguments before allowing it.",
+                Text = $"The agent wants to use {request.ToolName}. Review what it may read, change, or access before applying a permission decision.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"]
             });
+
+            var summaryGrid = BuildApprovalSummaryGrid(request);
+            content.Children.Add(summaryGrid);
+
+            var decisionBox = new ComboBox
+            {
+                ItemsSource = new[]
+                {
+                    "Allow once",
+                    "Allow for this project",
+                    "Allow globally",
+                    "Always deny"
+                },
+                SelectedIndex = 0,
+                MinWidth = 260
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                decisionBox,
+                "Agent tool permission decision");
+            content.Children.Add(new TextBlock
+            {
+                Text = "Permission decision",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"]
+            });
+            content.Children.Add(decisionBox);
+
             var argumentsText = new TextBlock
             {
                 Text = details,
@@ -165,9 +192,8 @@ public sealed partial class MainWindow : Window
             {
                 Title = "Approve Agent Tool",
                 Content = content,
-                PrimaryButtonText = "Allow once",
-                SecondaryButtonText = "Allow for this project",
-                CloseButtonText = "Always deny",
+                PrimaryButtonText = "Apply decision",
+                CloseButtonText = "Deny once",
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = RootGrid.XamlRoot
             };
@@ -180,9 +206,14 @@ public sealed partial class MainWindow : Window
                 : InteractionSound.Error);
             request.Completion.TrySetResult(result switch
             {
-                ContentDialogResult.Primary => AgentApprovalChoice.AllowOnce,
-                ContentDialogResult.Secondary => AgentApprovalChoice.AllowForProject,
-                _ => AgentApprovalChoice.AlwaysDeny
+                ContentDialogResult.Primary => decisionBox.SelectedIndex switch
+                {
+                    1 => AgentApprovalChoice.AllowForProject,
+                    2 => AgentApprovalChoice.AllowGlobally,
+                    3 => AgentApprovalChoice.AlwaysDeny,
+                    _ => AgentApprovalChoice.AllowOnce
+                },
+                _ => AgentApprovalChoice.DenyOnce
             });
         }
         catch (Exception ex)
@@ -191,6 +222,150 @@ public sealed partial class MainWindow : Window
             request.Completion.TrySetResult(AgentApprovalChoice.AlwaysDeny);
         }
     }
+
+    private static Grid BuildApprovalSummaryGrid(AgentApprovalRequest request)
+    {
+        var grid = new Grid
+        {
+            ColumnSpacing = 10,
+            RowSpacing = 8,
+            Padding = new Thickness(12),
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["InputBackgroundBrush"]
+        };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var preview = ParseApprovalPreview(request);
+        AddApprovalTile(grid, 0, 0, "It may read", preview.Reads);
+        AddApprovalTile(grid, 0, 1, "It may change", preview.Writes);
+        AddApprovalTile(grid, 1, 0, "It may access", preview.Accesses);
+        AddApprovalTile(grid, 1, 1, $"Risk: {request.SafetyLevel}", preview.Risk);
+        return grid;
+    }
+
+    private static void AddApprovalTile(Grid grid, int row, int column, string title, string body)
+    {
+        var panel = new StackPanel { Spacing = 3 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"]
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(body) ? "None detected." : body,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextSecondaryBrush"]
+        });
+        var border = new Border
+        {
+            Child = panel,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10),
+            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderSubtleBrush"],
+            BorderThickness = new Thickness(1),
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["InputBackgroundBrush"]
+        };
+        Grid.SetRow(border, row);
+        Grid.SetColumn(border, column);
+        grid.Children.Add(border);
+    }
+
+    private static ApprovalPreview ParseApprovalPreview(AgentApprovalRequest request)
+    {
+        var reads = new List<string>();
+        var writes = new List<string>();
+        var accesses = new List<string>();
+
+        try
+        {
+            using var preview = JsonDocument.Parse(request.SafetyJson);
+            CollectApprovalPreview(preview.RootElement, reads, writes, accesses);
+        }
+        catch
+        {
+        }
+
+        var risk = request.SafetySummary;
+        if (string.IsNullOrWhiteSpace(risk))
+            risk = "Review the tool arguments before allowing this operation.";
+
+        return new ApprovalPreview(
+            LimitApprovalLines(reads),
+            LimitApprovalLines(writes),
+            LimitApprovalLines(accesses),
+            risk);
+    }
+
+    private static void CollectApprovalPreview(
+        JsonElement element,
+        List<string> reads,
+        List<string> writes,
+        List<string> accesses)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            string? operation = null;
+            if (element.TryGetProperty("operation", out var op) &&
+                op.ValueKind == JsonValueKind.String)
+            {
+                operation = op.GetString();
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Value.ValueKind == JsonValueKind.String)
+                {
+                    var value = property.Value.GetString();
+                    if (string.IsNullOrWhiteSpace(value))
+                        continue;
+                    if (property.Name.Contains("path", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (operation is "create" or "replace" or "append" or "delete" or "write")
+                            writes.Add(value);
+                        else
+                            reads.Add(value);
+                    }
+                    else if (property.Name.Contains("url", StringComparison.OrdinalIgnoreCase) ||
+                             property.Name.Contains("domain", StringComparison.OrdinalIgnoreCase) ||
+                             property.Name.Contains("endpoint", StringComparison.OrdinalIgnoreCase))
+                    {
+                        accesses.Add(value);
+                    }
+                }
+                else
+                {
+                    CollectApprovalPreview(property.Value, reads, writes, accesses);
+                }
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                CollectApprovalPreview(item, reads, writes, accesses);
+        }
+    }
+
+    private static string LimitApprovalLines(IReadOnlyList<string> values)
+    {
+        var unique = values
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToArray();
+        return unique.Length == 0
+            ? string.Empty
+            : string.Join(Environment.NewLine, unique);
+    }
+
+    private sealed record ApprovalPreview(
+        string Reads,
+        string Writes,
+        string Accesses,
+        string Risk);
 
     private void OnRootGridSizeChanged(object sender, SizeChangedEventArgs e)
     {

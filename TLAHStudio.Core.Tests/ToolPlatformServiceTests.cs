@@ -66,6 +66,76 @@ public class ToolPlatformServiceTests
             (await db.Set<CredentialEntry>().SingleAsync()).ProtectedValue);
     }
 
+    [Fact]
+    public async Task PolicyRulesMatchToolPatternsMcpPathsAndDomains()
+    {
+        await using var db = TestDb.Create();
+        var project = new ProjectSpace { Name = "Policy project" };
+        var chat = new Chat { Title = "Policy chat", ProjectSpaceId = project.Id };
+        db.Set<ProjectSpace>().Add(project);
+        db.Set<Chat>().Add(chat);
+        await db.SaveChangesAsync();
+        var service = new ToolPlatformService(db);
+
+        await service.SavePolicyRuleAsync(new ToolPolicyRuleUpdate(
+            Id: null,
+            SubjectKind: ToolPolicySubjects.Tool,
+            Pattern: "tool(read)",
+            Scope: ToolPolicyScopes.Global,
+            Decision: ToolPolicyDecisions.Allow,
+            Description: "Read code globally."));
+        var read = await service.EvaluatePolicyAsync(chat.Id, AgentToolNames.CodeRead, """{"path":"src/App.xaml"}""");
+        Assert.True(read.IsAllowed);
+        Assert.Equal(ToolPolicySubjects.Tool, read.SubjectKind);
+        Assert.Equal("read", read.Pattern);
+
+        await service.SavePolicyRuleAsync(new ToolPolicyRuleUpdate(
+            Id: null,
+            SubjectKind: ToolPolicySubjects.Tool,
+            Pattern: "mcp__time_server__get_time",
+            Scope: ToolPolicyScopes.Project,
+            Decision: ToolPolicyDecisions.Allow,
+            Description: "Allow project time server.",
+            ProjectSpaceId: project.Id));
+        var mcp = await service.EvaluatePolicyAsync(
+            chat.Id,
+            AgentToolNames.McpCall,
+            """{"server":"Time Server","tool":"get time"}""");
+        Assert.True(mcp.IsAllowed);
+        Assert.Equal(ToolPolicyScopes.Project, mcp.Scope);
+        Assert.Equal("mcp__time_server__get_time", mcp.MatchedValue);
+
+        await service.SavePolicyRuleAsync(new ToolPolicyRuleUpdate(
+            Id: null,
+            SubjectKind: ToolPolicySubjects.Path,
+            Pattern: "src/generated/**",
+            Scope: ToolPolicyScopes.Global,
+            Decision: ToolPolicyDecisions.Deny,
+            Description: "Generated files are read-only."));
+        var pathDenied = await service.EvaluatePolicyAsync(
+            chat.Id,
+            AgentToolNames.CodeEdit,
+            """{"path":"src/generated/out.cs","new_text":"x"}""");
+        Assert.True(pathDenied.IsDenied);
+        Assert.Equal(ToolPolicySubjects.Path, pathDenied.SubjectKind);
+        Assert.Equal("src/generated/out.cs", pathDenied.MatchedValue);
+
+        await service.SavePolicyRuleAsync(new ToolPolicyRuleUpdate(
+            Id: null,
+            SubjectKind: ToolPolicySubjects.Domain,
+            Pattern: "*.example.com",
+            Scope: ToolPolicyScopes.Global,
+            Decision: ToolPolicyDecisions.Allow,
+            Description: "Allow example API reads."));
+        var domainAllowed = await service.EvaluatePolicyAsync(
+            chat.Id,
+            AgentToolNames.HttpRequest,
+            """{"method":"GET","url":"https://api.example.com/v1/models"}""");
+        Assert.True(domainAllowed.IsAllowed);
+        Assert.Equal(ToolPolicySubjects.Domain, domainAllowed.SubjectKind);
+        Assert.Equal("api.example.com", domainAllowed.MatchedValue);
+    }
+
     [Theory]
     [InlineData("api.example.com", "*.example.com", true)]
     [InlineData("example.com", "*.example.com", false)]

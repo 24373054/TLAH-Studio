@@ -289,9 +289,11 @@ public class TlahDbContext : DbContext
                 r.Scope,
                 r.ChatId,
                 r.ProjectSpaceId,
-                r.ToolName
+                r.SubjectKind,
+                r.Pattern
             }).IsUnique();
             entity.HasIndex(r => r.Decision);
+            entity.HasIndex(r => r.SubjectKind);
         });
 
         modelBuilder.Entity<McpServerConfig>(entity =>
@@ -562,11 +564,23 @@ public class TlahDbContext : DbContext
                 "ChatId" TEXT NULL,
                 "ProjectSpaceId" TEXT NULL,
                 "ToolName" TEXT NOT NULL,
+                "SubjectKind" TEXT NOT NULL DEFAULT 'tool',
+                "Pattern" TEXT NOT NULL DEFAULT '',
                 "Scope" TEXT NOT NULL,
                 "Decision" TEXT NOT NULL,
+                "Description" TEXT NOT NULL DEFAULT '',
                 "CreatedAt" TEXT NOT NULL,
                 "UpdatedAt" TEXT NOT NULL
             );
+            """);
+        AddColumnIfMissing(connection, "ToolPolicyRules", "SubjectKind", "TEXT NOT NULL DEFAULT 'tool'");
+        AddColumnIfMissing(connection, "ToolPolicyRules", "Pattern", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "ToolPolicyRules", "Description", "TEXT NOT NULL DEFAULT ''");
+        ExecuteNonQuery(connection, """
+            UPDATE "ToolPolicyRules"
+            SET "SubjectKind" = 'tool',
+                "Pattern" = CASE WHEN "Pattern" = '' THEN "ToolName" ELSE "Pattern" END
+            WHERE "SubjectKind" IS NULL OR "SubjectKind" = '' OR "Pattern" = '';
             """);
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "McpServerConfigs" (
@@ -595,8 +609,10 @@ public class TlahDbContext : DbContext
                 "UpdatedAt" TEXT NOT NULL
             );
             """);
-        ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_ToolPolicyRules_Scope_ChatId_ProjectSpaceId_ToolName\" ON \"ToolPolicyRules\" (\"Scope\", \"ChatId\", \"ProjectSpaceId\", \"ToolName\");");
+        ExecuteNonQuery(connection, "DROP INDEX IF EXISTS \"IX_ToolPolicyRules_Scope_ChatId_ProjectSpaceId_ToolName\";");
+        ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_ToolPolicyRules_Scope_ChatId_ProjectSpaceId_SubjectKind_Pattern\" ON \"ToolPolicyRules\" (\"Scope\", \"ChatId\", \"ProjectSpaceId\", \"SubjectKind\", \"Pattern\");");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_ToolPolicyRules_Decision\" ON \"ToolPolicyRules\" (\"Decision\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_ToolPolicyRules_SubjectKind\" ON \"ToolPolicyRules\" (\"SubjectKind\");");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_McpServerConfigs_Name\" ON \"McpServerConfigs\" (\"Name\");");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_McpServerConfigs_ProjectSpaceId\" ON \"McpServerConfigs\" (\"ProjectSpaceId\");");
         ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_CredentialEntries_Name\" ON \"CredentialEntries\" (\"Name\");");

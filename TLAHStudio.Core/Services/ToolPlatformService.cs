@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Models;
@@ -54,6 +55,8 @@ public sealed class ToolPlatformService : IToolPlatformService
     public async Task<ToolPolicyEvaluation> EvaluatePolicyAsync(
         Guid chatId,
         string toolName,
+        string argumentsJson = "{}",
+        ToolSafetyAssessment? safety = null,
         CancellationToken ct = default)
     {
         toolName = AgentToolNames.Normalize(toolName);
@@ -64,38 +67,54 @@ public sealed class ToolPlatformService : IToolPlatformService
 
         var rules = await _db.Set<ToolPolicyRule>()
             .AsNoTracking()
-            .Where(r => r.ToolName == toolName || r.ToolName == "*")
+            .Where(r =>
+                r.SubjectKind == ToolPolicySubjects.Tool ||
+                r.SubjectKind == ToolPolicySubjects.Path ||
+                r.SubjectKind == ToolPolicySubjects.Domain ||
+                r.SubjectKind == string.Empty)
             .ToListAsync(ct);
 
-        var globalDeny = rules.FirstOrDefault(r =>
-            r.Scope == ToolPolicyScopes.Global &&
-            r.Decision == ToolPolicyDecisions.Deny);
-        if (globalDeny != null)
-            return new ToolPolicyEvaluation(globalDeny.Decision, globalDeny.Scope);
+        var request = ToolPolicyRequest.From(toolName, argumentsJson, safety);
+        var matches = rules
+            .Select(rule => MatchRule(rule, request, chatId, projectId))
+            .Where(match => match != null)
+            .Select(match => match!)
+            .ToArray();
 
-        var chatRule = rules
-            .Where(r => r.Scope == ToolPolicyScopes.Chat && r.ChatId == chatId)
-            .OrderByDescending(r => r.ToolName == toolName)
+        var globalDeny = matches
+            .Where(match => match.Rule.Scope == ToolPolicyScopes.Global &&
+                            match.Rule.Decision == ToolPolicyDecisions.Deny)
+            .OrderByDescending(match => match.Score)
             .FirstOrDefault();
-        if (chatRule != null)
-            return new ToolPolicyEvaluation(chatRule.Decision, chatRule.Scope);
+        if (globalDeny != null)
+            return ToEvaluation(globalDeny);
 
-        if (projectId != null)
-        {
-            var projectRule = rules
-                .Where(r => r.Scope == ToolPolicyScopes.Project && r.ProjectSpaceId == projectId)
-                .OrderByDescending(r => r.ToolName == toolName)
-                .FirstOrDefault();
-            if (projectRule != null)
-                return new ToolPolicyEvaluation(projectRule.Decision, projectRule.Scope);
-        }
+        var scopedDeny = matches
+            .Where(match =>
+                match.Rule.Decision == ToolPolicyDecisions.Deny &&
+                ScopeApplies(match.Rule, chatId, projectId))
+            .OrderByDescending(match => ScopeScore(match.Rule.Scope))
+            .ThenByDescending(match => match.Score)
+            .FirstOrDefault();
+        if (scopedDeny != null)
+            return ToEvaluation(scopedDeny);
+
+        var allow = matches
+            .Where(match =>
+                match.Rule.Decision == ToolPolicyDecisions.Allow &&
+                ScopeApplies(match.Rule, chatId, projectId))
+            .OrderByDescending(match => ScopeScore(match.Rule.Scope))
+            .ThenByDescending(match => match.Score)
+            .FirstOrDefault();
+        if (allow != null)
+            return ToEvaluation(allow);
 
         var legacyAllow = await _db.Set<ToolPermission>().AnyAsync(
             p => p.ChatId == chatId &&
                  (p.ToolName == toolName ||
                   (toolName == AgentToolNames.SandboxExec &&
                    p.ToolName == AgentToolNames.LegacySandboxExec)) &&
-                 p.Decision == ToolPolicyDecisions.Allow,
+            p.Decision == ToolPolicyDecisions.Allow,
             ct);
         return legacyAllow
             ? new ToolPolicyEvaluation(ToolPolicyDecisions.Allow, ToolPolicyScopes.Chat)
@@ -107,6 +126,9 @@ public sealed class ToolPlatformService : IToolPlatformService
         string toolName,
         string scope,
         string decision,
+        string? subjectKind = null,
+        string? pattern = null,
+        string? description = null,
         CancellationToken ct = default)
     {
         toolName = AgentToolNames.Normalize(toolName);
@@ -114,6 +136,8 @@ public sealed class ToolPlatformService : IToolPlatformService
             throw new ArgumentOutOfRangeException(nameof(scope));
         if (decision is not (ToolPolicyDecisions.Allow or ToolPolicyDecisions.Deny))
             throw new ArgumentOutOfRangeException(nameof(decision));
+        subjectKind = NormalizeSubjectKind(subjectKind);
+        pattern = NormalizePattern(subjectKind, pattern ?? toolName);
 
         var projectId = scope == ToolPolicyScopes.Project
             ? await _db.Set<Chat>().Where(c => c.Id == chatId).Select(c => c.ProjectSpaceId).FirstOrDefaultAsync(ct)
@@ -124,7 +148,8 @@ public sealed class ToolPlatformService : IToolPlatformService
         var chatScopeId = scope == ToolPolicyScopes.Chat ? chatId : (Guid?)null;
         var projectScopeId = scope == ToolPolicyScopes.Project ? projectId : null;
         var rule = await _db.Set<ToolPolicyRule>().FirstOrDefaultAsync(
-            r => r.ToolName == toolName &&
+            r => r.SubjectKind == subjectKind &&
+                 r.Pattern == pattern &&
                  r.Scope == scope &&
                  r.ChatId == chatScopeId &&
                  r.ProjectSpaceId == projectScopeId,
@@ -136,25 +161,89 @@ public sealed class ToolPlatformService : IToolPlatformService
                 ChatId = chatScopeId,
                 ProjectSpaceId = projectScopeId,
                 ToolName = toolName,
+                SubjectKind = subjectKind,
+                Pattern = pattern,
                 Scope = scope,
-                Decision = decision
+                Decision = decision,
+                Description = description?.Trim() ?? string.Empty
             };
             _db.Set<ToolPolicyRule>().Add(rule);
         }
         else
         {
+            rule.ToolName = toolName;
             rule.Decision = decision;
+            rule.Description = description?.Trim() ?? rule.Description;
             rule.UpdatedAt = DateTime.UtcNow;
         }
 
         await _db.SaveChangesAsync(ct);
     }
 
+    public async Task<ToolPolicyRule> SavePolicyRuleAsync(
+        ToolPolicyRuleUpdate update,
+        CancellationToken ct = default)
+    {
+        var scope = update.Scope;
+        if (scope is not (ToolPolicyScopes.Chat or ToolPolicyScopes.Project or ToolPolicyScopes.Global))
+            throw new ArgumentOutOfRangeException(nameof(update.Scope));
+        if (update.Decision is not (ToolPolicyDecisions.Allow or ToolPolicyDecisions.Deny))
+            throw new ArgumentOutOfRangeException(nameof(update.Decision));
+
+        var subjectKind = NormalizeSubjectKind(update.SubjectKind);
+        var pattern = NormalizePattern(subjectKind, update.Pattern);
+        var toolName = subjectKind == ToolPolicySubjects.Tool
+            ? ToolPatternToToolName(pattern)
+            : pattern;
+
+        Guid? chatId = scope == ToolPolicyScopes.Chat
+            ? update.ChatId ?? throw new InvalidOperationException("Chat-scoped policy rules require a chat id.")
+            : null;
+        var projectId = scope == ToolPolicyScopes.Project
+            ? update.ProjectSpaceId
+            : null;
+
+        var rule = update.Id is { } id && id != Guid.Empty
+            ? await _db.Set<ToolPolicyRule>().FirstOrDefaultAsync(r => r.Id == id, ct)
+            : null;
+        if (rule == null)
+        {
+            rule = await _db.Set<ToolPolicyRule>().FirstOrDefaultAsync(
+                r => r.Scope == scope &&
+                     r.ChatId == chatId &&
+                     r.ProjectSpaceId == projectId &&
+                     r.SubjectKind == subjectKind &&
+                     r.Pattern == pattern,
+                ct);
+        }
+        if (rule == null)
+        {
+            rule = new ToolPolicyRule
+            {
+                ChatId = chatId,
+                ProjectSpaceId = projectId,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.Set<ToolPolicyRule>().Add(rule);
+        }
+
+        rule.ToolName = toolName;
+        rule.SubjectKind = subjectKind;
+        rule.Pattern = pattern;
+        rule.Scope = scope;
+        rule.Decision = update.Decision;
+        rule.Description = update.Description.Trim();
+        rule.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return rule;
+    }
+
     public async Task<IReadOnlyList<ToolPolicyRule>> ListPoliciesAsync(CancellationToken ct = default) =>
         await _db.Set<ToolPolicyRule>()
             .AsNoTracking()
             .OrderBy(r => r.Scope)
-            .ThenBy(r => r.ToolName)
+            .ThenBy(r => r.SubjectKind)
+            .ThenBy(r => r.Pattern)
             .ToListAsync(ct);
 
     public async Task DeletePolicyAsync(Guid id, CancellationToken ct = default)
@@ -304,6 +393,296 @@ public sealed class ToolPlatformService : IToolPlatformService
             !MatchesDomainList(entity.AllowedDomains, domain))
             return null;
         return ProtectedSecret.Reveal(entity.ProtectedValue);
+    }
+
+    private static ToolPolicyEvaluation ToEvaluation(ToolPolicyMatch match) =>
+        new(
+            match.Rule.Decision,
+            match.Rule.Scope,
+            match.Rule.Id,
+            NormalizeSubjectKind(match.Rule.SubjectKind),
+            EffectivePattern(match.Rule),
+            match.MatchedValue,
+            match.Rule.Description);
+
+    private static ToolPolicyMatch? MatchRule(
+        ToolPolicyRule rule,
+        ToolPolicyRequest request,
+        Guid chatId,
+        Guid? projectId)
+    {
+        if (!ScopeCanMatch(rule, chatId, projectId))
+            return null;
+
+        var subjectKind = NormalizeSubjectKind(rule.SubjectKind);
+        var pattern = EffectivePattern(rule);
+        var candidates = subjectKind switch
+        {
+            ToolPolicySubjects.Path => request.Paths,
+            ToolPolicySubjects.Domain => request.Domains,
+            _ => request.ToolCandidates
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (MatchesSubject(subjectKind, pattern, candidate))
+            {
+                return new ToolPolicyMatch(
+                    rule,
+                    candidate,
+                    PatternScore(pattern, candidate));
+            }
+        }
+
+        return null;
+    }
+
+    private static bool ScopeCanMatch(ToolPolicyRule rule, Guid chatId, Guid? projectId) =>
+        rule.Scope switch
+        {
+            ToolPolicyScopes.Chat => rule.ChatId == chatId,
+            ToolPolicyScopes.Project => projectId != null && rule.ProjectSpaceId == projectId,
+            ToolPolicyScopes.Global => true,
+            _ => false
+        };
+
+    private static bool ScopeApplies(ToolPolicyRule rule, Guid chatId, Guid? projectId) =>
+        ScopeCanMatch(rule, chatId, projectId);
+
+    private static int ScopeScore(string scope) =>
+        scope switch
+        {
+            ToolPolicyScopes.Chat => 300,
+            ToolPolicyScopes.Project => 200,
+            ToolPolicyScopes.Global => 100,
+            _ => 0
+        };
+
+    private static bool MatchesSubject(string subjectKind, string pattern, string candidate)
+    {
+        pattern = NormalizePattern(subjectKind, pattern);
+        candidate = NormalizeCandidate(subjectKind, candidate);
+        return subjectKind switch
+        {
+            ToolPolicySubjects.Domain => MatchesDomainList(pattern, candidate),
+            _ => WildcardMatch(pattern, candidate)
+        };
+    }
+
+    private static int PatternScore(string pattern, string candidate)
+    {
+        if (string.Equals(pattern, candidate, StringComparison.OrdinalIgnoreCase))
+            return 1000 + pattern.Length;
+        if (!pattern.Contains('*') && !pattern.Contains('?'))
+            return 800 + pattern.Length;
+        return pattern.Count(ch => ch is not '*' and not '?');
+    }
+
+    private static bool WildcardMatch(string pattern, string candidate)
+    {
+        if (pattern == "*")
+            return true;
+        var escaped = Regex.Escape(pattern)
+            .Replace(@"\*", ".*", StringComparison.Ordinal)
+            .Replace(@"\?", ".", StringComparison.Ordinal);
+        return Regex.IsMatch(
+            candidate,
+            $"^{escaped}$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static string EffectivePattern(ToolPolicyRule rule)
+    {
+        if (!string.IsNullOrWhiteSpace(rule.Pattern))
+            return rule.Pattern.Trim();
+        return string.IsNullOrWhiteSpace(rule.ToolName)
+            ? "*"
+            : rule.ToolName.Trim();
+    }
+
+    private static string NormalizeSubjectKind(string? subjectKind) =>
+        subjectKind?.Trim().ToLowerInvariant() switch
+        {
+            ToolPolicySubjects.Path => ToolPolicySubjects.Path,
+            ToolPolicySubjects.Domain => ToolPolicySubjects.Domain,
+            _ => ToolPolicySubjects.Tool
+        };
+
+    private static string NormalizePattern(string subjectKind, string pattern)
+    {
+        pattern = string.IsNullOrWhiteSpace(pattern) ? "*" : pattern.Trim();
+        if (subjectKind == ToolPolicySubjects.Tool &&
+            pattern.StartsWith("tool(", StringComparison.OrdinalIgnoreCase) &&
+            pattern.EndsWith(')'))
+        {
+            pattern = pattern[5..^1].Trim();
+        }
+
+        return NormalizeCandidate(subjectKind, pattern);
+    }
+
+    private static string NormalizeCandidate(string subjectKind, string value)
+    {
+        value = value.Trim();
+        return subjectKind switch
+        {
+            ToolPolicySubjects.Path => value.Replace('\\', '/').TrimStart('/'),
+            ToolPolicySubjects.Domain => value.TrimEnd('.').ToLowerInvariant(),
+            _ => AgentToolNames.Normalize(value).ToLowerInvariant()
+        };
+    }
+
+    private static string ToolPatternToToolName(string pattern)
+    {
+        pattern = NormalizePattern(ToolPolicySubjects.Tool, pattern);
+        return pattern.Contains('*') || pattern.Contains('?')
+            ? pattern
+            : AgentToolNames.Normalize(pattern);
+    }
+
+    private sealed record ToolPolicyMatch(
+        ToolPolicyRule Rule,
+        string MatchedValue,
+        int Score);
+
+    private sealed record ToolPolicyRequest(
+        IReadOnlyList<string> ToolCandidates,
+        IReadOnlyList<string> Paths,
+        IReadOnlyList<string> Domains)
+    {
+        public static ToolPolicyRequest From(
+            string toolName,
+            string argumentsJson,
+            ToolSafetyAssessment? safety)
+        {
+            var toolCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                NormalizeCandidate(ToolPolicySubjects.Tool, toolName)
+            };
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+                var root = document.RootElement;
+                AddPath(root, "path", paths);
+                AddPath(root, "target", paths);
+                AddPath(root, "file", paths);
+                AddDomain(root, "domain", domains);
+                AddUrl(root, "url", domains);
+                AddUrl(root, "endpoint", domains);
+
+                if (string.Equals(toolName, AgentToolNames.McpCall, StringComparison.OrdinalIgnoreCase))
+                {
+                    var server = ReadString(root, "server");
+                    var mcpTool = ReadString(root, "tool");
+                    if (!string.IsNullOrWhiteSpace(server) && !string.IsNullOrWhiteSpace(mcpTool))
+                    {
+                        toolCandidates.Add($"mcp__{SanitizeMcpName(server)}__{SanitizeMcpName(mcpTool)}");
+                        toolCandidates.Add($"mcp__{SanitizeMcpName(server)}__*");
+                        toolCandidates.Add($"mcp__*__{SanitizeMcpName(mcpTool)}");
+                    }
+                }
+
+                if (root.TryGetProperty("patch", out var patch) &&
+                    patch.ValueKind == JsonValueKind.String)
+                {
+                    foreach (var path in WorkspaceCodeToolSupport.ExtractPatchPaths(patch.GetString() ?? string.Empty))
+                        paths.Add(NormalizeCandidate(ToolPolicySubjects.Path, path));
+                }
+            }
+            catch
+            {
+            }
+
+            if (safety != null)
+            {
+                try
+                {
+                    using var preview = JsonDocument.Parse(safety.PreviewJson);
+                    CollectPreview(preview.RootElement, paths, domains);
+                }
+                catch
+                {
+                }
+            }
+
+            return new ToolPolicyRequest(
+                toolCandidates.ToArray(),
+                paths.ToArray(),
+                domains.ToArray());
+        }
+
+        private static void CollectPreview(
+            JsonElement element,
+            HashSet<string> paths,
+            HashSet<string> domains)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (property.Value.ValueKind == JsonValueKind.String)
+                    {
+                        var value = property.Value.GetString() ?? string.Empty;
+                        if (property.Name.Contains("path", StringComparison.OrdinalIgnoreCase))
+                            paths.Add(NormalizeCandidate(ToolPolicySubjects.Path, value));
+                        if (property.Name.Contains("domain", StringComparison.OrdinalIgnoreCase))
+                            domains.Add(NormalizeCandidate(ToolPolicySubjects.Domain, value));
+                        if (property.Name.Contains("url", StringComparison.OrdinalIgnoreCase))
+                            AddDomainFromUrl(value, domains);
+                    }
+                    else
+                    {
+                        CollectPreview(property.Value, paths, domains);
+                    }
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in element.EnumerateArray())
+                    CollectPreview(item, paths, domains);
+            }
+        }
+
+        private static string? ReadString(JsonElement root, string name) =>
+            root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+
+        private static void AddPath(JsonElement root, string name, HashSet<string> paths)
+        {
+            var value = ReadString(root, name);
+            if (!string.IsNullOrWhiteSpace(value))
+                paths.Add(NormalizeCandidate(ToolPolicySubjects.Path, value));
+        }
+
+        private static void AddDomain(JsonElement root, string name, HashSet<string> domains)
+        {
+            var value = ReadString(root, name);
+            if (!string.IsNullOrWhiteSpace(value))
+                domains.Add(NormalizeCandidate(ToolPolicySubjects.Domain, value));
+        }
+
+        private static void AddUrl(JsonElement root, string name, HashSet<string> domains)
+        {
+            var value = ReadString(root, name);
+            if (!string.IsNullOrWhiteSpace(value))
+                AddDomainFromUrl(value, domains);
+        }
+
+        private static void AddDomainFromUrl(string value, HashSet<string> domains)
+        {
+            if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                domains.Add(NormalizeCandidate(ToolPolicySubjects.Domain, uri.IdnHost));
+        }
+
+        private static string SanitizeMcpName(string value)
+        {
+            var cleaned = Regex.Replace(value.Trim().ToLowerInvariant(), @"[^a-z0-9_-]+", "_");
+            return string.IsNullOrWhiteSpace(cleaned) ? "*" : cleaned;
+        }
     }
 
     private static bool IsBackend(string value) =>

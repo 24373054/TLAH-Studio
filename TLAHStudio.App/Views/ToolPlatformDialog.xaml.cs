@@ -88,6 +88,9 @@ public sealed partial class ToolPlatformDialog : ContentDialog
             await RunAsync(ct => ViewModel.DeletePolicyAsync(id, ct));
     }
 
+    private async void SavePolicyRule_Click(object sender, RoutedEventArgs e) =>
+        await RunAsync(ViewModel.SavePolicyRuleAsync);
+
     private async Task RunAsync(Func<CancellationToken, Task> action)
     {
         try

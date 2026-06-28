@@ -277,9 +277,52 @@
                 <StackPanel Spacing="8">
                     <TextBlock Text="Permission rules" Style="{StaticResource SectionTitle}" />
                     <TextBlock
-                        Text="Project approvals and permanent denials created by agent approval prompts appear here."
+                        Text="Rules can allow or deny tools, wildcard tool patterns, MCP tool ids, workspace paths, and network domains. Project and chat-scoped rules are also created from approval prompts."
                         TextWrapping="Wrap"
                         Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <Grid ColumnSpacing="8" RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="140" />
+                            <ColumnDefinition Width="140" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox
+                            ItemsSource="{Binding PolicySubjectOptions}"
+                            SelectedItem="{Binding NewPolicySubjectKind, Mode=TwoWay}"
+                            AutomationProperties.Name="Permission rule subject kind" />
+                        <TextBox
+                            Grid.Column="1"
+                            Text="{Binding NewPolicyPattern, Mode=TwoWay}"
+                            PlaceholderText="tool(file_*), mcp__server__tool, src/**, api.example.com"
+                            AutomationProperties.Name="Permission rule pattern" />
+                        <ComboBox
+                            Grid.Column="2"
+                            ItemsSource="{Binding PolicyScopeOptions}"
+                            SelectedItem="{Binding NewPolicyScope, Mode=TwoWay}"
+                            AutomationProperties.Name="Permission rule scope" />
+                        <ComboBox
+                            Grid.Column="3"
+                            ItemsSource="{Binding PolicyDecisionOptions}"
+                            SelectedItem="{Binding NewPolicyDecision, Mode=TwoWay}"
+                            AutomationProperties.Name="Permission rule decision" />
+                        <TextBox
+                            Grid.Row="1"
+                            Grid.ColumnSpan="3"
+                            Text="{Binding NewPolicyDescription, Mode=TwoWay}"
+                            PlaceholderText="Optional reason shown in audits and debugging"
+                            AutomationProperties.Name="Permission rule description" />
+                        <Button
+                            Grid.Row="1"
+                            Grid.Column="3"
+                            Content="Add rule"
+                            Click="SavePolicyRule_Click"
+                            AutomationProperties.Name="Add permission rule" />
+                    </Grid>
                     <ListView ItemsSource="{Binding Policies}" AutomationProperties.Name="Tool permission rules">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="models:ToolPolicyRule">
@@ -289,10 +332,12 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Spacing="3">
-                                        <TextBlock Text="{x:Bind ToolName}" FontFamily="Cascadia Mono" />
+                                        <TextBlock Text="{x:Bind Pattern}" FontFamily="Cascadia Mono" />
                                         <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <TextBlock Text="{x:Bind SubjectKind}" Foreground="{ThemeResource TextSecondaryBrush}" />
                                             <TextBlock Text="{x:Bind Scope}" Foreground="{ThemeResource TextSecondaryBrush}" />
                                             <TextBlock Text="{x:Bind Decision}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                            <TextBlock Text="{x:Bind Description}" Foreground="{ThemeResource TextMutedBrush}" />
                                             <TextBlock Text="{x:Bind UpdatedAt}" Foreground="{ThemeResource TextMutedBrush}" />
                                         </StackPanel>
                                     </StackPanel>

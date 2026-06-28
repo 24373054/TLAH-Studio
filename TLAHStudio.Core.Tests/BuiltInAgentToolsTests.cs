@@ -1,5 +1,7 @@
 using System.Net;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
@@ -247,6 +249,127 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public async Task WorkspaceCodeToolsProtectHashesEncodingPatchAndRollback()
+    {
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.CodeReliability.Tests", Guid.NewGuid().ToString("N")));
+        var context = new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 30, 20000);
+        var root = sandbox.GetSandboxRoot(context.ChatId);
+        var sourcePath = Path.Combine(root, "src", "encoding.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        await File.WriteAllTextAsync(sourcePath, "line1\r\nline2\r\n", new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+        var read = new CodeReadAgentTool(sandbox);
+        var edit = new CodeEditAgentTool(sandbox);
+        var patch = new CodeApplyPatchAgentTool(sandbox);
+        var rollback = new CodeRollbackAgentTool(sandbox);
+        var readResult = await read.ExecuteAsync(context, """{"path":"src/encoding.txt"}""");
+        Assert.True(readResult.Success, readResult.Error);
+        Assert.Contains("SHA256:", readResult.Output);
+        Assert.Contains("Encoding: utf-8 with BOM", readResult.Output);
+        Assert.Contains("Newline: CRLF", readResult.Output);
+
+        var staleHash = Sha256(sourcePath);
+        await File.AppendAllTextAsync(sourcePath, "outside\r\n", Encoding.UTF8);
+        var conflict = await edit.ExecuteAsync(
+            context,
+            JsonSerializer.Serialize(new
+            {
+                path = "src/encoding.txt",
+                old_text = "line2",
+                new_text = "line3",
+                expected_sha256 = staleHash,
+                reason = "Verify conflict detection."
+            }));
+        Assert.False(conflict.Success);
+        Assert.Contains("File changed", conflict.Error);
+
+        var currentHash = Sha256(sourcePath);
+        var okEdit = await edit.ExecuteAsync(
+            context,
+            JsonSerializer.Serialize(new
+            {
+                path = "src/encoding.txt",
+                old_text = "line2",
+                new_text = "line3",
+                expected_sha256 = currentHash,
+                reason = "Verify encoding preservation."
+            }));
+        Assert.True(okEdit.Success, okEdit.Error);
+        var bytes = await File.ReadAllBytesAsync(sourcePath);
+        Assert.Equal([0xEF, 0xBB, 0xBF], bytes.Take(3).ToArray());
+        Assert.Contains("line3\r\noutside\r\n", Encoding.UTF8.GetString(bytes[3..]));
+
+        var patchPath = Path.Combine(root, "src", "patch.txt");
+        await File.WriteAllTextAsync(patchPath, "alpha\nbeta\n", new UTF8Encoding(false));
+        var patchText = string.Join('\n',
+            "diff --git a/src/patch.txt b/src/patch.txt",
+            "--- a/src/patch.txt",
+            "+++ b/src/patch.txt",
+            "@@ -1,2 +1,2 @@",
+            " alpha",
+            "-beta",
+            "+gamma",
+            string.Empty);
+        var patchHash = Sha256(patchPath);
+        var preview = await patch.ExecuteAsync(
+            context,
+            JsonSerializer.Serialize(new
+            {
+                patch = patchText,
+                preview_only = true,
+                expected_sha256_by_path = new Dictionary<string, string> { ["src/patch.txt"] = patchHash },
+                reason = "Preview patch."
+            }));
+        Assert.True(preview.Success, preview.Error);
+        Assert.Contains("Patch check passed", preview.Output);
+        Assert.Equal("alpha\nbeta\n", await File.ReadAllTextAsync(patchPath));
+
+        var applied = await patch.ExecuteAsync(
+            context,
+            JsonSerializer.Serialize(new
+            {
+                patch = patchText,
+                expected_sha256_by_path = new Dictionary<string, string> { ["src/patch.txt"] = patchHash },
+                reason = "Apply patch."
+            }));
+        Assert.True(applied.Success, applied.Error);
+        Assert.Contains("gamma", await File.ReadAllTextAsync(patchPath));
+        var backupId = applied.Output
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("- src/patch.txt:", StringComparison.Ordinal))
+            .Select(line => line.Split(':', 2)[1].Trim())
+            .First();
+
+        var rollbackPreview = await rollback.ExecuteAsync(
+            context,
+            JsonSerializer.Serialize(new
+            {
+                path = "src/patch.txt",
+                backup_id = backupId,
+                preview_only = true,
+                expected_sha256 = Sha256(patchPath),
+                reason = "Preview rollback."
+            }));
+        Assert.True(rollbackPreview.Success, rollbackPreview.Error);
+        Assert.Contains("Rollback preview", rollbackPreview.Output);
+        Assert.Contains("- gamma", rollbackPreview.Output);
+
+        var rollbackResult = await rollback.ExecuteAsync(
+            context,
+            JsonSerializer.Serialize(new
+            {
+                path = "src/patch.txt",
+                backup_id = backupId,
+                expected_sha256 = Sha256(patchPath),
+                reason = "Restore patch."
+            }));
+        Assert.True(rollbackResult.Success, rollbackResult.Error);
+        Assert.Equal("alpha\nbeta\n", await File.ReadAllTextAsync(patchPath));
+    }
+
+    [Fact]
     public void ToolProtocolGuardRepairsLegacyNamesAndOrphanToolResults()
     {
         var messages = new List<MessagePayload>
@@ -471,6 +594,12 @@ public class BuiltInAgentToolsTests
         {
             return false;
         }
+    }
+
+    private static string Sha256(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
     private sealed class AllowNetworkSecurityService : INetworkSecurityService

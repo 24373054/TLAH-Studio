@@ -132,4 +132,8 @@ public sealed record ToolInvocationSnapshot(
     Guid Id,
     string ToolName,
     string ArgumentsJson,
-    string Status);
+    string Status,
+    string SafetyLevel = "unknown",
+    string SafetySummary = "",
+    string SafetyJson = "{}",
+    string? SafetyWarning = null);
