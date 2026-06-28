@@ -32,6 +32,7 @@ public sealed partial class MainWindow : Window
     public IThemeService ThemeService { get; }
     public IBackgroundService BackgroundService { get; }
     public IUiDensityService UiDensityService { get; }
+    public IInteractionSoundService SoundService { get; }
     public IAppReleaseService AppReleaseService { get; }
     public ISandboxCommandService SandboxCommandService { get; }
 
@@ -66,17 +67,17 @@ public sealed partial class MainWindow : Window
         MainViewModel mvm, SidebarViewModel svm, ChatPageViewModel cvm,
         DebugPanelViewModel dvm, SettingsDialogViewModel sv, BackgroundSettingsDialogViewModel bv,
         AgentFileDialogViewModel av, PrivacyDataViewModel pv, TeamWorkspaceViewModel twv, ToolPlatformViewModel tpv, UpdateNotificationViewModel uv, IThemeService ts,
-        IBackgroundService bg, IUiDensityService density, IAppReleaseService release, ISandboxCommandService sandbox)
+        IBackgroundService bg, IUiDensityService density, IInteractionSoundService sound, IAppReleaseService release, ISandboxCommandService sandbox)
     {
         ViewModel = mvm; SidebarVM = svm; ChatVM = cvm; DebugVM = dvm;
         SettingsVM = sv; BgSettingsVM = bv; AgentFileVM = av; PrivacyDataVM = pv; TeamWorkspaceVM = twv; ToolPlatformVM = tpv;
         UpdateNotificationVM = uv; ThemeService = ts; BackgroundService = bg;
-        UiDensityService = density; AppReleaseService = release; SandboxCommandService = sandbox;
+        UiDensityService = density; SoundService = sound; AppReleaseService = release; SandboxCommandService = sandbox;
 
         this.InitializeComponent();
 
         DebugPanelView.Bind(DebugVM);
-        ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService, SandboxCommandService);
+        ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService, SandboxCommandService, SoundService);
         ChatVM.AgentApprovalRequested += OnAgentApprovalRequested;
         DebugVM.TurnReplayed += async (_, turnId) =>
         {
@@ -111,6 +112,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            SoundService.Play(InteractionSound.Approval);
             var details = request.ArgumentsJson;
             try
             {
@@ -173,6 +175,9 @@ public sealed partial class MainWindow : Window
                 dialog.RequestedTheme = root.ActualTheme;
 
             var result = await TryShowDialogAsync(dialog, waitForTurn: true);
+            SoundService.Play(result is ContentDialogResult.Primary or ContentDialogResult.Secondary
+                ? InteractionSound.Complete
+                : InteractionSound.Error);
             request.Completion.TrySetResult(result switch
             {
                 ContentDialogResult.Primary => AgentApprovalChoice.AllowOnce,
@@ -207,6 +212,7 @@ public sealed partial class MainWindow : Window
         {
             e.Handled = true;
             await SidebarVM.CreateChatAsync();
+            SoundService.Play(InteractionSound.Navigate);
             MessageInputView.FocusMessageInput();
             return;
         }
@@ -236,6 +242,7 @@ public sealed partial class MainWindow : Window
         {
             e.Handled = true;
             ThemeService.ToggleTheme();
+            SoundService.Play(InteractionSound.Toggle);
             return;
         }
 
@@ -278,6 +285,7 @@ public sealed partial class MainWindow : Window
     private async void OnRootGridLoaded(object sender, RoutedEventArgs e)
     {
         RootGrid.Loaded -= OnRootGridLoaded;
+        SoundService.Play(InteractionSound.Launch);
         await ShowFirstRunSetupIfNeededAsync();
     }
 

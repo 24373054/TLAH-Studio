@@ -72,6 +72,8 @@ public sealed partial class SettingsContentDialog : ContentDialog
         MaxTokensBox.Value = _vm.MaxTokens;
         SysPromptBox.Text = _vm.SystemPrompt;
         UserRoleBox.Text = _vm.UserRole;
+        SoundEffectsToggle.IsOn = _vm.IsSoundEffectsEnabled;
+        SoundVolumeSlider.Value = _vm.SoundVolume;
         _isPopulating = false;
     }
 
@@ -152,6 +154,8 @@ public sealed partial class SettingsContentDialog : ContentDialog
         _vm.MaxTokens = double.IsNaN(MaxTokensBox.Value) ? _vm.MaxTokens : (int)MaxTokensBox.Value;
         _vm.SystemPrompt = SysPromptBox.Text;
         _vm.UserRole = UserRoleBox.Text;
+        _vm.IsSoundEffectsEnabled = SoundEffectsToggle.IsOn;
+        _vm.SoundVolume = SoundVolumeSlider.Value;
     }
 
     private void CollectChat()

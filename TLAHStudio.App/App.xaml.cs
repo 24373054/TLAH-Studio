@@ -67,6 +67,7 @@ public partial class App : Application
             services.AddSingleton<IThemeService, ThemeService>();
             services.AddSingleton<IBackgroundService, BackgroundImageService>();
             services.AddSingleton<IUiDensityService, UiDensityService>();
+            services.AddSingleton<IInteractionSoundService, InteractionSoundService>();
             services.AddSingleton<IAppReleaseService, AppReleaseService>();
             services.AddScoped<IChatService, ChatService>();
             services.AddScoped<ISettingsService, SettingsService>();

@@ -11,10 +11,10 @@
         <Border
             x:Name="AgentStatusBar"
             Grid.Row="0"
-            Margin="24,14,24,0"
-            Padding="12,9"
+            Margin="26,16,26,0"
+            Padding="14,10"
             Visibility="Collapsed"
-            Background="{ThemeResource PanelAltBrush}"
+            Background="{ThemeResource SurfaceBrush}"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             BorderThickness="1"
             CornerRadius="8"
@@ -58,7 +58,7 @@
         <ScrollViewer
             x:Name="MessagesScrollViewer"
             Grid.Row="1"
-            Padding="24,18"
+            Padding="26,20"
             VerticalScrollBarVisibility="Auto"
             VerticalScrollMode="Enabled"
             HorizontalScrollBarVisibility="Disabled"
@@ -67,7 +67,7 @@
             AutomationProperties.Name="Conversation messages">
             <StackPanel
                 x:Name="MessagesStack"
-                Spacing="14" />
+                Spacing="16" />
         </ScrollViewer>
     </Grid>
 </UserControl>

@@ -10,6 +10,7 @@ public sealed partial class MessageInputControl : UserControl
 {
     private ChatPageViewModel? _vm;
     private bool _loaded;
+    private bool _suppressSound;
 
     public MessageInputControl()
     {
@@ -26,12 +27,14 @@ public sealed partial class MessageInputControl : UserControl
             if (_vm != null)
                 _vm.IsAgentModeEnabled = true;
             UpdateAgentModeVisualState();
+            Play(InteractionSound.Toggle);
         };
         AgentModeToggle.Unchecked += (_, _) =>
         {
             if (_vm != null)
                 _vm.IsAgentModeEnabled = false;
             UpdateAgentModeVisualState();
+            Play(InteractionSound.Toggle);
         };
         InputBox.KeyDown += OnKeyDown;
         InputRoot.SizeChanged += OnInputRootSizeChanged;
@@ -50,7 +53,9 @@ public sealed partial class MessageInputControl : UserControl
         {
             _vm = w.ChatVM;
             _vm.PropertyChanged += OnViewModelPropertyChanged;
+            _suppressSound = true;
             AgentModeToggle.IsChecked = _vm.IsAgentModeEnabled;
+            _suppressSound = false;
             UpdateSendingState();
             UpdateAgentModeVisualState();
         }
@@ -104,8 +109,11 @@ public sealed partial class MessageInputControl : UserControl
 
     private void Send_Click(object s, RoutedEventArgs e) => Send();
 
-    private void Stop_Click(object s, RoutedEventArgs e) =>
+    private void Stop_Click(object s, RoutedEventArgs e)
+    {
+        Play(InteractionSound.Toggle);
         _vm?.StopSendingCommand.Execute(null);
+    }
 
     private async void Send()
     {
@@ -115,12 +123,17 @@ public sealed partial class MessageInputControl : UserControl
         _vm.InputText = InputBox.Text;
         InputBox.Text = string.Empty;
         UpdateSendingState();
+        Play(InteractionSound.Send);
         try
         {
             await _vm.SendMessageAsync();
+            Play(string.IsNullOrWhiteSpace(_vm.ErrorMessage)
+                ? InteractionSound.Complete
+                : InteractionSound.Error);
         }
         catch
         {
+            Play(InteractionSound.Error);
         }
         finally
         {
@@ -130,7 +143,11 @@ public sealed partial class MessageInputControl : UserControl
 
     public void SendFromShortcut() => Send();
 
-    public void StopFromShortcut() => _vm?.StopSendingCommand.Execute(null);
+    public void StopFromShortcut()
+    {
+        Play(InteractionSound.Toggle);
+        _vm?.StopSendingCommand.Execute(null);
+    }
 
     public void FocusMessageInput()
     {
@@ -145,7 +162,9 @@ public sealed partial class MessageInputControl : UserControl
         if (e.PropertyName == nameof(ChatPageViewModel.IsAgentModeEnabled))
             DispatcherQueue.TryEnqueue(() =>
             {
+                _suppressSound = true;
                 AgentModeToggle.IsChecked = _vm?.IsAgentModeEnabled == true;
+                _suppressSound = false;
                 UpdateAgentModeVisualState();
             });
     }
@@ -169,5 +188,11 @@ public sealed partial class MessageInputControl : UserControl
         AgentModeToggle.Foreground = enabled
             ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentTextBrush"]
             : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"];
+    }
+
+    private void Play(InteractionSound sound)
+    {
+        if (!_suppressSound && App.MainWindow is MainWindow w)
+            w.SoundService.Play(sound);
     }
 }

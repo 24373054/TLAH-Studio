@@ -7,6 +7,8 @@ using System.Text.Json;
 using Microsoft.UI.Xaml;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
+using Windows.Media.Core;
+using Windows.Media.Playback;
 
 namespace TLAHStudio.App.ViewModels;
 
@@ -266,6 +268,201 @@ public class UiDensityService : IUiDensityService
             : UiDensity.Comfortable;
         LocalStore.Set(StorageKey, CurrentDensity == UiDensity.Compact ? "compact" : "comfortable");
         DensityChanged?.Invoke(this, CurrentDensity);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Interaction Soundscape Service — small, generated local WAV accents
+// ─────────────────────────────────────────────────────────────────────
+
+public enum InteractionSound
+{
+    Launch,
+    Navigate,
+    Toggle,
+    Send,
+    Receive,
+    Complete,
+    Approval,
+    Delete,
+    Error
+}
+
+public interface IInteractionSoundService
+{
+    bool IsEnabled { get; }
+    double Volume { get; }
+    event EventHandler? SettingsChanged;
+    void SetEnabled(bool enabled);
+    void SetVolume(double volume);
+    void Play(InteractionSound sound);
+}
+
+public sealed class InteractionSoundService : IInteractionSoundService
+{
+    private const string EnabledKey = "tlah-sound-enabled";
+    private const string VolumeKey = "tlah-sound-volume";
+    private readonly Dictionary<InteractionSound, string> _soundFiles;
+
+    public bool IsEnabled { get; private set; }
+    public double Volume { get; private set; }
+    public event EventHandler? SettingsChanged;
+
+    public InteractionSoundService()
+    {
+        IsEnabled = !string.Equals(LocalStore.Get(EnabledKey), "false", StringComparison.OrdinalIgnoreCase);
+        Volume = double.TryParse(LocalStore.Get(VolumeKey), out var volume)
+            ? Math.Clamp(volume, 0.0, 1.0)
+            : 0.62;
+        _soundFiles = EnsureSoundFiles();
+    }
+
+    public void SetEnabled(bool enabled)
+    {
+        var changed = IsEnabled != enabled;
+        IsEnabled = enabled;
+        LocalStore.Set(EnabledKey, enabled ? "true" : "false");
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
+        if (enabled && changed)
+            Play(InteractionSound.Toggle);
+    }
+
+    public void SetVolume(double volume)
+    {
+        Volume = Math.Clamp(volume, 0.0, 1.0);
+        LocalStore.Set(VolumeKey, Volume.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        SettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void Play(InteractionSound sound)
+    {
+        if (!IsEnabled || Volume <= 0.001 || !_soundFiles.TryGetValue(sound, out var path) || !File.Exists(path))
+            return;
+
+        try
+        {
+            var player = new MediaPlayer
+            {
+                AutoPlay = false,
+                Volume = Volume
+            };
+            player.MediaEnded += (_, _) => player.Dispose();
+            player.MediaFailed += (_, _) => player.Dispose();
+            player.Source = MediaSource.CreateFromUri(new Uri(path));
+            player.Play();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"SOUND PLAY FAILED: {sound}: {ex.Message}");
+        }
+    }
+
+    private static Dictionary<InteractionSound, string> EnsureSoundFiles()
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TLAH Studio",
+            "cache",
+            "soundscape-v2");
+        Directory.CreateDirectory(dir);
+
+        var files = new Dictionary<InteractionSound, string>
+        {
+            [InteractionSound.Launch] = Path.Combine(dir, "launch.wav"),
+            [InteractionSound.Navigate] = Path.Combine(dir, "navigate.wav"),
+            [InteractionSound.Toggle] = Path.Combine(dir, "toggle.wav"),
+            [InteractionSound.Send] = Path.Combine(dir, "send.wav"),
+            [InteractionSound.Receive] = Path.Combine(dir, "receive.wav"),
+            [InteractionSound.Complete] = Path.Combine(dir, "complete.wav"),
+            [InteractionSound.Approval] = Path.Combine(dir, "approval.wav"),
+            [InteractionSound.Delete] = Path.Combine(dir, "delete.wav"),
+            [InteractionSound.Error] = Path.Combine(dir, "error.wav")
+        };
+
+        TryCreate(files[InteractionSound.Launch], 0.34, t => Layer(t, 196, 0.18) + Layer(t, 294, 0.14) + Layer(t, 392, 0.12), 0.035);
+        TryCreate(files[InteractionSound.Navigate], 0.11, t => Glide(t, 360, 520, 0.18) + Layer(t, 720, 0.04), 0.018);
+        TryCreate(files[InteractionSound.Toggle], 0.12, t => Layer(t, 520, 0.16) + Layer(t, 780, 0.07), 0.018);
+        TryCreate(files[InteractionSound.Send], 0.15, t => Glide(t, 430, 920, 0.20) + Layer(t, 1280, 0.05), 0.018);
+        TryCreate(files[InteractionSound.Receive], 0.19, t => Layer(t, 523.25, 0.12) + Layer(t, 659.25, 0.10) + Layer(t, 880, 0.06), 0.025);
+        TryCreate(files[InteractionSound.Complete], 0.24, t => Layer(t, 440, 0.11) + Layer(t, 660, 0.09) + Layer(t, 990, 0.06), 0.028);
+        TryCreate(files[InteractionSound.Approval], 0.18, t => Glide(t, 300, 420, 0.12) + Layer(t, 840, 0.08), 0.028);
+        TryCreate(files[InteractionSound.Delete], 0.14, t => Glide(t, 230, 110, 0.18) + Layer(t, 82, 0.08), 0.012);
+        TryCreate(files[InteractionSound.Error], 0.22, t => Layer(t, 110, 0.18) + Layer(t, 146.8, 0.09), 0.012);
+
+        return files;
+    }
+
+    private static void TryCreate(string path, double durationSeconds, Func<double, double> sample, double shimmer)
+    {
+        try
+        {
+            if (File.Exists(path))
+                return;
+            WriteWave(path, durationSeconds, sample, shimmer);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"SOUND CREATE FAILED: {Path.GetFileName(path)}: {ex.Message}");
+        }
+    }
+
+    private static double Layer(double t, double frequency, double gain) =>
+        Math.Sin(2 * Math.PI * frequency * t) * gain;
+
+    private static double Glide(double t, double startFrequency, double endFrequency, double gain)
+    {
+        var duration = 0.2;
+        var progress = Math.Clamp(t / duration, 0, 1);
+        var frequency = startFrequency + (endFrequency - startFrequency) * EaseOut(progress);
+        return Math.Sin(2 * Math.PI * frequency * t) * gain;
+    }
+
+    private static double EaseOut(double x) => 1 - Math.Pow(1 - x, 3);
+
+    private static void WriteWave(string path, double durationSeconds, Func<double, double> sample, double shimmer)
+    {
+        const int sampleRate = 48000;
+        const short channels = 2;
+        const short bitsPerSample = 16;
+        var sampleCount = (int)Math.Round(durationSeconds * sampleRate);
+        var byteRate = sampleRate * channels * bitsPerSample / 8;
+        var dataLength = sampleCount * channels * bitsPerSample / 8;
+
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream);
+        writer.Write("RIFF"u8.ToArray());
+        writer.Write(36 + dataLength);
+        writer.Write("WAVE"u8.ToArray());
+        writer.Write("fmt "u8.ToArray());
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(byteRate);
+        writer.Write((short)(channels * bitsPerSample / 8));
+        writer.Write(bitsPerSample);
+        writer.Write("data"u8.ToArray());
+        writer.Write(dataLength);
+
+        for (var i = 0; i < sampleCount; i++)
+        {
+            var t = i / (double)sampleRate;
+            var position = i / (double)Math.Max(1, sampleCount - 1);
+            var envelope = Envelope(position);
+            var air = Math.Sin(2 * Math.PI * 4300 * t) * shimmer;
+            var value = Math.Clamp((sample(t) + air) * envelope, -0.98, 0.98);
+            var left = (short)(value * short.MaxValue);
+            var right = (short)(value * (0.94 + 0.04 * Math.Sin(2 * Math.PI * 7 * t)) * short.MaxValue);
+            writer.Write(left);
+            writer.Write(right);
+        }
+    }
+
+    private static double Envelope(double x)
+    {
+        var attack = Math.Clamp(x / 0.12, 0, 1);
+        var release = Math.Clamp((1 - x) / 0.22, 0, 1);
+        return Math.Pow(Math.Min(attack, release), 1.6);
     }
 }
 

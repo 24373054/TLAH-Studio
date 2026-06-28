@@ -63,6 +63,52 @@
                 <StackPanel Spacing="10">
                     <TextBlock Text="Connection defaults" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
                     <TextBlock Text="Used by every chat unless a chat-level override is set." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    <Border
+                        Padding="12"
+                        Background="{ThemeResource PanelAltBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                        <Grid RowSpacing="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Soundscape" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Short, generated interaction sounds for send, complete, navigation, and safety prompts." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleSwitch
+                                    x:Name="SoundEffectsToggle"
+                                    Grid.Column="1"
+                                    OnContent="On"
+                                    OffContent="Off"
+                                    AutomationProperties.Name="Sound effects" />
+                            </Grid>
+                            <Grid Grid.Row="1" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    Text="Volume"
+                                    VerticalAlignment="Center"
+                                    Foreground="{ThemeResource TextSecondaryBrush}" />
+                                <Slider
+                                    x:Name="SoundVolumeSlider"
+                                    Grid.Column="1"
+                                    Minimum="0"
+                                    Maximum="1"
+                                    StepFrequency="0.05"
+                                    AutomationProperties.Name="Sound volume" />
+                            </Grid>
+                        </Grid>
+                    </Border>
                 <TextBlock Text="Provider" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <ComboBox
                     x:Name="ProviderCombo"

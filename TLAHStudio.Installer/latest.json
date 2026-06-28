@@ -1,14 +1,14 @@
 {
-  "version": "2.1.3",
+  "version": "2.2.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.1.3.exe",
-  "sha256": "fb94397ebd7b69a00b5614ce74237e7d295fd1641e12856f9a3013c0db5138bc",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.2.0.exe",
+  "sha256": "379e481e099f093e444b99848369613714a1c647242ae1e71d0ccdb6e8945a38",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Update loop repair and updater relaunch hardening.\n\nFixes:\n- Current version is now read from the actual running install directory instead of a hard-coded default path\n- Missing or unreadable version.json now falls back to the app assembly version instead of legacy 1.0.0\n- Silent updates now pass the active install directory to the installer so the running installation is replaced\n- The installer no longer terminates a staged updater when /NOLAUNCH is used, preserving post-update relaunch\n- Added regression tests for non-default install paths and missing version metadata",
+  "releaseNotes": "Experience and sound design refresh.\n\nHighlights:\n- Added a generated local soundscape for launch, navigation, send, receive, completion, approval, delete, and error states\n- Added Settings controls for enabling sound effects and adjusting volume\n- Refined the Windows 11 visual system with richer dark surfaces, cleaner light mode contrast, tighter borders, elevated controls, and a more polished title bar/sidebar/input dock\n- Improved message and agent activity card styling for clearer hierarchy and a more modern native desktop feel",
   "forceUpdate": true,
-  "minSupportedVersion": "2.1.3",
+  "minSupportedVersion": "2.2.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96877912
+  "installerSizeBytes": 96871760
 }

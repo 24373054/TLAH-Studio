@@ -63,18 +63,23 @@ public sealed partial class ChatHeaderControl : UserControl
         {
             await w.ChatVM.UpdateTitleAsync(titleBox.Text);
             await w.SidebarVM.LoadChatsAsync();
+            Play(InteractionSound.Complete);
         }
     }
 
     private void Theme_Click(object sender, RoutedEventArgs e)
     {
         if (App.MainWindow is MainWindow w)
+        {
             w.ThemeService.ToggleTheme();
+            w.SoundService.Play(InteractionSound.Toggle);
+        }
     }
 
     private async void SystemPrompt_Click(object sender, RoutedEventArgs e)
     {
         if (App.MainWindow is not MainWindow w || w.ChatVM.CurrentChat == null) return;
+        Play(InteractionSound.Navigate);
 
         var promptBox = new TextBox
         {
@@ -102,12 +107,16 @@ public sealed partial class ChatHeaderControl : UserControl
         ApplyDialogChrome(dlg, w);
 
         if (await w.TryShowDialogAsync(dlg) == ContentDialogResult.Primary)
+        {
             await w.ChatVM.UpdateSystemPromptAsync(promptBox.Text);
+            Play(InteractionSound.Complete);
+        }
     }
 
     private async void Background_Click(object sender, RoutedEventArgs e)
     {
         if (App.MainWindow is not MainWindow w) return;
+        Play(InteractionSound.Navigate);
         var dlg = new BackgroundSettingsDialog
         {
             DataContext = w.BgSettingsVM,
@@ -120,6 +129,7 @@ public sealed partial class ChatHeaderControl : UserControl
     private async void Agent_Click(object sender, RoutedEventArgs e)
     {
         if (App.MainWindow is not MainWindow w) return;
+        Play(InteractionSound.Navigate);
         var dlg = new AgentFileDialog
         {
             DataContext = w.AgentFileVM,
@@ -133,6 +143,7 @@ public sealed partial class ChatHeaderControl : UserControl
     {
         var w = App.MainWindow as MainWindow;
         if (w == null) return;
+        w.SoundService.Play(InteractionSound.Navigate);
         _svm = w.SettingsVM;
         await _svm.LoadAsync();
         var dlg = new SettingsContentDialog
@@ -195,4 +206,10 @@ public sealed partial class ChatHeaderControl : UserControl
         Application.Current.Resources.TryGetValue(key, out var value) && value is Microsoft.UI.Xaml.Media.Brush brush
             ? brush
             : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
+
+    private static void Play(InteractionSound sound)
+    {
+        if (App.MainWindow is MainWindow w)
+            w.SoundService.Play(sound);
+    }
 }

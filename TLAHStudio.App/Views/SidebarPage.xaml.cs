@@ -58,7 +58,14 @@ public sealed partial class SidebarPage : UserControl
         ApplyCollapsedState();
     }
 
-    private async void NewChat_Click(object s, RoutedEventArgs e) { if (_vm != null) await _vm.CreateChatAsync(); }
+    private async void NewChat_Click(object s, RoutedEventArgs e)
+    {
+        if (_vm == null)
+            return;
+
+        Play(InteractionSound.Navigate);
+        await _vm.CreateChatAsync();
+    }
 
     private void ChatList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -76,6 +83,7 @@ public sealed partial class SidebarPage : UserControl
         _syncingSelection = false;
 
         _vm.SelectedChat = chat;
+        Play(InteractionSound.Navigate);
     }
 
     private async void DeleteChat_Click(object sender, RoutedEventArgs e)
@@ -173,6 +181,7 @@ public sealed partial class SidebarPage : UserControl
             return;
 
         await _vm.DeleteChatAsync(chat.Id);
+        Play(InteractionSound.Delete);
         SyncSelectedChat();
         UpdateUndoPanel();
         UpdateSections();
@@ -188,6 +197,7 @@ public sealed partial class SidebarPage : UserControl
     {
         if (_vm == null) return;
         _vm.ShowArchived = ArchivedToggle.IsChecked == true;
+        Play(InteractionSound.Toggle);
     }
 
     private async void PinChat_Click(object sender, RoutedEventArgs e)
@@ -195,6 +205,7 @@ public sealed partial class SidebarPage : UserControl
         if (_vm == null || GetChatFromSender(sender) is not { } chat)
             return;
         await _vm.TogglePinnedAsync(chat.Id);
+        Play(InteractionSound.Complete);
         SyncSelectedChat();
         UpdateSections();
     }
@@ -204,6 +215,7 @@ public sealed partial class SidebarPage : UserControl
         if (_vm == null || GetChatFromSender(sender) is not { } chat)
             return;
         await _vm.ToggleArchivedAsync(chat.Id);
+        Play(InteractionSound.Complete);
         SyncSelectedChat();
         UpdateSections();
     }
@@ -234,7 +246,10 @@ public sealed partial class SidebarPage : UserControl
         ApplyDialogChrome(dialog, w);
         var result = await w.TryShowDialogAsync(dialog);
         if (result == ContentDialogResult.Primary)
+        {
             await _vm.RenameChatAsync(chat.Id, titleBox.Text);
+            Play(InteractionSound.Complete);
+        }
     }
 
     private async void ExportChat_Click(object sender, RoutedEventArgs e)
@@ -253,12 +268,14 @@ public sealed partial class SidebarPage : UserControl
 
         var json = await _vm.ExportChatJsonAsync(chat.Id);
         await Windows.Storage.FileIO.WriteTextAsync(file, json);
+        Play(InteractionSound.Complete);
     }
 
     private async void UndoDelete_Click(object sender, RoutedEventArgs e)
     {
         if (_vm == null) return;
         await _vm.RestoreLastDeletedAsync();
+        Play(InteractionSound.Complete);
         UpdateUndoPanel();
         UpdateSections();
         SyncSelectedChat();
@@ -269,6 +286,7 @@ public sealed partial class SidebarPage : UserControl
         if (App.MainWindow is not MainWindow w)
             return;
 
+        Play(InteractionSound.Navigate);
         await w.SettingsVM.LoadAsync();
         var dlg = new SettingsContentDialog
         {
@@ -284,6 +302,7 @@ public sealed partial class SidebarPage : UserControl
         if (App.MainWindow is not MainWindow w)
             return;
 
+        Play(InteractionSound.Navigate);
         var dlg = new AboutReleaseDialog
         {
             RequestedTheme = CurrentTheme(w),
@@ -298,6 +317,7 @@ public sealed partial class SidebarPage : UserControl
         if (App.MainWindow is not MainWindow w)
             return;
 
+        Play(InteractionSound.Navigate);
         var result = await w.UpdateNotificationVM.AppUpdateService.CheckForUpdateAsync();
         if (result != null)
         {
@@ -322,6 +342,7 @@ public sealed partial class SidebarPage : UserControl
         };
         ApplyDialogChrome(dialog, w);
         await w.TryShowDialogAsync(dialog);
+        Play(InteractionSound.Complete);
     }
 
     private async void Privacy_Click(object sender, RoutedEventArgs e)
@@ -329,6 +350,7 @@ public sealed partial class SidebarPage : UserControl
         if (App.MainWindow is not MainWindow w)
             return;
 
+        Play(InteractionSound.Navigate);
         var dlg = new PrivacyDataDialog
         {
             DataContext = w.PrivacyDataVM,
@@ -344,6 +366,7 @@ public sealed partial class SidebarPage : UserControl
         if (App.MainWindow is not MainWindow w)
             return;
 
+        Play(InteractionSound.Navigate);
         await w.TeamWorkspaceVM.LoadAsync();
         var dlg = new TeamWorkspaceDialog
         {
@@ -363,6 +386,7 @@ public sealed partial class SidebarPage : UserControl
         if (App.MainWindow is not MainWindow w)
             return;
 
+        Play(InteractionSound.Navigate);
         await w.ToolPlatformVM.LoadAsync();
         var dlg = new ToolPlatformDialog
         {
@@ -381,6 +405,7 @@ public sealed partial class SidebarPage : UserControl
         if (App.MainWindow is not MainWindow w)
             return;
 
+        Play(InteractionSound.Toggle);
         w.UiDensityService.ToggleDensity();
         ApplyDensity(w.UiDensityService);
     }
@@ -388,6 +413,7 @@ public sealed partial class SidebarPage : UserControl
     private void Collapse_Click(object sender, RoutedEventArgs e)
     {
         _isCollapsed = !_isCollapsed;
+        Play(InteractionSound.Toggle);
         if (!_responsiveCompact)
             LocalStore.Set(SidebarStateKey, _isCollapsed ? "collapsed" : "expanded");
         ApplyCollapsedState();
@@ -596,4 +622,9 @@ public sealed partial class SidebarPage : UserControl
         return new SolidColorBrush(color);
     }
 
+    private static void Play(InteractionSound sound)
+    {
+        if (App.MainWindow is MainWindow w)
+            w.SoundService.Play(sound);
+    }
 }

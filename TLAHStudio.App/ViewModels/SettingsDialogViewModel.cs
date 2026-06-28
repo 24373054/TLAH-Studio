@@ -16,6 +16,7 @@ public partial class SettingsDialogViewModel : ObservableObject
     private readonly ISettingsService _settingsService;
     private readonly ILlmService _llmService;
     private readonly IAppStateService _appState;
+    private readonly IInteractionSoundService _soundService;
 
     // ── Provider list ──────────────────────────────────────────────
     public ObservableCollection<ProviderInfo> Providers { get; } = new();
@@ -56,6 +57,8 @@ public partial class SettingsDialogViewModel : ObservableObject
     [ObservableProperty] private int _maxTokens = 4096;
     [ObservableProperty] private string _systemPrompt = "You are a helpful assistant.";
     [ObservableProperty] private string _userRole = "user";
+    [ObservableProperty] private bool _isSoundEffectsEnabled = true;
+    [ObservableProperty] private double _soundVolume = 0.62;
 
     // ── Chat-level override fields ──────────────────────────────────
     [ObservableProperty] private string? _chatProvider;
@@ -80,11 +83,16 @@ public partial class SettingsDialogViewModel : ObservableObject
     public bool HasCurrentChat => _appState.CurrentChatId != null;
     public string ChatIdLabel => _appState.CurrentChatId?.ToString("D") ?? "No chat selected";
 
-    public SettingsDialogViewModel(ISettingsService settingsService, ILlmService llmService, IAppStateService appState)
+    public SettingsDialogViewModel(
+        ISettingsService settingsService,
+        ILlmService llmService,
+        IAppStateService appState,
+        IInteractionSoundService soundService)
     {
         _settingsService = settingsService;
         _llmService = llmService;
         _appState = appState;
+        _soundService = soundService;
 
         foreach (var p in ProviderInfo.Supported)
             Providers.Add(p);
@@ -111,6 +119,8 @@ public partial class SettingsDialogViewModel : ObservableObject
             SystemPrompt = gs.SystemPrompt;
             UserRole = gs.UserRole;
             IsGlobalLongContextEnabled = gs.UseLongContext;
+            IsSoundEffectsEnabled = _soundService.IsEnabled;
+            SoundVolume = _soundService.Volume;
 
             SelectedProvider = Providers.FirstOrDefault(p => p.Key == gs.Provider);
             LoadFallbackModelOptions(GlobalModelOptions, Provider);
@@ -322,6 +332,8 @@ public partial class SettingsDialogViewModel : ObservableObject
                 SystemPrompt: SystemPrompt,
                 UserRole: UserRole
             ));
+            _soundService.SetVolume(SoundVolume);
+            _soundService.SetEnabled(IsSoundEffectsEnabled);
             // Auto-select provider defaults
             var match = Providers.FirstOrDefault(p => p.Key == Provider);
             if (match != null)

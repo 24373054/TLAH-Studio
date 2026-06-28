@@ -25,6 +25,7 @@ public sealed partial class ChatPage : UserControl
     private IBackgroundService? _backgroundService;
     private IUiDensityService? _densityService;
     private ISandboxCommandService? _sandbox;
+    private IInteractionSoundService? _sound;
     private bool _bound;
     private double _chatBubbleOpacity = 1;
     private int _lastMessageCount;
@@ -62,7 +63,8 @@ public sealed partial class ChatPage : UserControl
         DebugPanelViewModel debugVm,
         IBackgroundService backgroundService,
         IUiDensityService densityService,
-        ISandboxCommandService sandbox)
+        ISandboxCommandService sandbox,
+        IInteractionSoundService sound)
     {
         if (_bound) return;
         _bound = true;
@@ -72,6 +74,7 @@ public sealed partial class ChatPage : UserControl
         _backgroundService = backgroundService;
         _densityService = densityService;
         _sandbox = sandbox;
+        _sound = sound;
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.AgentProgressLines.CollectionChanged += OnAgentProgressChanged;
@@ -132,8 +135,19 @@ public sealed partial class ChatPage : UserControl
             await _vm.ResumeAgentRunAsync();
     }
 
-    private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+    private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (_vm?.IsLoading != true &&
+            e.Action == NotifyCollectionChangedAction.Add &&
+            e.NewItems?.OfType<Message>().Any(m =>
+                string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(m.Role, "tool", StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            _sound?.Play(InteractionSound.Receive);
+        }
+
         RequestRender(immediate: e.Action is NotifyCollectionChangedAction.Reset);
+    }
 
     private void OnAgentProgressChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
         RequestRender();
@@ -379,7 +393,7 @@ public sealed partial class ChatPage : UserControl
         var row = new Grid
         {
             HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
-            MaxWidth = IsCompactDensity() ? 720 : 800
+            MaxWidth = IsCompactDensity() ? 740 : 840
         };
 
         var border = new Border
@@ -387,9 +401,9 @@ public sealed partial class ChatPage : UserControl
             CornerRadius = new CornerRadius(8),
             Padding = IsCompactDensity()
                 ? new Thickness(12, 9, 12, 9)
-                : new Thickness(15, 12, 15, 12),
-            BorderThickness = new Thickness(isUser ? 0 : 1),
-            BorderBrush = MessageBorderBrush(),
+                : new Thickness(16, 13, 16, 13),
+            BorderThickness = new Thickness(1),
+            BorderBrush = isUser ? AccentSubtleBrush() : MessageBorderBrush(),
             Background = MessageBrush(message.Role)
         };
 
@@ -860,10 +874,10 @@ public sealed partial class ChatPage : UserControl
             BorderThickness = new Thickness(1),
             BorderBrush = AccentSubtleBrush(),
             Background = ThemeBrush(
-                Color.FromArgb(0xEE, 0xF8, 0xFB, 0xFF),
-                Color.FromArgb(0xE8, 0x12, 0x1B, 0x2A)),
+                Color.FromArgb(0xF2, 0xFB, 0xFD, 0xFF),
+                Color.FromArgb(0xEA, 0x11, 0x1B, 0x2B)),
             HorizontalAlignment = HorizontalAlignment.Left,
-            MaxWidth = IsCompactDensity() ? 720 : 800
+            MaxWidth = IsCompactDensity() ? 740 : 840
         };
 
         var stack = new StackPanel { Spacing = 10 };
@@ -1083,17 +1097,17 @@ public sealed partial class ChatPage : UserControl
         var color = role.ToLowerInvariant() switch
         {
             "user" => ThemeColor(
-                Color.FromArgb(0xFF, 0x25, 0x63, 0xEB),
-                Color.FromArgb(0xFF, 0x39, 0x7E, 0xFF)),
+                Color.FromArgb(0xFF, 0x2F, 0x5F, 0xEA),
+                Color.FromArgb(0xFF, 0x34, 0x67, 0xF6)),
             "system" => ThemeColor(
-                Color.FromArgb(0xFF, 0xEC, 0xF2, 0xFA),
-                Color.FromArgb(0xE8, 0x21, 0x2B, 0x39)),
+                Color.FromArgb(0xFF, 0xEE, 0xF4, 0xFB),
+                Color.FromArgb(0xEA, 0x1E, 0x2A, 0x3D)),
             "tool" => ThemeColor(
-                Color.FromArgb(0xFF, 0xF2, 0xF7, 0xFF),
-                Color.FromArgb(0xE8, 0x13, 0x20, 0x2E)),
+                Color.FromArgb(0xFF, 0xF3, 0xF8, 0xFF),
+                Color.FromArgb(0xEA, 0x11, 0x20, 0x30)),
             _ => ThemeColor(
                 Color.FromArgb(0xF8, 0xFF, 0xFF, 0xFF),
-                Color.FromArgb(0xEC, 0x17, 0x22, 0x31))
+                Color.FromArgb(0xE8, 0x14, 0x21, 0x32))
         };
 
         if (!string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
@@ -1110,30 +1124,30 @@ public sealed partial class ChatPage : UserControl
     private Color ThemeColor(Color light, Color dark) => IsLightTheme() ? light : dark;
 
     private SolidColorBrush TextPrimaryBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x16, 0x1D, 0x28),
+        Color.FromArgb(0xFF, 0x17, 0x20, 0x33),
         Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)));
 
     private SolidColorBrush TextSecondaryBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x58, 0x67, 0x79),
-        Color.FromArgb(0xFF, 0xDC, 0xE4, 0xEE)));
+        Color.FromArgb(0xFF, 0x56, 0x65, 0x7A),
+        Color.FromArgb(0xFF, 0xE0, 0xE8, 0xF4)));
 
     private SolidColorBrush TextMutedBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x84, 0x90, 0xA1),
-        Color.FromArgb(0xFF, 0x9A, 0xA8, 0xBA)));
+        Color.FromArgb(0xFF, 0x7D, 0x8B, 0xA0),
+        Color.FromArgb(0xFF, 0x91, 0xA0, 0xB4)));
 
     private SolidColorBrush AccentBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x25, 0x63, 0xEB),
-        Color.FromArgb(0xFF, 0x6A, 0xA7, 0xFF)));
+        Color.FromArgb(0xFF, 0x2F, 0x5F, 0xEA),
+        Color.FromArgb(0xFF, 0x71, 0xA7, 0xFF)));
 
     private SolidColorBrush AccentTextBrush() => new(Microsoft.UI.Colors.White);
 
     private SolidColorBrush AccentSubtleBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0xBF, 0xD4, 0xFF),
-        Color.FromArgb(0x99, 0x6A, 0xA7, 0xFF)));
+        Color.FromArgb(0xFF, 0xBF, 0xD2, 0xFF),
+        Color.FromArgb(0x99, 0x71, 0xA7, 0xFF)));
 
     private SolidColorBrush MessageBorderBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0xD3, 0xDD, 0xE9),
-        Color.FromArgb(0x66, 0x6F, 0x7D, 0x91)));
+        Color.FromArgb(0xFF, 0xD2, 0xDC, 0xEB),
+        Color.FromArgb(0x6E, 0x71, 0x81, 0x95)));
 
     private SolidColorBrush ThemeBrush(Color light, Color dark) => new(ThemeColor(light, dark));
 

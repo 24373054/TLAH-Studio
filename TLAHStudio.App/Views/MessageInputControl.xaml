@@ -5,8 +5,8 @@
 
     <Grid
         x:Name="InputRoot"
-        Padding="20,14"
-        Background="{ThemeResource AppChromeBrush}"
+        Padding="22,15"
+        Background="{ThemeResource InputDockBrush}"
         BorderBrush="{ThemeResource BorderSubtleBrush}"
         BorderThickness="0,1,0,0">
         <Grid.ChildrenTransitions>
@@ -25,7 +25,7 @@
             x:Name="RoleCombo"
             Grid.Column="0"
             Width="124"
-            MinHeight="44"
+            MinHeight="46"
             Margin="0,0,12,0"
             Background="{ThemeResource InputBackgroundBrush}"
             Foreground="{ThemeResource TextPrimaryBrush}"
@@ -40,7 +40,7 @@
             x:Name="AgentModeToggle"
             Grid.Column="1"
             MinWidth="82"
-            MinHeight="44"
+            MinHeight="46"
             Margin="0,0,12,0"
             Background="{ThemeResource InputBackgroundBrush}"
             Foreground="{ThemeResource TextPrimaryBrush}"
@@ -58,7 +58,7 @@
         <TextBox
             x:Name="InputBox"
             Grid.Column="2"
-            MinHeight="44"
+            MinHeight="46"
             MaxHeight="160"
             AcceptsReturn="True"
             TextWrapping="Wrap"
@@ -76,11 +76,11 @@
             <Button
                 x:Name="SendBtn"
                 Click="Send_Click"
-                Background="{ThemeResource AccentBrush}"
+                Background="{ThemeResource AccentStrongBrush}"
                 Foreground="{ThemeResource AccentTextBrush}"
                 CornerRadius="8"
                 MinWidth="54"
-                MinHeight="44"
+                MinHeight="46"
                 Padding="14,8"
                 TabIndex="13"
                 ToolTipService.ToolTip="Send"
@@ -103,7 +103,7 @@
                 BorderBrush="{ThemeResource BorderSubtleBrush}"
                 CornerRadius="8"
                 MinWidth="54"
-                MinHeight="44"
+                MinHeight="46"
                 Padding="14,8"
                 ToolTipService.ToolTip="Stop"
                 TabIndex="13"

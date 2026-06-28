@@ -10,7 +10,7 @@
         Background="{ThemeResource AppBackgroundBrush}"
         AutomationProperties.Name="TLAH Studio workspace">
         <Grid.RowDefinitions>
-            <RowDefinition Height="40" />
+            <RowDefinition Height="44" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -20,21 +20,31 @@
             Background="{ThemeResource AppChromeBrush}"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             BorderThickness="0,0,0,1"
-            MinHeight="40">
-            <Image
-                Source="ms-appx:///Assets/logo.png"
-                Width="20"
-                Height="20"
-                Margin="16,0,0,0"
-                Stretch="Uniform"
+            MinHeight="44">
+            <Border
+                Width="26"
+                Height="26"
+                Margin="14,0,0,0"
                 HorizontalAlignment="Left"
-                VerticalAlignment="Center" />
+                VerticalAlignment="Center"
+                Background="{ThemeResource BrandMarkBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <Image
+                    Source="ms-appx:///Assets/logo.png"
+                    Width="18"
+                    Height="18"
+                    Stretch="Uniform"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center" />
+            </Border>
             <TextBlock
                 Text="TLAH Studio"
-                Margin="44,0,160,0"
+                Margin="50,0,160,0"
                 VerticalAlignment="Center"
                 Foreground="{ThemeResource TextSecondaryBrush}"
-                FontSize="12.5"
+                FontSize="13"
                 FontWeight="SemiBold" />
         </Grid>
 

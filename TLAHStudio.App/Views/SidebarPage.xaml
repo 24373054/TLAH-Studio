@@ -7,7 +7,7 @@
 
     <UserControl.Resources>
         <DataTemplate x:Key="ChatItemTemplate">
-            <Grid Padding="12,10" ColumnSpacing="10">
+            <Grid Padding="13,10" ColumnSpacing="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -46,7 +46,7 @@
                     Width="32"
                     Height="32"
                     Padding="0"
-                    Background="{ThemeResource SurfaceBrush}"
+                    Background="{ThemeResource SurfaceElevatedBrush}"
                     Foreground="{ThemeResource TextMutedBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"
                     CornerRadius="8"
@@ -127,8 +127,8 @@
                 <Border
                     Width="36"
                     Height="36"
-                    Background="{ThemeResource SurfaceElevatedBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    Background="{ThemeResource BrandMarkBrush}"
+                    BorderBrush="{ThemeResource AccentSecondaryBrush}"
                     BorderThickness="1"
                     CornerRadius="8">
                     <Image
@@ -177,7 +177,7 @@
             <Button
                 x:Name="NewChatButton"
                 Click="NewChat_Click"
-                Background="{ThemeResource AccentSoftBrush}"
+                Background="{ThemeResource SurfaceElevatedBrush}"
                 Foreground="{ThemeResource TextPrimaryBrush}"
                 BorderBrush="{ThemeResource AccentBrush}"
                 CornerRadius="8"
@@ -212,7 +212,7 @@
                     x:Name="ArchivedToggle"
                     Grid.Column="1"
                     Click="ArchivedToggle_Click"
-                    Background="{ThemeResource SurfaceBrush}"
+                    Background="{ThemeResource SurfaceElevatedBrush}"
                     Foreground="{ThemeResource TextSecondaryBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"
                     CornerRadius="8"
@@ -297,7 +297,7 @@
                     x:Name="EmptyListState"
                     Visibility="Collapsed"
                     Padding="16,18"
-                    Background="{ThemeResource SurfaceBrush}"
+                    Background="{ThemeResource PanelAltBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"
                     BorderThickness="1"
                     CornerRadius="8"
