@@ -2,7 +2,7 @@
 ; Supports: manual install (GUI wizard) and silent update (/VERYSILENT /NORESTART)
 
 #define MyAppName "TLAH Studio"
-#define MyAppVersion "2.1.1"
+#define MyAppVersion "2.1.3"
 #define MyAppPublisher "KeEntropy Technology"
 #define MyAppExeName "TLAHStudio.App.exe"
 #define MyAppUpdaterName "TLAHStudio.Updater.exe"
@@ -99,7 +99,8 @@ begin
     // Auto-update is launched by TLAHStudio.Updater from the install directory in
     // older builds. Kill it before file copy so .NET runtime DLLs can be replaced.
     KillProcessByName('{#MyAppExeName}');
-    KillProcessByName('{#MyAppUpdaterName}');
+    if not HasCommandLineSwitch('NOLAUNCH') then
+      KillProcessByName('{#MyAppUpdaterName}');
     Sleep(800);
   end;
 
@@ -110,6 +111,9 @@ begin
     CreateDir(ExpandConstant('{app}\cache'));
   end;
 end;
+
+
+
 
 
 

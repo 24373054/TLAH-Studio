@@ -7,6 +7,41 @@ namespace TLAHStudio.Core.Tests;
 
 public class UpdateServiceTests
 {
+    [Fact]
+    public void ReadVersionState_FallsBackToAssemblyVersionInsteadOfLegacyOneZero()
+    {
+        var installPath = Path.Combine(Path.GetTempPath(), "tlah-missing-install", Guid.NewGuid().ToString("N"));
+
+        var state = UpdateService.ReadVersionState(installPath, installPath);
+
+        Assert.NotEqual("1.0.0", state.CurrentVersion);
+        Assert.NotEqual("0.0.0", state.CurrentVersion);
+        Assert.Null(state.SourcePath);
+    }
+
+    [Fact]
+    public async Task ReadVersionState_UsesActualInstallDirectoryVersionJson()
+    {
+        var installPath = Path.Combine(Path.GetTempPath(), "tlah-custom-install", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(installPath);
+        await File.WriteAllTextAsync(
+            Path.Combine(installPath, "version.json"),
+            """
+            {
+              "version": "2.1.2",
+              "updateUrl": "https://updates.example/latest.json",
+              "installId": "custom-install"
+            }
+            """);
+
+        var state = UpdateService.ReadVersionState(installPath, Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+
+        Assert.Equal("2.1.2", state.CurrentVersion);
+        Assert.Equal("https://updates.example/latest.json", state.UpdateCheckUrl);
+        Assert.Equal("custom-install", state.InstallId);
+        Assert.EndsWith("version.json", state.SourcePath, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("1.0.11", "1.0.10", true)]
     [InlineData("1.0.10", "1.0.10", false)]

@@ -6,7 +6,7 @@ namespace TLAHStudio.Updater;
 /// Minimal update helper. Called by the main app when a new version
 /// installer has been downloaded and verified.
 ///
-/// Usage: TLAHStudio.Updater.exe <installerPath> <appPid>
+/// Usage: TLAHStudio.Updater.exe <installerPath> <appPid> [installDir]
 ///
 /// Flow:
 /// 1. Wait for the main app process to exit (timeout 30s)
@@ -30,10 +30,17 @@ public static class Program
             Console.Error.WriteLine($"Invalid PID: {args[1]}");
             return 1;
         }
+        var installDir = args.Length >= 3 && !string.IsNullOrWhiteSpace(args[2])
+            ? args[2]
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs",
+                "TLAH Studio");
 
         Console.WriteLine("TLAH Studio Updater");
         Console.WriteLine($"Installer: {installerPath}");
         Console.WriteLine($"App PID: {appPid}");
+        Console.WriteLine($"Install dir: {installDir}");
 
         // 1. Wait for main app to exit
         try
@@ -72,7 +79,7 @@ public static class Program
         var psi = new ProcessStartInfo
         {
             FileName = installerPath,
-            Arguments = $"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /LOG=\"{logPath}\"",
+            Arguments = $"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /NOLAUNCH /DIR=\"{installDir}\" /LOG=\"{logPath}\"",
             UseShellExecute = true,
             // Verb = "runas"  // Only needed if installing to Program Files
         };
@@ -94,9 +101,7 @@ public static class Program
         }
 
         // 4. Re-launch the main app
-        string appPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Programs", "TLAH Studio", "TLAHStudio.App.exe");
+        string appPath = Path.Combine(installDir, "TLAHStudio.App.exe");
 
         if (File.Exists(appPath))
         {

@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -21,6 +22,7 @@ public class UpdateService : IUpdateService
     private readonly string _updateCheckUrl;
     private readonly string _installId;
     private readonly string _manifestPublicKeyBase64;
+    private const string DefaultUpdateCheckUrl = "https://download.matrixlabs.cn/tlah/windows/latest.json";
 
     public string CurrentVersion { get; }
     public string UpdateCheckUrl => _updateCheckUrl;
@@ -31,39 +33,11 @@ public class UpdateService : IUpdateService
         _httpClientFactory = httpClientFactory;
         _manifestPublicKeyBase64 = UpdateCrypto.PublicKeyBase64;
 
-        _installPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Programs", "TLAH Studio");
-
-        // Read or generate install ID (persisted in version.json, used for gray release)
-        var versionPath = Path.Combine(_installPath, "version.json");
-        if (File.Exists(versionPath))
-        {
-            try
-            {
-                var json = File.ReadAllText(versionPath);
-                using var doc = JsonDocument.Parse(json);
-                CurrentVersion = doc.RootElement.GetProperty("version").GetString() ?? "0.0.0";
-                _updateCheckUrl = doc.RootElement.TryGetProperty("updateUrl", out var url)
-                    ? url.GetString() ?? "https://download.matrixlabs.cn/tlah/windows/latest.json"
-                    : "https://download.matrixlabs.cn/tlah/windows/latest.json";
-                _installId = doc.RootElement.TryGetProperty("installId", out var iid)
-                    ? iid.GetString() ?? GenerateInstallId()
-                    : GenerateInstallId();
-            }
-            catch
-            {
-                CurrentVersion = "0.0.0";
-                _updateCheckUrl = "https://download.matrixlabs.cn/tlah/windows/latest.json";
-                _installId = GenerateInstallId();
-            }
-        }
-        else
-        {
-            CurrentVersion = "1.0.0";
-            _updateCheckUrl = "https://download.matrixlabs.cn/tlah/windows/latest.json";
-            _installId = GenerateInstallId();
-        }
+        _installPath = ResolveInstallPath();
+        var state = ReadVersionState(_installPath, AppContext.BaseDirectory);
+        CurrentVersion = state.CurrentVersion;
+        _updateCheckUrl = state.UpdateCheckUrl;
+        _installId = state.InstallId;
     }
 
     internal UpdateService(
@@ -85,6 +59,101 @@ public class UpdateService : IUpdateService
     private static string GenerateInstallId()
     {
         return Guid.NewGuid().ToString("D");
+    }
+
+    internal sealed record VersionState(
+        string CurrentVersion,
+        string UpdateCheckUrl,
+        string InstallId,
+        string? SourcePath);
+
+    internal static string DefaultInstallPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Programs",
+        "TLAH Studio");
+
+    internal static string ResolveInstallPath(string? baseDirectory = null)
+    {
+        var baseDir = NormalizeDirectory(baseDirectory ?? AppContext.BaseDirectory);
+        if (File.Exists(Path.Combine(baseDir, "version.json")) ||
+            File.Exists(Path.Combine(baseDir, "TLAHStudio.App.exe")))
+        {
+            return baseDir;
+        }
+
+        return DefaultInstallPath;
+    }
+
+    internal static VersionState ReadVersionState(string installPath, string? baseDirectory = null)
+    {
+        var fallbackVersion = GetAssemblyVersion();
+        var paths = new[]
+            {
+                Path.Combine(NormalizeDirectory(installPath), "version.json"),
+                Path.Combine(NormalizeDirectory(baseDirectory ?? AppContext.BaseDirectory), "version.json")
+            }
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var versionPath in paths)
+        {
+            if (!File.Exists(versionPath))
+                continue;
+
+            try
+            {
+                var json = File.ReadAllText(versionPath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                var version = root.TryGetProperty("version", out var versionElement)
+                    ? versionElement.GetString()
+                    : null;
+                var updateUrl = root.TryGetProperty("updateUrl", out var urlElement)
+                    ? urlElement.GetString()
+                    : null;
+                var installId = root.TryGetProperty("installId", out var installIdElement)
+                    ? installIdElement.GetString()
+                    : null;
+
+                return new VersionState(
+                    string.IsNullOrWhiteSpace(version) ? fallbackVersion : version,
+                    string.IsNullOrWhiteSpace(updateUrl) ? DefaultUpdateCheckUrl : updateUrl,
+                    string.IsNullOrWhiteSpace(installId) ? GenerateInstallId() : installId,
+                    versionPath);
+            }
+            catch
+            {
+                return new VersionState(
+                    fallbackVersion,
+                    DefaultUpdateCheckUrl,
+                    GenerateInstallId(),
+                    versionPath);
+            }
+        }
+
+        return new VersionState(
+            fallbackVersion,
+            DefaultUpdateCheckUrl,
+            GenerateInstallId(),
+            null);
+    }
+
+    private static string NormalizeDirectory(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private static string GetAssemblyVersion()
+    {
+        var assembly = typeof(UpdateService).Assembly;
+        return assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
+            ?.Split('+')[0]
+            ?? assembly.GetName().Version?.ToString(3)
+            ?? "0.0.0";
     }
 
     /// <summary>
@@ -277,9 +346,14 @@ public class UpdateService : IUpdateService
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
             FileName = updaterPath,
-            Arguments = $"\"{installerPath}\" {Environment.ProcessId}",
+            Arguments = $"{QuoteArgument(installerPath)} {Environment.ProcessId} {QuoteArgument(_installPath)}",
             UseShellExecute = true
         });
+    }
+
+    private static string QuoteArgument(string value)
+    {
+        return "\"" + value.Replace("\"", "\\\"") + "\"";
     }
 
     private static string StageUpdater(string updaterPath)

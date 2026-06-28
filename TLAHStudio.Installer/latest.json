@@ -1,14 +1,14 @@
 {
-  "version": "2.1.1",
+  "version": "2.1.3",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.1.1.exe",
-  "sha256": "7d8c40bf57b0b7b1fc0ecba9a729ca96467933983a84a553df8bc9080480a2d7",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-2.1.3.exe",
+  "sha256": "fb94397ebd7b69a00b5614ce74237e7d295fd1641e12856f9a3013c0db5138bc",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Reliability and model configuration update.\n\nFixes:\n- Reduced chat UI stalls during long agent runs by throttling live render updates and reusing message visuals\n- DeepSeek 1M mode now keeps official API model names on the wire while enabling the local 1M context budget\n- Added thinking depth controls with Auto, Off, Low, Medium, High, and Max presets\n- Normalized legacy DeepSeek [1m] model names and added regression coverage for provider request shaping",
+  "releaseNotes": "Update loop repair and updater relaunch hardening.\n\nFixes:\n- Current version is now read from the actual running install directory instead of a hard-coded default path\n- Missing or unreadable version.json now falls back to the app assembly version instead of legacy 1.0.0\n- Silent updates now pass the active install directory to the installer so the running installation is replaced\n- The installer no longer terminates a staged updater when /NOLAUNCH is used, preserving post-update relaunch\n- Added regression tests for non-default install paths and missing version metadata",
   "forceUpdate": true,
-  "minSupportedVersion": "2.1.1",
+  "minSupportedVersion": "2.1.3",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96878480
+  "installerSizeBytes": 96877912
 }
