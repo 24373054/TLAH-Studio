@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
+using TLAHStudio.App.Models;
 
 namespace TLAHStudio.App.ViewModels;
 
@@ -22,6 +23,14 @@ public partial class ChatPageViewModel : ObservableObject
     private CancellationTokenSource? _sendCts;
     private IProgress<AgentProgressUpdate>? _activeAgentProgress;
     private AssistantStreamState? _activeStream;
+
+    /// <summary>
+    /// M2.8.0: Typed content blocks for virtualized rendering.
+    /// Replaces monolithic message rendering with independently renderable blocks.
+    /// </summary>
+    public ObservableCollection<ChatMessageBlock> ChatMessageBlocks { get; } = new();
+
+    private readonly ChatRenderer _chatRenderer = new();
 
     public ObservableCollection<Message> Messages { get; } = new();
     public ObservableCollection<AgentProgressLine> AgentProgressLines { get; } = new();
@@ -92,6 +101,7 @@ public partial class ChatPageViewModel : ObservableObject
     {
         CurrentChat = null;
         Messages.Clear();
+        ChatMessageBlocks.Clear();
         ClearAgentProgress();
         UpdateAgentStatus(null);
     }
@@ -106,11 +116,17 @@ public partial class ChatPageViewModel : ObservableObject
             var chat = await _chatService.GetChatAsync(chatId);
             CurrentChat = chat;
             Messages.Clear();
+            ChatMessageBlocks.Clear();
             ClearAgentProgress();
             if (chat?.Messages != null)
             {
-                foreach (var msg in chat.Messages)
+                var msgList = chat.Messages.ToList();
+                foreach (var msg in msgList)
                     Messages.Add(msg);
+                // M2.8.0: Populate typed blocks
+                ChatMessageBlocks.Clear();
+                foreach (var block in _chatRenderer.RenderAll(msgList))
+                    ChatMessageBlocks.Add(block);
             }
             UpdateAgentStatus(await _llmService.GetLatestAgentRunAsync(chatId));
         }
@@ -391,6 +407,10 @@ public partial class ChatPageViewModel : ObservableObject
             }
         }
 
+        // M2.8.0: Finalize streaming blocks
+        if (stream?.Message != null)
+            _chatRenderer.FinalizeStreaming(ChatMessageBlocks, stream.Message);
+
         UpdateAgentStatus(result.AgentRun);
         StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
     }
@@ -490,6 +510,12 @@ public partial class ChatPageViewModel : ObservableObject
             CreatedAt = DateTime.UtcNow
         };
         Messages.Add(message);
+
+        // M2.8.0: Create initial streaming block
+        var streamBlock = ChatMessageBlock.TextBlock(message.Id, "assistant", string.Empty, ChatMessageBlocks.Count);
+        streamBlock.IsStreaming = true;
+        ChatMessageBlocks.Add(streamBlock);
+
         _activeStream = new AssistantStreamState(
             message,
             new InlineLlmStreamProgress(OnAssistantStream));
@@ -589,6 +615,9 @@ public partial class ChatPageViewModel : ObservableObject
 
                     stream.Message.Content = stream.ComposeContent();
                     changed = true;
+
+                    // M2.8.0: Incremental block update — no full tree rebuild
+                    _chatRenderer.UpdateStreamingBlock(ChatMessageBlocks, stream.Message);
                 }
 
                 if (!changed)
