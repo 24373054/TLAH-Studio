@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.AgentRuntime;
 
 #pragma warning disable CA1416 // TLAH Studio is a Windows desktop client; DPAPI is intentionally Windows-only.
 
@@ -35,6 +36,7 @@ public class LlmService : ILlmService
     private readonly IAgentContextManager _agentContextManager;
     private readonly IProjectMemoryService _projectMemory;
     private readonly IToolResultPersistenceService _toolResultPersistence;
+    private readonly IAgentRunEngineV2? _agentRunEngineV2;
 
     public LlmService(
         DbContext db,
@@ -51,7 +53,8 @@ public class LlmService : ILlmService
         IAgentRunEngine? agentRunEngine = null,
         IAgentContextManager? agentContextManager = null,
         IProjectMemoryService? projectMemory = null,
-        IToolResultPersistenceService? toolResultPersistence = null)
+        IToolResultPersistenceService? toolResultPersistence = null,
+        IAgentRunEngineV2? agentRunEngineV2 = null)
     {
         _db = db;
         _chatService = chatService;
@@ -105,6 +108,7 @@ public class LlmService : ILlmService
         _providerStreamAdapter = providerStreamAdapter ?? new ProviderStreamAdapter();
         _toolExecutionScheduler = toolExecutionScheduler ?? new ToolExecutionScheduler(_agentTools, _sandboxCommandService);
         _agentRunEngine = agentRunEngine ?? new AgentRunEngine();
+        _agentRunEngineV2 = agentRunEngineV2;
     }
 
     /// <summary>
@@ -324,6 +328,73 @@ public class LlmService : ILlmService
             .ToList(),
             seq);
         await SaveCheckpointAsync(run, state, ct);
+
+        // M2.7.0: Delegate to V2 engine when available
+        if (_agentRunEngineV2 != null)
+        {
+            var runState = new AgentRunState
+            {
+                RunId = run.Id,
+                ChatId = chatId,
+                TurnId = turn.Id,
+                Status = AgentRunStatuses.Running,
+                MaxSteps = maxSteps,
+                UserRequest = userContent,
+                Messages = state.Messages.ToList(),
+                SequenceNum = state.SequenceNum
+            };
+            var engineOptions = new AgentEngineOptions(
+                maxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
+                options.AutoApproveTools, options.ContextBudgetTokens,
+                options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
+                options.OutputStream);
+
+            var result = await _agentRunEngineV2.RunAsync(runState, engineOptions, ct: ct);
+
+            // Sync state back to DB
+            run.CurrentStep = result.FinalState.CurrentStep;
+            run.Status = result.FinalState.Status;
+            run.ErrorMessage = result.FinalState.ErrorMessage;
+            run.UpdatedAt = DateTime.UtcNow;
+            if (result.FinalState.Status is AgentRunStatuses.Completed or AgentRunStatuses.Failed or AgentRunStatuses.Cancelled)
+                run.CompletedAt = DateTime.UtcNow;
+
+            // Persist assistant message if we have content
+            Message assistantMessage;
+            if (!string.IsNullOrWhiteSpace(result.AssistantContent))
+            {
+                assistantMessage = new Message
+                {
+                    ChatId = chatId,
+                    Role = "assistant",
+                    Content = result.AssistantContent,
+                    TurnId = turn.Id,
+                    SequenceNum = state.SequenceNum
+                };
+                _db.Set<Message>().Add(assistantMessage);
+            }
+            else
+            {
+                assistantMessage = new Message
+                {
+                    ChatId = chatId,
+                    Role = "assistant",
+                    Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
+                    TurnId = turn.Id,
+                    SequenceNum = state.SequenceNum
+                };
+                _db.Set<Message>().Add(assistantMessage);
+            }
+
+            var chatEntity = await _db.Set<Chat>().FirstAsync(c => c.Id == chatId, ct);
+            chatEntity.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+
+            return await BuildAgentResultFromEngineAsync(
+                run, turn, sentMessage, assistantMessage, result, ct);
+        }
+
+        // Fallback: legacy engine
         return await _agentRunEngine.ContinueAsync(
             run,
             _agentEventStream,
@@ -368,6 +439,70 @@ public class LlmService : ILlmService
             "Agent run resumed from the latest checkpoint.",
             new { run.CurrentStep, run.MaxSteps },
             ct: ct);
+
+        // M2.7.0: Delegate to V2 engine when available
+        if (_agentRunEngineV2 != null)
+        {
+            var runState = new AgentRunState
+            {
+                RunId = run.Id,
+                ChatId = run.ChatId,
+                TurnId = run.TurnId,
+                Status = AgentRunStatuses.Running,
+                CurrentStep = run.CurrentStep,
+                MaxSteps = run.MaxSteps,
+                UserRequest = run.UserRequest,
+                Messages = state.Messages.ToList(),
+                SequenceNum = state.SequenceNum
+            };
+            var engineOptions = new AgentEngineOptions(
+                run.MaxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
+                options.AutoApproveTools, options.ContextBudgetTokens,
+                options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
+                options.OutputStream);
+
+            var result = await _agentRunEngineV2.ResumeAsync(runState, engineOptions, ct: ct);
+
+            run.CurrentStep = result.FinalState.CurrentStep;
+            run.Status = result.FinalState.Status;
+            run.ErrorMessage = result.FinalState.ErrorMessage;
+            run.UpdatedAt = DateTime.UtcNow;
+            if (result.FinalState.Status is AgentRunStatuses.Completed or AgentRunStatuses.Failed or AgentRunStatuses.Cancelled)
+                run.CompletedAt = DateTime.UtcNow;
+
+            Message assistantMessage;
+            if (!string.IsNullOrWhiteSpace(result.AssistantContent))
+            {
+                assistantMessage = new Message
+                {
+                    ChatId = run.ChatId,
+                    Role = "assistant",
+                    Content = result.AssistantContent,
+                    TurnId = turn.Id,
+                    SequenceNum = state.SequenceNum
+                };
+                _db.Set<Message>().Add(assistantMessage);
+            }
+            else
+            {
+                assistantMessage = new Message
+                {
+                    ChatId = run.ChatId,
+                    Role = "assistant",
+                    Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
+                    TurnId = turn.Id,
+                    SequenceNum = state.SequenceNum
+                };
+                _db.Set<Message>().Add(assistantMessage);
+            }
+
+            var chatEntity = await _db.Set<Chat>().FirstAsync(c => c.Id == run.ChatId, ct);
+            chatEntity.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+
+            return await BuildAgentResultFromEngineAsync(
+                run, turn, sentMessage, assistantMessage, result, ct);
+        }
 
         return await _agentRunEngine.ContinueAsync(
             run,
@@ -1566,6 +1701,69 @@ public class LlmService : ILlmService
             ct);
         return new SendMessageResult(
             turn, sentMessage, assistantMessage, rawRequest, rawResponse, snapshot);
+    }
+
+    /// <summary>
+    /// M2.7.0: Build SendMessageResult from the V2 engine output.
+    /// Simplified version — the engine already handled persistence internally.
+    /// </summary>
+    private async Task<SendMessageResult> BuildAgentResultFromEngineAsync(
+        AgentRun run,
+        Turn turn,
+        Message sentMessage,
+        Message assistantMessage,
+        AgentRunResult engineResult,
+        CancellationToken ct)
+    {
+        var provider = LlmProviderFactory.Create(
+            _httpClientFactory.CreateClient("LLM"),
+            (await _settingsService.GetEffectiveSettingsAsync(run.ChatId, ct)).Provider,
+            (await _settingsService.GetEffectiveSettingsAsync(run.ChatId, ct)).ApiKey,
+            (await _settingsService.GetEffectiveSettingsAsync(run.ChatId, ct)).BaseUrl,
+            (await _settingsService.GetEffectiveSettingsAsync(run.ChatId, ct)).Model);
+        var effective = await _settingsService.GetEffectiveSettingsAsync(run.ChatId, ct);
+
+        var steps = await _db.Set<AgentStep>()
+            .Where(s => s.AgentRunId == run.Id)
+            .OrderBy(s => s.StepNumber)
+            .Select(s => new
+            {
+                s.StepNumber, s.Kind, s.Status, s.Summary, s.InputJson, s.OutputJson, s.StartedAt, s.CompletedAt
+            })
+            .ToListAsync(ct);
+
+        var rawRequest = await _db.Set<RawRequest>().FirstOrDefaultAsync(r => r.TurnId == turn.Id, ct);
+        if (rawRequest == null)
+        {
+            rawRequest = new RawRequest { TurnId = turn.Id };
+            _db.Set<RawRequest>().Add(rawRequest);
+        }
+        rawRequest.Provider = provider.ProviderName;
+        rawRequest.EndpointUrl = provider.EndpointUrl;
+        rawRequest.RequestJson = SafeJson(new
+        {
+            agentMode = true, runId = run.Id, run.Status, run.MaxSteps,
+            sandboxRoot = _sandboxCommandService.GetSandboxRoot(run.ChatId),
+            tools = _agentTools.Definitions, toolMetadata = _agentTools.Metadata,
+            steps
+        }, effective.ApiKey);
+
+        var rawResponse = await _db.Set<RawResponse>().FirstOrDefaultAsync(r => r.TurnId == turn.Id, ct);
+        if (rawResponse == null)
+        {
+            rawResponse = new RawResponse { TurnId = turn.Id };
+            _db.Set<RawResponse>().Add(rawResponse);
+        }
+        rawResponse.Provider = provider.ProviderName;
+        rawResponse.ResponseJson = SafeJson(engineResult.LastResponse?.RawResponse ?? new Dictionary<string, object>(), effective.ApiKey);
+        rawResponse.HttpStatusCode = engineResult.LastResponse?.HttpStatus ?? 200;
+        rawResponse.LatencyMs = engineResult.LastResponse?.LatencyMs ?? 0;
+        rawResponse.TokenUsageJson = engineResult.LastResponse?.TokenUsage != null
+            ? JsonSerializer.Serialize(engineResult.LastResponse.TokenUsage) : null;
+        await _db.SaveChangesAsync(ct);
+
+        var snapshot = await ToAgentRunSnapshotAsync(run, ct);
+        return new SendMessageResult(turn, sentMessage, assistantMessage, rawRequest, rawResponse, snapshot);
     }
 
     private async Task SaveCheckpointAsync(

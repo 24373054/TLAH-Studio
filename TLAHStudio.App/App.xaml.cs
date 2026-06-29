@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
+using TLAHStudio.Core.Services.AgentRuntime;
 using TLAHStudio.Data;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.App.Views;
@@ -109,6 +110,8 @@ public partial class App : Application
             services.AddScoped<IProviderStreamAdapter, ProviderStreamAdapter>();
             services.AddScoped<IToolExecutionScheduler, ToolExecutionScheduler>();
             services.AddScoped<IAgentRunEngine, AgentRunEngine>();
+            services.AddScoped<IAgentRunEngineV2, AgentRunEngineV2>();
+            services.AddScoped<IAgentEventSubscriptionService, AgentEventSubscriptionService>();
             services.AddScoped<ILlmService, LlmService>();
             services.AddScoped<IDebugService, DebugService>();
             services.AddScoped<IPrivacyService, PrivacyService>();
