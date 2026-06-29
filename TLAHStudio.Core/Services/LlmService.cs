@@ -36,7 +36,7 @@ public class LlmService : ILlmService
     private readonly IAgentContextManager _agentContextManager;
     private readonly IProjectMemoryService _projectMemory;
     private readonly IToolResultPersistenceService _toolResultPersistence;
-    private readonly IAgentRunEngineV2? _agentRunEngineV2;
+    private readonly IAgentRunEngineV2 _agentRunEngineV2;
 
     public LlmService(
         DbContext db,
@@ -108,7 +108,11 @@ public class LlmService : ILlmService
         _providerStreamAdapter = providerStreamAdapter ?? new ProviderStreamAdapter();
         _toolExecutionScheduler = toolExecutionScheduler ?? new ToolExecutionScheduler(_agentTools, _sandboxCommandService);
         _agentRunEngine = agentRunEngine ?? new AgentRunEngine();
-        _agentRunEngineV2 = agentRunEngineV2;
+        _agentRunEngineV2 = agentRunEngineV2 ?? new AgentRunEngineV2(
+            db, chatService, settingsService, httpClientFactory,
+            _sandboxCommandService, _agentTools, _toolPlatform, _agentEventStream,
+            _checkpointStore, _providerStreamAdapter, _toolExecutionScheduler,
+            _agentContextManager, _projectMemory, _toolResultPersistence);
     }
 
     /// <summary>
@@ -329,77 +333,71 @@ public class LlmService : ILlmService
             seq);
         await SaveCheckpointAsync(run, state, ct);
 
-        // M2.7.0: Delegate to V2 engine when available
-        if (_agentRunEngineV2 != null)
+        // M2.7.0: Agent loop owned by V2 engine (no fallback)
+        var runState = new AgentRunState
         {
-            var runState = new AgentRunState
+            RunId = run.Id, ChatId = chatId, TurnId = turn.Id,
+            Status = AgentRunStatuses.Running, MaxSteps = maxSteps,
+            UserRequest = userContent,
+            Messages = state.Messages.ToList(), SequenceNum = state.SequenceNum
+        };
+        var engineOptions = new AgentEngineOptions(
+            maxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
+            options.AutoApproveTools, options.ContextBudgetTokens,
+            options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
+            options.OutputStream);
+
+        var result = await _agentRunEngineV2.RunAsync(runState, engineOptions, ct: ct);
+
+        // Forward engine events to agent progress sink (compat with old loop)
+        if (options.Progress != null)
+        {
+            var snapshot = await ToAgentRunSnapshotAsync(run, ct);
+            foreach (var evt in result.Events)
             {
-                RunId = run.Id,
-                ChatId = chatId,
-                TurnId = turn.Id,
-                Status = AgentRunStatuses.Running,
-                MaxSteps = maxSteps,
-                UserRequest = userContent,
-                Messages = state.Messages.ToList(),
-                SequenceNum = state.SequenceNum
-            };
-            var engineOptions = new AgentEngineOptions(
-                maxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
-                options.AutoApproveTools, options.ContextBudgetTokens,
-                options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
-                options.OutputStream);
-
-            var result = await _agentRunEngineV2.RunAsync(runState, engineOptions, ct: ct);
-
-            // Sync state back to DB
-            run.CurrentStep = result.FinalState.CurrentStep;
-            run.Status = result.FinalState.Status;
-            run.ErrorMessage = result.FinalState.ErrorMessage;
-            run.UpdatedAt = DateTime.UtcNow;
-            if (result.FinalState.Status is AgentRunStatuses.Completed or AgentRunStatuses.Failed or AgentRunStatuses.Cancelled)
-                run.CompletedAt = DateTime.UtcNow;
-
-            // Persist assistant message if we have content
-            Message assistantMessage;
-            if (!string.IsNullOrWhiteSpace(result.AssistantContent))
-            {
-                assistantMessage = new Message
-                {
-                    ChatId = chatId,
-                    Role = "assistant",
-                    Content = result.AssistantContent,
-                    TurnId = turn.Id,
-                    SequenceNum = state.SequenceNum
-                };
-                _db.Set<Message>().Add(assistantMessage);
+                options.Progress.Report(new AgentProgressUpdate(
+                    evt.AgentRunId, evt.SequenceNumber, evt.EventType,
+                    evt.Severity, evt.Summary, evt.CreatedAt, snapshot,
+                    evt.AgentStepId, evt.ToolInvocationId, evt.DataJson));
             }
-            else
-            {
-                assistantMessage = new Message
-                {
-                    ChatId = chatId,
-                    Role = "assistant",
-                    Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
-                    TurnId = turn.Id,
-                    SequenceNum = state.SequenceNum
-                };
-                _db.Set<Message>().Add(assistantMessage);
-            }
-
-            var chatEntity = await _db.Set<Chat>().FirstAsync(c => c.Id == chatId, ct);
-            chatEntity.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync(ct);
-
-            return await BuildAgentResultFromEngineAsync(
-                run, turn, sentMessage, assistantMessage, result, ct);
         }
 
-        // Fallback: legacy engine
-        return await _agentRunEngine.ContinueAsync(
-            run,
-            _agentEventStream,
-            token => ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, token),
-            ct);
+        // Sync state back to DB
+        run.CurrentStep = result.FinalState.CurrentStep;
+        run.Status = result.FinalState.Status;
+        run.ErrorMessage = result.FinalState.ErrorMessage;
+        run.UpdatedAt = DateTime.UtcNow;
+        if (result.FinalState.Status is AgentRunStatuses.Completed or AgentRunStatuses.Failed or AgentRunStatuses.Cancelled)
+            run.CompletedAt = DateTime.UtcNow;
+
+        // Persist assistant message
+        Message assistantMessage;
+        if (!string.IsNullOrWhiteSpace(result.AssistantContent))
+        {
+            assistantMessage = new Message
+            {
+                ChatId = chatId, Role = "assistant", Content = result.AssistantContent,
+                TurnId = turn.Id, SequenceNum = state.SequenceNum
+            };
+            _db.Set<Message>().Add(assistantMessage);
+        }
+        else
+        {
+            assistantMessage = new Message
+            {
+                ChatId = chatId, Role = "assistant",
+                Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
+                TurnId = turn.Id, SequenceNum = state.SequenceNum
+            };
+            _db.Set<Message>().Add(assistantMessage);
+        }
+
+        var chatEntity = await _db.Set<Chat>().FirstAsync(c => c.Id == chatId, ct);
+        chatEntity.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return await BuildAgentResultFromEngineAsync(
+            run, turn, sentMessage, assistantMessage, result, ct);
     }
 
     public async Task<SendMessageResult> ResumeAgentTaskAsync(
@@ -440,75 +438,56 @@ public class LlmService : ILlmService
             new { run.CurrentStep, run.MaxSteps },
             ct: ct);
 
-        // M2.7.0: Delegate to V2 engine when available
-        if (_agentRunEngineV2 != null)
+        // M2.7.0: Agent loop owned by V2 engine (no fallback)
+        var runState = new AgentRunState
         {
-            var runState = new AgentRunState
+            RunId = run.Id, ChatId = run.ChatId, TurnId = run.TurnId,
+            Status = AgentRunStatuses.Running, CurrentStep = run.CurrentStep,
+            MaxSteps = run.MaxSteps, UserRequest = run.UserRequest,
+            Messages = state.Messages.ToList(), SequenceNum = state.SequenceNum
+        };
+        var engineOptions = new AgentEngineOptions(
+            run.MaxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
+            options.AutoApproveTools, options.ContextBudgetTokens,
+            options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
+            options.OutputStream);
+
+        var result = await _agentRunEngineV2.ResumeAsync(runState, engineOptions, ct: ct);
+
+        run.CurrentStep = result.FinalState.CurrentStep;
+        run.Status = result.FinalState.Status;
+        run.ErrorMessage = result.FinalState.ErrorMessage;
+        run.UpdatedAt = DateTime.UtcNow;
+        if (result.FinalState.Status is AgentRunStatuses.Completed or AgentRunStatuses.Failed or AgentRunStatuses.Cancelled)
+            run.CompletedAt = DateTime.UtcNow;
+
+        Message assistantMessage;
+        if (!string.IsNullOrWhiteSpace(result.AssistantContent))
+        {
+            assistantMessage = new Message
             {
-                RunId = run.Id,
-                ChatId = run.ChatId,
-                TurnId = run.TurnId,
-                Status = AgentRunStatuses.Running,
-                CurrentStep = run.CurrentStep,
-                MaxSteps = run.MaxSteps,
-                UserRequest = run.UserRequest,
-                Messages = state.Messages.ToList(),
-                SequenceNum = state.SequenceNum
+                ChatId = run.ChatId, Role = "assistant", Content = result.AssistantContent,
+                TurnId = turn.Id, SequenceNum = state.SequenceNum
             };
-            var engineOptions = new AgentEngineOptions(
-                run.MaxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
-                options.AutoApproveTools, options.ContextBudgetTokens,
-                options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
-                options.OutputStream);
-
-            var result = await _agentRunEngineV2.ResumeAsync(runState, engineOptions, ct: ct);
-
-            run.CurrentStep = result.FinalState.CurrentStep;
-            run.Status = result.FinalState.Status;
-            run.ErrorMessage = result.FinalState.ErrorMessage;
-            run.UpdatedAt = DateTime.UtcNow;
-            if (result.FinalState.Status is AgentRunStatuses.Completed or AgentRunStatuses.Failed or AgentRunStatuses.Cancelled)
-                run.CompletedAt = DateTime.UtcNow;
-
-            Message assistantMessage;
-            if (!string.IsNullOrWhiteSpace(result.AssistantContent))
+            _db.Set<Message>().Add(assistantMessage);
+        }
+        else
+        {
+            assistantMessage = new Message
             {
-                assistantMessage = new Message
-                {
-                    ChatId = run.ChatId,
-                    Role = "assistant",
-                    Content = result.AssistantContent,
-                    TurnId = turn.Id,
-                    SequenceNum = state.SequenceNum
-                };
-                _db.Set<Message>().Add(assistantMessage);
-            }
-            else
-            {
-                assistantMessage = new Message
-                {
-                    ChatId = run.ChatId,
-                    Role = "assistant",
-                    Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
-                    TurnId = turn.Id,
-                    SequenceNum = state.SequenceNum
-                };
-                _db.Set<Message>().Add(assistantMessage);
-            }
-
-            var chatEntity = await _db.Set<Chat>().FirstAsync(c => c.Id == run.ChatId, ct);
-            chatEntity.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync(ct);
-
-            return await BuildAgentResultFromEngineAsync(
-                run, turn, sentMessage, assistantMessage, result, ct);
+                ChatId = run.ChatId, Role = "assistant",
+                Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
+                TurnId = turn.Id, SequenceNum = state.SequenceNum
+            };
+            _db.Set<Message>().Add(assistantMessage);
         }
 
-        return await _agentRunEngine.ContinueAsync(
-            run,
-            _agentEventStream,
-            token => ContinueAgentRunInternalAsync(run, turn, sentMessage, state, options, token),
-            ct);
+        var chatEntity = await _db.Set<Chat>().FirstAsync(c => c.Id == run.ChatId, ct);
+        chatEntity.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return await BuildAgentResultFromEngineAsync(
+            run, turn, sentMessage, assistantMessage, result, ct);
     }
 
     public async Task<AgentRunSnapshot?> GetLatestAgentRunAsync(

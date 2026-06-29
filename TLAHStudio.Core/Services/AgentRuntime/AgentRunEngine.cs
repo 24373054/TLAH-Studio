@@ -302,6 +302,12 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 // Save the assistant tool-request message
                 var requestContent = FormatMultiToolRequestMessage(stepNumber, validToolCalls);
+                // Persist to DB (compat with old loop)
+                _db.Set<Models.Message>().Add(new Models.Message
+                {
+                    ChatId = state.ChatId, Role = "assistant", Content = requestContent,
+                    TurnId = state.TurnId, SequenceNum = state.SequenceNum++
+                });
                 state.Messages.Add(new MessagePayload("assistant", lastResponse.AssistantText,
                     ToolCalls: validToolCalls, ReasoningContent: lastResponse.ReasoningText));
                 assistantContent = requestContent;
@@ -335,6 +341,17 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     }
 
                     await _db.SaveChangesAsync(ct);
+
+                    // Emit ToolRequest events for each tool call
+                    foreach (var item in batchItems)
+                    {
+                        await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                            new AgentRun { Id = state.RunId }, AgentEventTypes.ToolRequest,
+                            $"Model requested {item.ToolCall.Name}.",
+                            new { item.ToolCall.Name, safetyLevel = item.Safety.Level },
+                            step.Id, item.Invocation.Id,
+                            Severity: AgentEventSeverities.Info), events, ct);
+                    }
 
                     foreach (var item in batchItems)
                     {
@@ -592,6 +609,28 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         item.Invocation.CompletedAt = DateTime.UtcNow;
         step.OutputJson = item.Invocation.ResultJson;
         step.CompletedAt = DateTime.UtcNow;
+
+        // Persist tool result message to DB (compat with old loop behavior)
+        _db.Set<Models.Message>().Add(new Models.Message
+        {
+            ChatId = state.ChatId, Role = "tool",
+            Content = contextResult.Output,
+            TurnId = state.TurnId, SequenceNum = state.SequenceNum++
+        });
+
+        // Persist artifacts
+        if (contextResult.Artifacts != null)
+        {
+            foreach (var artifact in contextResult.Artifacts)
+            {
+                _db.Set<AgentArtifact>().Add(new AgentArtifact
+                {
+                    AgentRunId = state.RunId, RelativePath = artifact.RelativePath,
+                    ContentType = artifact.ContentType, SizeBytes = artifact.SizeBytes,
+                    Sha256 = artifact.Sha256
+                });
+            }
+        }
 
         state.Messages.Add(new MessagePayload("tool", contextResult.Output,
             item.Invocation.ProviderCallId));
