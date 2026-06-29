@@ -3,24 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="TLAH Studio Windows release page with download, hash, and signature verification.">
-  <title>TLAH Studio for Windows</title>
+  <meta name="description" content="TLAH Studio Windows native agent workspace download, release verification, and product overview.">
+  <title>TLAH Studio | Windows Agent Workspace</title>
   <link rel="icon" href="/logo.png" type="image/png">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="TLAH Studio release page">
+    <a class="brand" href="/" aria-label="TLAH Studio">
       <img src="/logo.png" alt="" class="brand-mark">
       <span class="brand-copy">
         <strong>TLAH Studio</strong>
-        <span>Windows Release</span>
+        <span>Windows Agent Workspace</span>
       </span>
     </a>
     <nav class="top-nav" aria-label="Page navigation">
-      <a href="#release">Latest</a>
-      <a href="#verify">Verify</a>
-      <a href="#product">Product</a>
+      <a href="#download">下载</a>
+      <a href="#capabilities">能力</a>
+      <a href="#verify">验证</a>
+      <a href="#release">版本</a>
     </nav>
   </header>
 
@@ -28,59 +29,145 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
         <p class="eyebrow">Native Windows Client</p>
-        <h1 id="hero-title">TLAH Studio for Windows</h1>
+        <h1 id="hero-title">TLAH Studio</h1>
         <p class="hero-text">
-          面向 Windows 11 的原生客户端，将网页版对话、Prompt 检查、供应商配置和本地记录管理整合到清晰、稳定的桌面体验中。
+          一个面向 Windows 的智能体工作台。把对话、Prompt 调试、工具执行、权限审批、代码工作区和本地数据管理放进清晰可控的桌面体验。
         </p>
         <div class="hero-actions">
-          <a class="button primary" id="heroDownload" href="#release">
+          <a class="button primary" id="heroDownload" href="#download">
             <span data-icon="download"></span>
-            Download
+            下载 Windows 版本
           </a>
           <a class="button secondary" href="#verify">
             <span data-icon="shield"></span>
-            Verify release
+            查看验证方式
           </a>
         </div>
+        <dl class="hero-facts" aria-label="Product facts">
+          <div>
+            <dt>Runtime</dt>
+            <dd>Agent event stream</dd>
+          </div>
+          <div>
+            <dt>Tools</dt>
+            <dd>Workspace code tools</dd>
+          </div>
+          <div>
+            <dt>Policy</dt>
+            <dd>Scoped permissions</dd>
+          </div>
+        </dl>
       </div>
-      <aside class="release-card" id="release" aria-labelledby="release-title">
-        <div class="card-heading">
+
+      <aside class="release-panel" id="download" aria-labelledby="download-title">
+        <div class="release-head">
           <span class="icon-box" data-icon="package"></span>
           <div>
-            <p class="label">Latest Stable</p>
-            <h2 id="release-title">Loading release</h2>
+            <p class="label">Latest stable</p>
+            <h2 id="download-title">读取版本中</h2>
           </div>
         </div>
         <dl class="release-meta">
           <div>
-            <dt>Platform</dt>
+            <dt>平台</dt>
             <dd id="platform">Windows x64</dd>
           </div>
           <div>
-            <dt>Package</dt>
-            <dd id="packageSize">Checking</dd>
+            <dt>大小</dt>
+            <dd id="packageSize">检查中</dd>
           </div>
           <div>
-            <dt>Updated</dt>
-            <dd id="updatedAt">Checking</dd>
+            <dt>更新时间</dt>
+            <dd id="updatedAt">检查中</dd>
           </div>
         </dl>
         <a class="button primary wide" id="downloadButton" href="#" download>
           <span data-icon="download"></span>
-          Download latest version
+          下载最新版
         </a>
-        <div class="secondary-links">
-          <a id="manifestLink" href="/files/latest.json">latest.json</a>
-          <a id="manifestSigLink" href="/files/latest.json.sig">latest.json.sig</a>
+        <div class="release-links">
+          <a id="manifestLink" href="/tlah/windows/latest.json">latest.json</a>
+          <a id="manifestSigLink" href="/tlah/windows/latest.json.sig">latest.json.sig</a>
         </div>
       </aside>
     </section>
 
-    <section class="section integrity" aria-labelledby="integrity-title">
+    <section class="product-strip" aria-label="Product surface">
+      <div class="surface-card">
+        <div class="surface-title">
+          <span data-icon="terminal"></span>
+          <strong>Agent run</strong>
+          <span id="surfaceVersion">stable</span>
+        </div>
+        <div class="timeline">
+          <div>
+            <span class="dot"></span>
+            <p>Plan created</p>
+          </div>
+          <div>
+            <span class="dot"></span>
+            <p>Permission evaluated</p>
+          </div>
+          <div>
+            <span class="dot"></span>
+            <p>Tool result persisted</p>
+          </div>
+        </div>
+      </div>
+      <div class="surface-card">
+        <div class="surface-title">
+          <span data-icon="code"></span>
+          <strong>Workspace edit</strong>
+          <span>protected</span>
+        </div>
+        <pre><code>read -> diff -> apply_patch -> rollback</code></pre>
+      </div>
+      <div class="surface-card">
+        <div class="surface-title">
+          <span data-icon="lock"></span>
+          <strong>Policy</strong>
+          <span>scoped</span>
+        </div>
+        <p>按工具、路径、域名和项目范围审批。</p>
+      </div>
+    </section>
+
+    <section class="section" id="capabilities" aria-labelledby="capabilities-title">
       <div class="section-heading">
-        <p class="eyebrow">Release Integrity</p>
-        <h2 id="integrity-title">下载前后都可核验</h2>
-        <p>页面读取服务器当前发布清单，并展示安装包哈希、清单签名和 Authenticode 信息。</p>
+        <p class="eyebrow">Capabilities</p>
+        <h2 id="capabilities-title">为长链路工作设计</h2>
+        <p>当前版本重点强化执行可靠性、权限边界和代码工作区工具，让桌面端不只是聊天窗口，而是可审计、可恢复的工作台。</p>
+      </div>
+
+      <div class="feature-grid">
+        <article>
+          <span class="feature-icon" data-icon="layers"></span>
+          <h3>事件流运行时</h3>
+          <p>模型调用、工具请求、审批、结果、错误和恢复都进入统一事件链路，方便追踪复杂任务。</p>
+        </article>
+        <article>
+          <span class="feature-icon" data-icon="code"></span>
+          <h3>代码工作区工具</h3>
+          <p>支持 read、grep、glob、edit、multi_edit、diff、apply_patch、rollback 与诊断。</p>
+        </article>
+        <article>
+          <span class="feature-icon" data-icon="shield"></span>
+          <h3>权限规则</h3>
+          <p>按本次、项目、全局和拒绝策略审批工具、路径、MCP 工具和网络域名。</p>
+        </article>
+        <article>
+          <span class="feature-icon" data-icon="file-check"></span>
+          <h3>文件可靠性</h3>
+          <p>保护编码、BOM、换行与文件哈希；修改前可预览，修改后可回滚。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section verify" id="verify" aria-labelledby="verify-title">
+      <div class="section-heading">
+        <p class="eyebrow">Verification</p>
+        <h2 id="verify-title">下载后可独立验证</h2>
+        <p>安装包、更新清单和签名文件均公开提供。下载完成后可在 PowerShell 中检查哈希和 Authenticode 信息。</p>
       </div>
 
       <div class="integrity-grid">
@@ -92,35 +179,27 @@
           <p class="mono hash" id="sha256">Loading</p>
           <button class="copy-button" data-copy-target="sha256">
             <span data-icon="copy"></span>
-            Copy hash
+            复制哈希
           </button>
         </article>
 
         <article class="info-card">
           <div class="info-title">
             <span class="icon-box small" data-icon="badge"></span>
-            <h3>Signer</h3>
+            <h3>签名证书</h3>
           </div>
-          <p id="signerSubject">Self-signed certificate</p>
+          <p id="signerSubject">Beijing Ke Entropy Technology certificate</p>
           <p class="mono small-text" id="signerThumbprint">Loading</p>
         </article>
 
         <article class="info-card">
           <div class="info-title">
             <span class="icon-box small" data-icon="file-check"></span>
-            <h3>Manifest signature</h3>
+            <h3>清单签名</h3>
           </div>
-          <p>客户端会验证 <span class="mono">latest.json.sig</span>，防止更新清单被篡改。</p>
-          <a class="text-link" href="/files/latest.json.sig">Download signature</a>
+          <p>客户端验证 <span class="mono">latest.json.sig</span>，用于识别更新清单是否被篡改。</p>
+          <a class="text-link" id="signatureTextLink" href="/tlah/windows/latest.json.sig">下载签名文件</a>
         </article>
-      </div>
-    </section>
-
-    <section class="section verify" id="verify" aria-labelledby="verify-title">
-      <div class="section-heading">
-        <p class="eyebrow">Verification</p>
-        <h2 id="verify-title">在 Windows 上验证安装包</h2>
-        <p>下载完成后，可在 PowerShell 中运行以下命令对照页面哈希和签名信息。</p>
       </div>
 
       <div class="steps">
@@ -128,60 +207,44 @@
           <span class="step-number">01</span>
           <div>
             <h3>检查 SHA-256</h3>
-            <pre><code id="hashCommand">Get-FileHash .\TLAHStudioSetup-1.0.7.exe -Algorithm SHA256</code></pre>
+            <pre><code id="hashCommand">Get-FileHash .\TLAHStudioSetup.exe -Algorithm SHA256</code></pre>
           </div>
         </article>
         <article class="step">
           <span class="step-number">02</span>
           <div>
             <h3>查看 Authenticode 签名</h3>
-            <pre><code id="signatureCommand">Get-AuthenticodeSignature .\TLAHStudioSetup-1.0.7.exe | Format-List</code></pre>
+            <pre><code id="signatureCommand">Get-AuthenticodeSignature .\TLAHStudioSetup.exe | Format-List</code></pre>
           </div>
         </article>
         <article class="step">
           <span class="step-number">03</span>
           <div>
-            <h3>对照清单</h3>
+            <h3>读取发布清单</h3>
             <pre><code>Invoke-RestMethod https://download.matrixlabs.cn/tlah/windows/latest.json</code></pre>
           </div>
         </article>
       </div>
     </section>
 
-    <section class="section product" id="product" aria-labelledby="product-title">
+    <section class="section release-notes" id="release" aria-labelledby="release-title">
       <div class="section-heading">
-        <p class="eyebrow">Product</p>
-        <h2 id="product-title">从网页工作流到桌面工作台</h2>
+        <p class="eyebrow">Release</p>
+        <h2 id="release-title">当前版本说明</h2>
       </div>
-
-      <div class="feature-grid">
-        <article>
-          <span data-icon="monitor"></span>
-          <h3>Windows 原生体验</h3>
-          <p>适配 Windows 11 桌面环境，提供更清晰的窗口、输入、主题和更新流程。</p>
-        </article>
-        <article>
-          <span data-icon="search"></span>
-          <h3>Raw API Inspector</h3>
-          <p>快速查看请求、响应、上下文和 token 信息，帮助定位每一次对话的关键细节。</p>
-        </article>
-        <article>
-          <span data-icon="database"></span>
-          <h3>本地对话管理</h3>
-          <p>对话历史保留在本地数据层，可创建、切换、删除不同会话。</p>
-        </article>
-        <article>
-          <span data-icon="settings"></span>
-          <h3>灵活配置</h3>
-          <p>支持供应商、模型、Prompt、温度、上下文和背景主题等设置。</p>
-        </article>
-      </div>
+      <article class="notes-card">
+        <pre><code id="releaseNotes">Loading release notes...</code></pre>
+      </article>
     </section>
   </main>
 
   <footer class="site-footer">
     <img src="/brand-logo.png" alt="Beijing Ke Entropy Technology Co., Ltd." class="footer-logo">
-    <p>Copyright 2026 Beijing Ke Entropy Technology Co., Ltd.</p>
+    <p>Beijing Ke Entropy Technology Co., Ltd.</p>
+    <p class="footer-links">
+      <a href="/tlah/windows/latest.json">Release manifest</a>
+      <a href="/healthz">Service health</a>
+    </p>
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

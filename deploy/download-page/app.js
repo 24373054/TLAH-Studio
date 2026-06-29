@@ -6,10 +6,10 @@ const ICONS = {
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
   badge: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.9 7.7a2 2 0 0 1 .9-2.4l6.2-3a2 2 0 0 1 1.8 0l6.2 3a2 2 0 0 1 .9 2.4L17.5 14a6 6 0 0 1-11 0z"/><path d="m9 12 2 2 4-5"/></svg>',
   'file-check': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/></svg>',
-  monitor: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>',
-  search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
-  database: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.2 2h-.4a2 2 0 0 0-2 1.7l-.1.7a2 2 0 0 1-3 1.3l-.6-.4a2 2 0 0 0-2.6.3l-.3.3a2 2 0 0 0-.3 2.6l.4.6a2 2 0 0 1-1.3 3l-.7.1a2 2 0 0 0-1.7 2v.4a2 2 0 0 0 1.7 2l.7.1a2 2 0 0 1 1.3 3l-.4.6a2 2 0 0 0 .3 2.6l.3.3a2 2 0 0 0 2.6.3l.6-.4a2 2 0 0 1 3 1.3l.1.7a2 2 0 0 0 2 1.7h.4a2 2 0 0 0 2-1.7l.1-.7a2 2 0 0 1 3-1.3l.6.4a2 2 0 0 0 2.6-.3l.3-.3a2 2 0 0 0 .3-2.6l-.4-.6a2 2 0 0 1 1.3-3l.7-.1a2 2 0 0 0 1.7-2v-.4a2 2 0 0 0-1.7-2l-.7-.1a2 2 0 0 1-1.3-3l.4-.6a2 2 0 0 0-.3-2.6l-.3-.3a2 2 0 0 0-2.6-.3l-.6.4a2 2 0 0 1-3-1.3l-.1-.7a2 2 0 0 0-2-1.7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+  terminal: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>',
+  code: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  layers: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>'
 };
 
 document.querySelectorAll('[data-icon]').forEach((node) => {
@@ -36,7 +36,12 @@ function filenameFromUrl(url) {
 
 async function copyText(value) {
   await navigator.clipboard.writeText(value);
-  showToast('Copied');
+  showToast('已复制');
+}
+
+function setText(id, value) {
+  const node = $(id);
+  if (node) node.textContent = value;
 }
 
 async function loadRelease() {
@@ -45,25 +50,31 @@ async function loadRelease() {
   const data = await response.json();
   const installerName = data.installerFile || filenameFromUrl(data.installerUrl);
   const downloadUrl = data.downloadUrl || `/files/${installerName}`;
+  const manifestUrl = data.manifestUrl || '/tlah/windows/latest.json';
+  const signatureUrl = data.signatureUrl || '/tlah/windows/latest.json.sig';
 
-  $('release-title').textContent = `Version ${data.version}`;
-  $('platform').textContent = `${data.platform || 'windows'} ${data.arch || 'x64'}`.replace('windows', 'Windows');
-  $('packageSize').textContent = data.sizeLabel || 'Available';
-  $('updatedAt').textContent = data.updatedAtLabel || 'Current';
-  $('sha256').textContent = data.sha256 || 'Unavailable';
-  $('signerSubject').textContent = data.signer?.subject || 'Beijing Ke Entropy Technology certificate';
-  $('signerThumbprint').textContent = data.signer?.thumbprint || 'F6DC173C746447A05FF83B9F7162121344CC09F0';
-  $('hashCommand').textContent = `Get-FileHash .\\${installerName} -Algorithm SHA256`;
-  $('signatureCommand').textContent = `Get-AuthenticodeSignature .\\${installerName} | Format-List`;
+  setText('download-title', `Version ${data.version}`);
+  setText('platform', `${data.platform || 'windows'} ${data.arch || 'x64'}`.replace('windows', 'Windows'));
+  setText('packageSize', data.sizeLabel || 'Available');
+  setText('updatedAt', data.updatedAtLabel || 'Current');
+  setText('sha256', data.sha256 || 'Unavailable');
+  setText('signerSubject', data.signer?.subject || 'Beijing Ke Entropy Technology certificate');
+  setText('signerThumbprint', data.signer?.thumbprint || 'F6DC173C746447A05FF83B9F7162121344CC09F0');
+  setText('hashCommand', `Get-FileHash .\\${installerName} -Algorithm SHA256`);
+  setText('signatureCommand', `Get-AuthenticodeSignature .\\${installerName} | Format-List`);
+  setText('releaseNotes', data.releaseNotes || 'No release notes available.');
+  setText('surfaceVersion', `v${data.version}`);
 
   for (const id of ['downloadButton', 'heroDownload']) {
     const link = $(id);
+    if (!link) continue;
     link.href = downloadUrl;
     link.setAttribute('download', installerName);
   }
 
-  $('manifestLink').href = data.manifestUrl || '/files/latest.json';
-  $('manifestSigLink').href = data.signatureUrl || '/files/latest.json.sig';
+  $('manifestLink').href = manifestUrl;
+  $('manifestSigLink').href = signatureUrl;
+  $('signatureTextLink').href = signatureUrl;
 }
 
 document.addEventListener('click', async (event) => {
@@ -75,13 +86,13 @@ document.addEventListener('click', async (event) => {
   try {
     await copyText(target.textContent.trim());
   } catch {
-    showToast('Copy failed');
+    showToast('复制失败');
   }
 });
 
 loadRelease().catch((error) => {
   console.error(error);
-  $('release-title').textContent = 'Release unavailable';
-  $('packageSize').textContent = 'Try again later';
-  showToast('Release information unavailable');
+  setText('download-title', '版本信息不可用');
+  setText('packageSize', '请稍后重试');
+  showToast('无法读取发布信息');
 });
