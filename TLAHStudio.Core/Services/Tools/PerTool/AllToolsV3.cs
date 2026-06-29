@@ -28,10 +28,10 @@ public class FileListToolV3 : AgentToolV3Base
         return new AgentToolResult(result.ExitCode == 0, SecretRedactor.RedactText(result.StandardOutput), result.StandardError);
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var args = JsonSerializer.Deserialize<Dictionary<string, string>>(argumentsJson);
-        return ToolEffectPlan.ReadOnly([args?.GetValueOrDefault("path", ".") ?? "."]);
+        return Task.FromResult(ToolEffectPlan.ReadOnly([args?.GetValueOrDefault("path", ".") ?? "."]));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
 }
@@ -56,11 +56,11 @@ public class FileReadToolV3 : AgentToolV3Base
         return new AgentToolResult(true, SecretRedactor.RedactText(content));
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var args = JsonSerializer.Deserialize<Dictionary<string, string>>(argumentsJson);
         var root = sandbox.GetSandboxRoot(chatId);
-        return ToolEffectPlan.ReadOnly([Path.Combine(root, args?.GetValueOrDefault("path", "") ?? "")]);
+        return Task.FromResult(ToolEffectPlan.ReadOnly([Path.Combine(root, args?.GetValueOrDefault("path", "") ?? "")]));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
 }
@@ -85,19 +85,19 @@ public class FileWriteToolV3 : AgentToolV3Base
         return new AgentToolResult(true, $"Written: {path} ({content.Length} chars)");
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var path = doc.RootElement.GetProperty("path").GetString() ?? "";
         var root = sandbox.GetSandboxRoot(chatId);
         var fullPath = Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar));
-        return ToolEffectPlan.Write([fullPath], [fullPath]);
+        return Task.FromResult(ToolEffectPlan.Write([fullPath], [fullPath]));
     }
-    public override async Task<ToolRollbackPlan?> CreateRollbackPlanAsync(string argumentsJson, AgentToolResult result, CancellationToken ct = default)
+    public override Task<ToolRollbackPlan?> CreateRollbackPlanAsync(string argumentsJson, AgentToolResult result, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var path = doc.RootElement.GetProperty("path").GetString() ?? "";
-        return new ToolRollbackPlan(true, "Restore from backup or delete the file.", $"del \"{path}\"", [path]);
+        return Task.FromResult<ToolRollbackPlan?>(new ToolRollbackPlan(true, "Restore from backup or delete the file.", $"del \"{path}\"", [path]));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.All;
 }
@@ -123,24 +123,24 @@ public class TerminalExecToolV3 : AgentToolV3Base
         return new AgentToolResult(!isFailure, SecretRedactor.RedactText(result.StandardOutput), result.StandardError);
     }
 
-    public override async Task<ToolSafetyClassification> ClassifySafetyAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolSafetyClassification> ClassifySafetyAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var command = doc.RootElement.GetProperty("command").GetString() ?? "";
         var isDestructive = CommandSemantics.IsDestructive(command);
         var isReadOnly = CommandSemantics.ReadOnlyCommands.Any(rc => command.ToLowerInvariant().Contains(rc.ToLowerInvariant()));
-        return new ToolSafetyClassification(
+        return Task.FromResult(new ToolSafetyClassification(
             isDestructive ? "high" : isReadOnly ? "low" : "medium",
             "command", isReadOnly, isDestructive, isDestructive, false,
             isDestructive ? $"Destructive command: {command[..Math.Min(command.Length, 80)]}" : $"Execute: {command[..Math.Min(command.Length, 80)]}",
-            isDestructive ? "This command can modify or destroy data." : null, null);
+            isDestructive ? "This command can modify or destroy data." : null, null));
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var command = doc.RootElement.GetProperty("command").GetString() ?? "";
-        return ToolEffectPlan.Command([command], CommandSemantics.IsDestructive(command) ? "high" : "medium");
+        return Task.FromResult(ToolEffectPlan.Command([command], CommandSemantics.IsDestructive(command) ? "high" : "medium"));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.All;
 }
@@ -165,13 +165,13 @@ public class GitToolV3 : AgentToolV3Base
         return new AgentToolResult(!isFailure, SecretRedactor.RedactText(result.StandardOutput), result.StandardError);
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var cmd = doc.RootElement.GetProperty("command").GetString() ?? "";
         var isDestructive = cmd.Contains("push") || cmd.Contains("reset") || cmd.Contains("clean") || cmd.Contains("rm");
-        return new ToolEffectPlan([], [],
-            [], [$"git {cmd}"], [], [], isDestructive ? "high" : "medium", isDestructive, !isDestructive);
+        return Task.FromResult(new ToolEffectPlan([], [],
+            [], [$"git {cmd}"], [], [], isDestructive ? "high" : "medium", isDestructive, !isDestructive));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.All;
 }
@@ -202,12 +202,12 @@ public class HttpRequestToolV3 : AgentToolV3Base
         return new AgentToolResult(response.IsSuccessStatusCode, body[..Math.Min(body.Length, 8000)]);
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var url = doc.RootElement.GetProperty("url").GetString() ?? "";
         var uri = new Uri(url);
-        return ToolEffectPlan.Network([uri.Host]);
+        return Task.FromResult(ToolEffectPlan.Network([uri.Host]));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.BeforeUse;
 }
@@ -236,8 +236,8 @@ public class WebSearchToolV3 : AgentToolV3Base
         return new AgentToolResult(true, response[..Math.Min(response.Length, 6000)]);
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
-        => ToolEffectPlan.Network(["html.duckduckgo.com"], "low");
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+        => Task.FromResult(ToolEffectPlan.Network(["html.duckduckgo.com"], "low"));
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
 }
 
@@ -265,11 +265,11 @@ public class BrowserReadToolV3 : AgentToolV3Base
         return new AgentToolResult(true, text[..Math.Min(text.Length, 8000)]);
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var url = doc.RootElement.GetProperty("url").GetString() ?? "";
-        return ToolEffectPlan.Network([new Uri(url).Host]);
+        return Task.FromResult(ToolEffectPlan.Network([new Uri(url).Host]));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
 
@@ -301,8 +301,8 @@ public class McpListToolsToolV3 : AgentToolV3Base
         return new AgentToolResult(true, $"MCP tools:\n{output}");
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
-        => ToolEffectPlan.ReadOnly(["[MCP server connection]"]);
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+        => Task.FromResult(ToolEffectPlan.ReadOnly(["[MCP server connection]"]));
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
 }
 
@@ -325,12 +325,12 @@ public class McpCallToolV3 : AgentToolV3Base
         return new AgentToolResult(true, SecretRedactor.RedactText(result));
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var server = doc.RootElement.GetProperty("server").GetString() ?? "";
         var tool = doc.RootElement.GetProperty("tool").GetString() ?? "";
-        return new ToolEffectPlan([], [], [$"{server}/{tool}"], [], [], [], "medium", true, false);
+        return Task.FromResult(new ToolEffectPlan([], [], [$"{server}/{tool}"], [], [], [], "medium", true, false));
     }
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.All;
 }

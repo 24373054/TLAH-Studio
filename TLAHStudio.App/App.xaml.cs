@@ -139,7 +139,6 @@ public partial class App : Application
             services.AddScoped<IFileChangeDetector, FileChangeDetector>();
 
             // M2.12.0: MCP & Plugins & Skills
-            services.AddScoped<IMcpClientService, McpClientService>();
             services.AddScoped<IMcpConnectionManager, McpConnectionManager>();
             services.AddScoped<IMcpReconnectPolicy, McpReconnectPolicy>();
             services.AddScoped<IMcpAuthService, McpAuthService>();

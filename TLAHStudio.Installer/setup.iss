@@ -1,8 +1,8 @@
-; TLAH Studio 鈥?Inno Setup Installer Script
+; TLAH Studio - Inno Setup Installer Script
 ; Supports: manual install (GUI wizard) and silent update (/VERYSILENT /NORESTART)
 
 #define MyAppName "TLAH Studio"
-#define MyAppVersion "2.6.0"
+#define MyAppVersion "3.0.0"
 #define MyAppPublisher "KeEntropy Technology"
 #define MyAppExeName "TLAHStudio.App.exe"
 #define MyAppUpdaterName "TLAHStudio.Updater.exe"
@@ -75,7 +75,7 @@ Filename: "taskkill"; Parameters: "/f /im {#MyAppExeName}"; Flags: runhidden
 Filename: "taskkill"; Parameters: "/f /im {#MyAppUpdaterName}"; Flags: runhidden
 
 [Code]
-// 鈹€鈹€ Create data directories 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// Create data directories and stop running processes before file copy.
 procedure KillProcessByName(ImageName: String);
 var
   ResultCode: Integer;
@@ -86,7 +86,6 @@ function HasCommandLineSwitch(SwitchName: String): Boolean;
 begin
   Result := Pos('/' + UpperCase(SwitchName), UpperCase(GetCmdTail)) > 0;
 end;
-
 function ShouldLaunchAfterInstall(): Boolean;
 begin
   Result := not HasCommandLineSwitch('NOLAUNCH');

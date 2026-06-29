@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.AgentRuntime;
 
 namespace TLAHStudio.Core.Services;
 
@@ -63,11 +64,13 @@ public sealed class AgentEventStream : IAgentEventStream
 
     private static readonly AsyncLocal<EventBuffer?> CurrentBuffer = new();
     private readonly DbContext _db;
+    private readonly IAgentEventSubscriptionService? _subscriptions;
     private AgentEventStreamMetrics _lastMetrics = AgentEventStreamMetrics.Empty;
 
-    public AgentEventStream(DbContext db)
+    public AgentEventStream(DbContext db, IAgentEventSubscriptionService? subscriptions = null)
     {
         _db = db;
+        _subscriptions = subscriptions;
     }
 
     public IDisposable BeginRun(AgentRun run)
@@ -116,11 +119,13 @@ public sealed class AgentEventStream : IAgentEventStream
         {
             buffer.Pending.Add(agentEvent);
             buffer.AppendedCount++;
+            _subscriptions?.Publish(request.Run.Id, agentEvent);
             return agentEvent;
         }
 
         _db.Set<AgentEvent>().Add(agentEvent);
         await _db.SaveChangesAsync(ct);
+        _subscriptions?.Publish(request.Run.Id, agentEvent);
         return agentEvent;
     }
 
@@ -263,7 +268,7 @@ public sealed class ProviderStreamAdapter : IProviderStreamAdapter
     }
 }
 
-public sealed record ToolExecutionPlanItem(string ToolName, string ArgumentsJson);
+public sealed record ToolExecutionPlanItem(string ToolName, string ArgumentsJson, string? ToolCallId = null);
 
 public sealed record ToolExecutionBatch(
     IReadOnlyList<ToolExecutionPlanItem> Items,

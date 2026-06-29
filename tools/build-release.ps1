@@ -51,8 +51,10 @@ $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repo
 try {
     $appProject = ".\TLAHStudio.App\TLAHStudio.App.csproj"
+    $appManifest = ".\TLAHStudio.App\app.manifest"
     $appSettings = ".\TLAHStudio.App\appsettings.json"
     $updaterProject = ".\TLAHStudio.Updater\TLAHStudio.Updater.csproj"
+    $updaterManifest = ".\TLAHStudio.Updater\app.manifest"
     $coreProject = ".\TLAHStudio.Core\TLAHStudio.Core.csproj"
     $dataProject = ".\TLAHStudio.Data\TLAHStudio.Data.csproj"
     $setupScript = ".\TLAHStudio.Installer\setup.iss"
@@ -81,10 +83,20 @@ try {
         $xml.Save((Resolve-Path -LiteralPath $Path).Path)
     }
 
+    function Set-ManifestIdentityVersion {
+        param([string]$Path, [string]$Version)
+
+        $manifest = Get-Content -LiteralPath $Path -Raw
+        $manifest = $manifest -replace '(<assemblyIdentity\b[^>]*\bversion=")[^"]+(")', "`${1}$Version.0`${2}"
+        Set-Content -LiteralPath $Path -Value ($manifest.TrimEnd() + [Environment]::NewLine) -Encoding UTF8 -NoNewline
+    }
+
     Set-XmlVersion $appProject $Version
     Set-XmlVersion $updaterProject $Version
     Set-XmlVersion $coreProject $Version
     Set-XmlVersion $dataProject $Version
+    Set-ManifestIdentityVersion $appManifest $Version
+    Set-ManifestIdentityVersion $updaterManifest $Version
 
     $appSettingsInfo = Get-Content -LiteralPath $appSettings -Raw | ConvertFrom-Json
     if ($appSettingsInfo.App) {
@@ -94,7 +106,7 @@ try {
 
     $setup = Get-Content -LiteralPath $setupScript -Raw
     $setup = $setup -replace '#define MyAppVersion ".+?"', "#define MyAppVersion `"$Version`""
-    Set-Content -LiteralPath $setupScript -Value $setup -Encoding UTF8
+    Set-Content -LiteralPath $setupScript -Value ($setup.TrimEnd() + [Environment]::NewLine) -Encoding UTF8 -NoNewline
 
     $versionInfo = Get-Content -LiteralPath $versionJson -Raw | ConvertFrom-Json
     $versionInfo.version = $Version

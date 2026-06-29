@@ -75,11 +75,23 @@ public class AgentRunEngineV2Tests : IDisposable
 
     // ── Event subscription service tests ────────────────────
 
-    [Fact(Skip = "SQLite concurrency limitation with fire-and-forget replay")]
+    [Fact]
     public async Task SubscriptionService_ReplaysHistory()
     {
         var svc = new AgentEventSubscriptionService(_db);
         var runId = Guid.NewGuid();
+        var chat = new Chat { Title = "event replay" };
+        var turn = new Turn { ChatId = chat.Id };
+        _db.Set<Chat>().Add(chat);
+        _db.Set<Turn>().Add(turn);
+        _db.Set<AgentRun>().Add(new AgentRun
+        {
+            Id = runId,
+            ChatId = chat.Id,
+            TurnId = turn.Id,
+            Status = AgentRunStatuses.Running,
+            UserRequest = "test"
+        });
 
         // Create historical events in DB
         _db.Set<AgentEvent>().Add(new AgentEvent
@@ -101,21 +113,10 @@ public class AgentRunEngineV2Tests : IDisposable
         var reader = svc.Subscribe(runId);
         var events = new List<AgentEvent>();
 
-        // Read events with timeout
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!cts.Token.IsCancellationRequested)
-        {
-            if (await reader.WaitToReadAsync(cts.Token))
-            {
-                while (reader.TryRead(out var evt))
-                    events.Add(evt);
-            }
-            // Stop when we have both historical events
-            if (events.Count >= 2) break;
-            await Task.Delay(50, cts.Token);
-        }
+        while (reader.TryRead(out var evt))
+            events.Add(evt);
 
-        Assert.NotEmpty(events);
+        Assert.Equal(2, events.Count);
         Assert.Contains(events, e => e.EventType == AgentEventTypes.RunStarted);
         Assert.Contains(events, e => e.EventType == AgentEventTypes.ModelRequest);
     }
@@ -126,6 +127,7 @@ public class AgentRunEngineV2Tests : IDisposable
         var svc = new AgentEventSubscriptionService(_db);
         var runId = Guid.NewGuid();
         var reader = svc.Subscribe(runId);
+        var secondReader = svc.Subscribe(runId);
 
         var evt = new AgentEvent
         {
@@ -140,9 +142,12 @@ public class AgentRunEngineV2Tests : IDisposable
         Assert.True(reader.TryRead(out var received));
         Assert.Equal("test_event", received.EventType);
         Assert.Equal("Live event", received.Summary);
+        Assert.True(secondReader.TryRead(out var secondReceived));
+        Assert.Equal("test_event", secondReceived.EventType);
 
         svc.Complete(runId);
-        Assert.False(reader.TryRead(out _)); // Channel should be complete
+        Assert.False(reader.TryRead(out _));
+        Assert.False(secondReader.TryRead(out _));
     }
 
     [Fact]
@@ -151,7 +156,7 @@ public class AgentRunEngineV2Tests : IDisposable
         var svc = new AgentEventSubscriptionService(_db);
         var reader = svc.Subscribe(Guid.NewGuid());
 
-        // Channel should complete quickly (no historical events, no live events)
+        // No historical or live events are available immediately.
         Assert.False(reader.TryRead(out _));
     }
 

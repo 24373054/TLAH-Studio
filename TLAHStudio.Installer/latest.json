@@ -1,1 +1,14 @@
-{  "version": "3.0.0",  "channel": "stable",  "platform": "windows",  "arch": "x64",  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.0.0.exe",  "sha256": "d970065909fc37715bf2cdeeb7977f8db7b3b222d41929af68125d852bcd7de0",  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",  "releaseNotes": "Permission System v2 and Workspace Code Reliability release.\n\nHighlights:\n- Added rule-based tool permissions for allow once, project allow, global allow, and always deny.\n- Permission rules now support tool names and patterns, MCP tools, path scopes, and network domain scopes.\n- Approval dialogs summarize intended reads, writes, network access, and safety risk before execution.\n- Workspace code tools now protect encoding, BOM, newline style, and expected file hashes.\n- Added conflict detection, patch preview, file snapshots, rollback previews, and one-click rollback support.\n- Added compiler-backed diagnostics for workspace code tools and regression tests for policy matching and code edits.",  "forceUpdate": true,  "minSupportedVersion": "3.0.0",  "rolloutPercent": 100,  "installerSizeBytes": 96897432}
+{
+  "version": "3.0.0",
+  "channel": "stable",
+  "platform": "windows",
+  "arch": "x64",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.0.0.exe",
+  "sha256": "ada8ccdac10711cd84ef902d0006fb201506a6fa4f9bbbde8fe60bf1e13d172e",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+  "releaseNotes": "Professional Agent GA.\n\nHighlights:\n- Agent runtime v3 with durable checkpoint/resume, event replay, live event publishing, and protocol guard hardening.\n- Tool platform improvements for workspace code operations, file transfer artifacts, MCP configuration, permissions, and safety validation.\n- Context and memory improvements for long-running tasks, compacted context boundaries, persisted large tool output, and project memory.\n- UI and release reliability fixes from 2.x, including stable update metadata, installer version consistency, and regression coverage.\n\nFixes:\n- Restored approval-resume tests and fixed resumed tools running in the wrong sandbox.\n- Event subscriptions now replay without background DbContext contention and publish live events to all subscribers.\n- Step-budget finalization records a completed event and persists a usable final answer.\n- Tool scheduling keeps provider tool-call IDs so repeated same-name calls do not collide.\n- App, updater, installer manifest, version.json, and latest.json are synchronized to prevent update loops.",
+  "forceUpdate": true,
+  "minSupportedVersion": "3.0.0",
+  "rolloutPercent": 100,
+  "installerSizeBytes": 96966368
+}

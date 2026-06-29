@@ -64,7 +64,7 @@ public class AgentServiceTests
         Assert.Contains(messages, m => m.Role == "tool" && m.Content.Contains("agent-ok", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain("sk-agentsecretvalue123456", result.RawRequest.RequestJson);
         Assert.Single(await db.Set<AgentRun>().ToListAsync());
-        Assert.True(await db.Set<AgentStep>().CountAsync() >= 1);
+        Assert.NotEmpty(await db.Set<AgentStep>().ToListAsync());
         Assert.True(await db.Set<ToolInvocation>().CountAsync() >= 1);
         Assert.NotEmpty(await db.Set<AgentCheckpoint>().ToListAsync());
         var events = await db.Set<AgentEvent>().OrderBy(e => e.SequenceNumber).ToListAsync();
@@ -73,7 +73,7 @@ public class AgentServiceTests
         Assert.NotEmpty(progress);
     }
 
-    [Fact(Skip = "V2 state machine produces different intermediate state. Functional equivalence confirmed.")]
+    [Fact]
     public async Task RunAgentTaskAsync_PersistsApprovalAndResumesFromCheckpoint()
     {
         if (!OperatingSystem.IsWindows())
@@ -173,7 +173,7 @@ public class AgentServiceTests
         Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.Error);
     }
 
-    [Fact(Skip = "V2 engine step budget finalization format differs. Functional equivalence confirmed.")]
+    [Fact]
     public async Task RunAgentTaskAsync_FinalizesWithSummaryWhenStepBudgetIsReached()
     {
         if (!OperatingSystem.IsWindows())
@@ -230,9 +230,9 @@ public class AgentServiceTests
         // V2 engine: content format differs, verify content contains expected text
         Assert.Contains("budget-ok", result.AssistantMessage.Content, StringComparison.OrdinalIgnoreCase);
         Assert.True(result.AgentRun.CurrentStep >= 1);
-        Assert.True(await db.Set<AgentStep>().CountAsync() >= 1);
         var allSteps = await db.Set<AgentStep>().ToListAsync();
-        Assert.True(allSteps.Any(s => s.Kind == "final" || s.Kind == "final_summary"));
+        Assert.NotEmpty(allSteps);
+        Assert.Contains(allSteps, s => s.Kind == "final" || s.Kind == "final_summary");
         Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.RunCompleted);
     }
 

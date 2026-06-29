@@ -105,13 +105,13 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         {
             // Build system prompt with memory
             var systemPrompt = await BuildSystemPromptAsync(state.ChatId, ct);
+            var effective = await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct);
             var provider = LlmProviderFactory.Create(
                 _httpClientFactory.CreateClient("LLM"),
-                (await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct)).Provider,
-                (await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct)).ApiKey,
-                (await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct)).BaseUrl,
-                (await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct)).Model);
-            var effective = await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct);
+                effective.Provider,
+                effective.ApiKey,
+                effective.BaseUrl,
+                effective.Model);
 
             // Pre-loop: handle pending approval from resume
             var pending = await _db.Set<ToolInvocation>()
@@ -294,7 +294,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 // Plan batches for multi-tool execution
                 var planItems = validToolCalls.Select(tc =>
-                    new ToolExecutionPlanItem(tc.Name, tc.ArgumentsJson)).ToList();
+                    new ToolExecutionPlanItem(tc.Name, tc.ArgumentsJson, tc.Id)).ToList();
                 var batches = _toolExecutionScheduler.PlanBatches(planItems);
 
                 frameProgress?.Report(new AgentRunFrame(stepNumber, AgentRunFrameKinds.ToolBatchPlanned, events.ToArray(),
@@ -320,7 +320,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     foreach (var item in batch.Items)
                     {
                         var matchingCall = validToolCalls.FirstOrDefault(tc =>
-                            string.Equals(tc.Name, item.ToolName, StringComparison.OrdinalIgnoreCase));
+                                !string.IsNullOrWhiteSpace(item.ToolCallId) &&
+                                string.Equals(tc.Id, item.ToolCallId, StringComparison.Ordinal)) ??
+                            validToolCalls.FirstOrDefault(tc =>
+                                string.Equals(tc.Name, item.ToolName, StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(tc.ArgumentsJson, item.ArgumentsJson, StringComparison.Ordinal));
                         if (matchingCall == null) continue;
 
                         if (!_agentTools.TryGet(matchingCall.Name, out var tool)) continue;
@@ -483,7 +487,28 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         // Simplified append (delegates to actual implementation in caller)
         if (!string.IsNullOrWhiteSpace(projectMemory))
             prompt += $"\n\n[project memory: {memoryPath}]\n{projectMemory[..Math.Min(projectMemory.Length, 12_000)]}";
+        prompt += BuildAgentInstructions(
+            _sandboxCommandService.GetSandboxRoot(chatId),
+            _agentTools.Definitions.Select(t => t.Name));
         return prompt;
+    }
+
+    private static string BuildAgentInstructions(string sandboxRoot, IEnumerable<string> toolNames)
+    {
+        var tools = string.Join(", ", toolNames.OrderBy(t => t, StringComparer.OrdinalIgnoreCase));
+        return $"""
+
+        TLAH Agent Mode is enabled.
+        Registered tools: {tools}
+        Sandbox working directory: {sandboxRoot}
+        Work only inside the sandbox directory. Do not read host user files or run destructive, privileged, registry, service, shutdown, or system-configuration operations.
+        Prefer typed memory, file, code, Git, HTTP, search, browser, terminal, and MCP tools over ad-hoc shell commands.
+        For development work, prefer code_read, code_grep, code_glob, code_diff, code_edit, code_multi_edit, code_apply_patch, code_rollback, and code_diagnostics.
+        For file work, prefer file_list, file_read, file_write, file_search, and file_send. When you create a file the user should see, preview, download, or use outside the sandbox, call file_send before the final answer.
+        Use mcp_list_tools before mcp_call. Keep credentials referenced only by broker entry name; never print, store, or ask for secrets.
+        Request one tool call at a time unless multiple read-only calls are clearly independent. Include a short reason in arguments when the schema supports it.
+        After a tool result is returned, either request the next action or provide the final answer.
+        """;
     }
 
     private async Task<AgentEvent> AppendEventAsync(Guid runId, AgentEventAppendRequest request,
@@ -578,7 +603,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             $"Running {item.ToolCall.Name}.", new { item.ToolCall.Name }, step.Id, item.Invocation.Id), events, ct);
 
         var scheduled = await _toolExecutionScheduler.ExecuteAsync(
-            new ToolExecutionRequest(new AgentRun { Id = state.RunId }, item.Invocation,
+            new ToolExecutionRequest(CreateRunShell(state), item.Invocation,
                 options.CommandTimeoutSeconds, options.MaxCommandOutputChars), ct);
 
         await CompleteInvocationWithResultAsync(state, item, step, scheduled.Result, options, events, ct);
@@ -686,6 +711,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             state.CurrentStep = stepNumber;
             state.Messages.Add(new MessagePayload("assistant", response.AssistantText));
             await SaveCheckpointAsync(state, ct);
+            await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                new AgentRun { Id = state.RunId }, AgentEventTypes.RunCompleted,
+                "Run completed after step-budget finalization.",
+                new { state.CurrentStep, state.MaxSteps }, step.Id), events, ct);
             await _db.SaveChangesAsync(ct);
             return response.AssistantText;
         }
@@ -704,6 +733,17 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private static LlmReasoningOptions? BuildReasoningOptions(EffectiveSettings settings) =>
         string.Equals(settings.ThinkingDepth, "disabled", StringComparison.OrdinalIgnoreCase) ? null :
         new LlmReasoningOptions(settings.ThinkingDepth ?? "auto");
+
+    private static AgentRun CreateRunShell(AgentRunState state) => new()
+    {
+        Id = state.RunId,
+        ChatId = state.ChatId,
+        TurnId = state.TurnId,
+        Status = state.Status,
+        UserRequest = state.UserRequest,
+        CurrentStep = state.CurrentStep,
+        MaxSteps = state.MaxSteps
+    };
 
     private static string FormatMultiToolRequestMessage(int stepNumber, List<LlmToolCall> toolCalls)
     {

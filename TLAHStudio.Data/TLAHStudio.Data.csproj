@@ -1,1 +1,26 @@
-<Project Sdk="Microsoft.NET.Sdk">  <PropertyGroup>    <TargetFramework>net8.0</TargetFramework>    <ImplicitUsings>enable</ImplicitUsings>    <Nullable>enable</Nullable>    <RootNamespace>TLAHStudio.Data</RootNamespace>    <Product>TLAH Studio Data</Product>    <Company>Beijing Ke Entropy Technology Co., Ltd.</Company>    <Copyright>Copyright (C) 2026 Beijing Ke Entropy Technology Co., Ltd.</Copyright>    <Version>3.0.0</Version>    <FileVersion>3.0.0.0</FileVersion>    <AssemblyVersion>3.0.0.0</AssemblyVersion>    <InformationalVersion>3.0.0</InformationalVersion>    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>  </PropertyGroup>  <ItemGroup>    <ProjectReference Include="..\TLAHStudio.Core\TLAHStudio.Core.csproj" />  </ItemGroup>  <ItemGroup>    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.14">      <PrivateAssets>all</PrivateAssets>      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>    </PackageReference>  </ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>TLAHStudio.Data</RootNamespace>
+    <Product>TLAH Studio Data</Product>
+    <Company>Beijing Ke Entropy Technology Co., Ltd.</Company>
+    <Copyright>Copyright (C) 2026 Beijing Ke Entropy Technology Co., Ltd.</Copyright>
+    <Version>3.0.0</Version>
+    <FileVersion>3.0.0.0</FileVersion>
+    <AssemblyVersion>3.0.0.0</AssemblyVersion>
+    <InformationalVersion>3.0.0</InformationalVersion>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TLAHStudio.Core\TLAHStudio.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.14">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

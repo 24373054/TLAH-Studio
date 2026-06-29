@@ -1,1 +1,7 @@
-{  "version": "3.0.0",  "channel": "stable",  "installId": "",  "installPath": "",  "updateUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json"}
+{
+  "version": "3.0.0",
+  "channel": "stable",
+  "installId": "",
+  "installPath": "",
+  "updateUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json"
+}

@@ -49,6 +49,18 @@ public class AgentEventSubscriptionService : IAgentEventSubscriptionService
             SingleWriter = false
         });
 
+        var historicalEvents = _db.Set<AgentEvent>()
+            .AsNoTracking()
+            .Where(e => e.AgentRunId == runId && e.SequenceNumber >= fromSequenceNumber)
+            .OrderBy(e => e.SequenceNumber)
+            .ToList();
+
+        foreach (var evt in historicalEvents)
+        {
+            if (!channel.Writer.TryWrite(evt))
+                break;
+        }
+
         lock (_lock)
         {
             if (!_subscribers.TryGetValue(runId, out var list))
@@ -58,9 +70,6 @@ public class AgentEventSubscriptionService : IAgentEventSubscriptionService
             }
             list.Add(channel);
         }
-
-        // Replay historical events in the background
-        _ = ReplayHistoryAsync(runId, fromSequenceNumber, channel.Writer);
 
         return channel.Reader;
     }
@@ -75,10 +84,29 @@ public class AgentEventSubscriptionService : IAgentEventSubscriptionService
 
         if (list == null) return;
 
+        List<Channel<AgentEvent>>? stale = null;
         foreach (var channel in list)
         {
-            if (!channel.Writer.TryWrite(evt))
-                break;
+            if (channel.Writer.TryWrite(evt))
+                continue;
+
+            stale ??= [];
+            stale.Add(channel);
+        }
+
+        if (stale == null)
+            return;
+
+        lock (_lock)
+        {
+            if (!_subscribers.TryGetValue(runId, out var current))
+                return;
+
+            foreach (var channel in stale)
+                current.Remove(channel);
+
+            if (current.Count == 0)
+                _subscribers.TryRemove(runId, out _);
         }
     }
 
@@ -94,26 +122,5 @@ public class AgentEventSubscriptionService : IAgentEventSubscriptionService
 
         foreach (var channel in list)
             channel.Writer.TryComplete();
-    }
-
-    private async Task ReplayHistoryAsync(Guid runId, int fromSequence, ChannelWriter<AgentEvent> writer)
-    {
-        try
-        {
-            var events = await _db.Set<AgentEvent>()
-                .Where(e => e.AgentRunId == runId && e.SequenceNumber >= fromSequence)
-                .OrderBy(e => e.SequenceNumber)
-                .ToListAsync();
-
-            foreach (var evt in events)
-            {
-                if (!writer.TryWrite(evt))
-                    return;
-            }
-        }
-        catch
-        {
-            writer.TryComplete();
-        }
     }
 }

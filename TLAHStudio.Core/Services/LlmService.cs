@@ -377,7 +377,7 @@ public class LlmService : ILlmService
             assistantMessage = new Message
             {
                 ChatId = chatId, Role = "assistant", Content = result.AssistantContent,
-                TurnId = turn.Id, SequenceNum = state.SequenceNum
+                TurnId = turn.Id, SequenceNum = result.FinalState.SequenceNum
             };
             _db.Set<Message>().Add(assistantMessage);
         }
@@ -387,7 +387,7 @@ public class LlmService : ILlmService
             {
                 ChatId = chatId, Role = "assistant",
                 Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
-                TurnId = turn.Id, SequenceNum = state.SequenceNum
+                TurnId = turn.Id, SequenceNum = result.FinalState.SequenceNum
             };
             _db.Set<Message>().Add(assistantMessage);
         }
@@ -420,8 +420,7 @@ public class LlmService : ILlmService
             .FirstAsync(ct);
         var checkpoint = await _checkpointStore.GetLatestAsync(run.Id, ct)
             ?? throw new InvalidOperationException("The agent run has no checkpoint to resume.");
-        var state = JsonSerializer.Deserialize<AgentExecutionState>(checkpoint.StateJson)
-            ?? throw new InvalidOperationException("The agent checkpoint is invalid.");
+        var checkpointState = DeserializeCheckpointState(checkpoint, run);
 
         run.MaxSteps = Math.Clamp(
             Math.Max(run.MaxSteps, run.CurrentStep + Math.Clamp(options.MaxSteps, 1, 96)),
@@ -439,12 +438,11 @@ public class LlmService : ILlmService
             ct: ct);
 
         // M2.7.0: Agent loop owned by V2 engine (no fallback)
-        var runState = new AgentRunState
+        var runState = checkpointState.DeepClone() with
         {
             RunId = run.Id, ChatId = run.ChatId, TurnId = run.TurnId,
             Status = AgentRunStatuses.Running, CurrentStep = run.CurrentStep,
             MaxSteps = run.MaxSteps, UserRequest = run.UserRequest,
-            Messages = state.Messages.ToList(), SequenceNum = state.SequenceNum
         };
         var engineOptions = new AgentEngineOptions(
             run.MaxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
@@ -467,7 +465,7 @@ public class LlmService : ILlmService
             assistantMessage = new Message
             {
                 ChatId = run.ChatId, Role = "assistant", Content = result.AssistantContent,
-                TurnId = turn.Id, SequenceNum = state.SequenceNum
+                TurnId = turn.Id, SequenceNum = result.FinalState.SequenceNum
             };
             _db.Set<Message>().Add(assistantMessage);
         }
@@ -477,7 +475,7 @@ public class LlmService : ILlmService
             {
                 ChatId = run.ChatId, Role = "assistant",
                 Content = $"Agent run {run.Status} at step {run.CurrentStep}.",
-                TurnId = turn.Id, SequenceNum = state.SequenceNum
+                TurnId = turn.Id, SequenceNum = result.FinalState.SequenceNum
             };
             _db.Set<Message>().Add(assistantMessage);
         }
@@ -2660,6 +2658,44 @@ public class LlmService : ILlmService
         List<MessagePayload> Messages,
         double? Temperature,
         int? MaxTokens);
+
+    private static AgentRunState DeserializeCheckpointState(AgentCheckpoint checkpoint, AgentRun run)
+    {
+        try
+        {
+            var state = JsonSerializer.Deserialize<AgentRunState>(checkpoint.StateJson);
+            if (state != null && (state.Messages.Count > 0 || state.SequenceNum > 0 || state.RunId != Guid.Empty))
+            {
+                return state.DeepClone() with
+                {
+                    RunId = run.Id,
+                    ChatId = run.ChatId,
+                    TurnId = run.TurnId,
+                    UserRequest = run.UserRequest
+                };
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through to the legacy checkpoint format below.
+        }
+
+        var legacy = JsonSerializer.Deserialize<AgentExecutionState>(checkpoint.StateJson)
+            ?? throw new InvalidOperationException("The agent checkpoint is invalid.");
+
+        return new AgentRunState
+        {
+            RunId = run.Id,
+            ChatId = run.ChatId,
+            TurnId = run.TurnId,
+            Status = run.Status,
+            CurrentStep = run.CurrentStep,
+            MaxSteps = run.MaxSteps,
+            UserRequest = run.UserRequest,
+            Messages = legacy.Messages.ToList(),
+            SequenceNum = legacy.SequenceNum
+        };
+    }
 
     private sealed class AgentExecutionState
     {

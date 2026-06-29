@@ -60,7 +60,7 @@ public class ReactiveCompactorTests
     private readonly TokenBudgetService _budget = new();
 
     [Fact]
-    public void Compact_TrimToolOutputs_TrimsLargeResults()
+    public async Task Compact_TrimToolOutputs_TrimsLargeResults()
     {
         var messages = new List<MessagePayload>
         {
@@ -69,14 +69,14 @@ public class ReactiveCompactorTests
             new("tool", new string('x', 5000)),
             new("user", "done")
         };
-        var result = _compactor.CompactAsync(messages, TokenBudgetState.CompactSoon,
-            CompactionStrategy.TrimToolOutputs, _budget).Result;
+        var result = await _compactor.CompactAsync(messages, TokenBudgetState.CompactSoon,
+            CompactionStrategy.TrimToolOutputs, _budget);
         Assert.NotNull(result);
         Assert.True(result.WasCompacted || result.EstimatedTokensAfter <= result.EstimatedTokensBefore);
     }
 
     [Fact]
-    public void Compact_Microcompact_ReplacesOldToolOutputs()
+    public async Task Compact_Microcompact_ReplacesOldToolOutputs()
     {
         var messages = new List<MessagePayload>();
         for (int i = 0; i < 20; i++)
@@ -87,21 +87,21 @@ public class ReactiveCompactorTests
             messages.Add(new("tool", $"result {i} " + new string('x', 200), $"call_{i}"));
         }
         var before = _budget.EstimateTokens(messages);
-        var result = _compactor.CompactAsync(messages, TokenBudgetState.CompactNow,
-            CompactionStrategy.Microcompact, _budget).Result;
+        var result = await _compactor.CompactAsync(messages, TokenBudgetState.CompactNow,
+            CompactionStrategy.Microcompact, _budget);
         Assert.NotNull(result);
         // Microcompact should reduce tokens by replacing old tool outputs with references
         Assert.True(result.EstimatedTokensAfter < before);
     }
 
     [Fact]
-    public void Compact_SummarizeMiddle_ProducesCompactBoundary()
+    public async Task Compact_SummarizeMiddle_ProducesCompactBoundary()
     {
         var messages = new List<MessagePayload>();
         for (int i = 0; i < 30; i++)
             messages.Add(new("user", $"message number {i} with some content"));
-        var result = _compactor.CompactAsync(messages, TokenBudgetState.CompactNow,
-            CompactionStrategy.SummarizeMiddle, _budget).Result;
+        var result = await _compactor.CompactAsync(messages, TokenBudgetState.CompactNow,
+            CompactionStrategy.SummarizeMiddle, _budget);
         Assert.True(result.WasCompacted);
         // The summary boundary is in the message list as a user message
         Assert.Contains(result.Messages, m =>
@@ -109,13 +109,13 @@ public class ReactiveCompactorTests
     }
 
     [Fact]
-    public void Compact_EmergencyTruncate_KeepsHeadAndTail()
+    public async Task Compact_EmergencyTruncate_KeepsHeadAndTail()
     {
         var messages = new List<MessagePayload>();
         for (int i = 0; i < 30; i++)
             messages.Add(new("user", $"msg {i}"));
-        var result = _compactor.CompactAsync(messages, TokenBudgetState.Blocking,
-            CompactionStrategy.EmergencyTruncate, _budget).Result;
+        var result = await _compactor.CompactAsync(messages, TokenBudgetState.Blocking,
+            CompactionStrategy.EmergencyTruncate, _budget);
         Assert.True(result.WasCompacted);
         // 2 head + 1 emergency msg + 6 tail = 9 messages
         Assert.True(result.Messages.Count < 12);
@@ -237,21 +237,21 @@ public class CodeToolsV3Tests
     }
 
     [Fact]
-    public void CodeEditToolV3_CreateRollbackPlan_ReturnsPlan()
+    public async Task CodeEditToolV3_CreateRollbackPlan_ReturnsPlan()
     {
         var tool = new CodeEditToolV3();
         var args = """{"path":"test.cs","old_string":"a","new_string":"b"}""";
-        var plan = tool.CreateRollbackPlanAsync(args, new AgentToolResult(true, "ok")).Result;
+        var plan = await tool.CreateRollbackPlanAsync(args, new AgentToolResult(true, "ok"));
         Assert.NotNull(plan);
         Assert.True(plan.IsFeasible);
         Assert.Contains("test.cs", plan.FilesToRestore!);
     }
 
     [Fact]
-    public void FileChangeDetector_DetectsMissingFile()
+    public async Task FileChangeDetector_DetectsMissingFile()
     {
         var detector = new FileChangeDetector();
-        var changed = detector.HasChangedAsync("nonexistent-file.xyz", "abc").Result;
+        var changed = await detector.HasChangedAsync("nonexistent-file.xyz", "abc");
         Assert.True(changed);
     }
 }

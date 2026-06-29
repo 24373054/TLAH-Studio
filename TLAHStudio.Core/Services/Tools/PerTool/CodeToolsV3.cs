@@ -51,12 +51,12 @@ public class CodeReadToolV3 : AgentToolV3Base
         return new AgentToolResult(true, SecretRedactor.RedactText(result.ToString()));
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var args = JsonSerializer.Deserialize<Dictionary<string, string>>(argumentsJson);
         var path = args?.GetValueOrDefault("path") ?? "";
         var fullPath = ResolvePath(chatId, path);
-        return ToolEffectPlan.ReadOnly([fullPath]);
+        return Task.FromResult(ToolEffectPlan.ReadOnly([fullPath]));
     }
 
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
@@ -130,20 +130,20 @@ public class CodeEditToolV3 : AgentToolV3Base
         return new AgentToolResult(true, $"Edited {path}: {count} replacement(s) made.");
     }
 
-    public override async Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
+    public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var path = doc.RootElement.GetProperty("path").GetString() ?? "";
         var fullPath = ResolvePath(chatId, path);
-        return ToolEffectPlan.Write([fullPath], [fullPath]);
+        return Task.FromResult(ToolEffectPlan.Write([fullPath], [fullPath]));
     }
 
-    public override async Task<ToolRollbackPlan?> CreateRollbackPlanAsync(string argumentsJson, AgentToolResult result, CancellationToken ct = default)
+    public override Task<ToolRollbackPlan?> CreateRollbackPlanAsync(string argumentsJson, AgentToolResult result, CancellationToken ct = default)
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var path = doc.RootElement.GetProperty("path").GetString() ?? "";
-        return new ToolRollbackPlan(true, "Use git to revert the file or restore from backup.",
-            $"git checkout -- {path}", [path]);
+        return Task.FromResult<ToolRollbackPlan?>(new ToolRollbackPlan(true, "Use git to revert the file or restore from backup.",
+            $"git checkout -- {path}", [path]));
     }
 
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.All;

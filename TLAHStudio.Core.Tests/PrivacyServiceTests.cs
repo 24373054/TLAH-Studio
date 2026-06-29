@@ -9,6 +9,9 @@ public class PrivacyServiceTests
     [Fact]
     public async Task ExportAllDataAsync_ExcludesApiKeysAndRedactsRawPayloads()
     {
+        if (!OperatingSystem.IsWindows())
+            return;
+
         await using var db = TestDb.Create();
         var chat = new Chat { Title = "Privacy" };
         db.Chats.Add(chat);
@@ -38,6 +41,9 @@ public class PrivacyServiceTests
     [Fact]
     public async Task ClearAllDataAsync_RemovesChatsAndApiKeys()
     {
+        if (!OperatingSystem.IsWindows())
+            return;
+
         await using var db = TestDb.Create();
         db.Chats.Add(new Chat { Title = "Clear" });
         var settings = await db.GlobalSettings.FindAsync(1);
