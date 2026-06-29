@@ -617,6 +617,19 @@ public class TlahDbContext : DbContext
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_McpServerConfigs_ProjectSpaceId\" ON \"McpServerConfigs\" (\"ProjectSpaceId\");");
         ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_CredentialEntries_Name\" ON \"CredentialEntries\" (\"Name\");");
         ExecuteNonQuery(connection, """
+            CREATE TABLE IF NOT EXISTS "BackgroundTaskRecords" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_BackgroundTaskRecords" PRIMARY KEY,
+                "ChatId" TEXT NOT NULL,
+                "Description" TEXT NOT NULL,
+                "Status" TEXT NOT NULL,
+                "StartedAt" TEXT NOT NULL,
+                "CompletedAt" TEXT NULL,
+                "ResultSummary" TEXT NULL,
+                "Error" TEXT NULL
+            );
+            """);
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_BackgroundTaskRecords_ChatId\" ON \"BackgroundTaskRecords\" (\"ChatId\");");
+        ExecuteNonQuery(connection, """
             UPDATE "AgentRuns"
             SET "Status" = 'paused',
                 "ErrorMessage" = 'The application closed while this run was active. Resume to continue.',

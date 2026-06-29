@@ -7,6 +7,17 @@ using Microsoft.UI.Xaml;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 using TLAHStudio.Core.Services.AgentRuntime;
+using TLAHStudio.Core.Services.Background;
+using TLAHStudio.Core.Services.Context;
+using TLAHStudio.Core.Services.Lsp;
+using TLAHStudio.Core.Services.Mcp;
+using TLAHStudio.Core.Services.Memory;
+using TLAHStudio.Core.Services.Observability;
+using TLAHStudio.Core.Services.Plugins;
+using TLAHStudio.Core.Services.Sandbox;
+using TLAHStudio.Core.Services.Sdk;
+using TLAHStudio.Core.Services.Tools.PerTool;
+using TLAHStudio.Core.Services.Workspace;
 using TLAHStudio.Data;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.App.Views;
@@ -116,6 +127,37 @@ public partial class App : Application
             services.AddScoped<IDebugService, DebugService>();
             services.AddScoped<IPrivacyService, PrivacyService>();
             services.AddScoped<IWorkspaceService, WorkspaceService>();
+
+            // M2.10.0: Context & Memory
+            services.AddScoped<ITokenBudgetService, TokenBudgetService>();
+            services.AddScoped<IReactiveCompactor, ReactiveCompactor>();
+            services.AddScoped<IMemoryDirectoryService, MemoryDirectoryService>();
+
+            // M2.11.0: Workspace & LSP
+            services.AddScoped<IWorkspaceRootService, WorkspaceRootService>();
+            services.AddScoped<ILspManager, LspManager>();
+            services.AddScoped<IFileChangeDetector, FileChangeDetector>();
+
+            // M2.12.0: MCP & Plugins & Skills
+            services.AddScoped<IMcpClientService, McpClientService>();
+            services.AddScoped<IMcpConnectionManager, McpConnectionManager>();
+            services.AddScoped<IMcpReconnectPolicy, McpReconnectPolicy>();
+            services.AddScoped<IMcpAuthService, McpAuthService>();
+            services.AddScoped<IPluginManifestService, PluginManifestService>();
+            services.AddScoped<ISkillLoader, SkillLoader>();
+
+            // M2.13.0: Sandbox & Background Tasks
+            services.AddScoped<ISandboxBackendRegistry, SandboxBackendRegistry>();
+            services.AddScoped<IFileSyncService, FileSyncService>();
+            services.AddScoped<IBackgroundTaskService, BackgroundTaskService>();
+
+            // M2.14.0: Observability & SDK
+            services.AddSingleton<IRuntimeMetricsCollector, RuntimeMetricsCollector>();
+            services.AddSingleton<IDiagnosticPackageExporter, DiagnosticPackageExporter>();
+            services.AddSingleton<ILocalSdkHost, LocalSdkHost>();
+
+            // M3.0.0: Recovery
+            services.AddScoped<IRecoveryService, RecoveryService>();
 
             // ViewModels
             services.AddSingleton<MainViewModel>();
