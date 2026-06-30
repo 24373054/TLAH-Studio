@@ -839,6 +839,9 @@ public partial class ChatPageViewModel : ObservableObject
             AgentEventTypes.ApprovalGranted => "Approved",
             AgentEventTypes.ApprovalDenied => "Denied",
             AgentEventTypes.ToolStarted => "Run",
+            AgentEventTypes.ToolProgress => "Progress",
+            AgentEventTypes.ToolHookBlocked => "Hook",
+            AgentEventTypes.ToolRollbackPlan => "Rollback",
             AgentEventTypes.ToolResult => "Result",
             AgentEventTypes.ProtocolRepair => "Repair",
             AgentEventTypes.RuntimeMetrics => "Metrics",
@@ -859,6 +862,9 @@ public partial class ChatPageViewModel : ObservableObject
                 : "Model returned a response.",
             AgentEventTypes.ToolRequest => render?.Activity ?? CleanSummary(update.Summary),
             AgentEventTypes.ToolStarted => render?.Activity ?? CleanSummary(update.Summary),
+            AgentEventTypes.ToolProgress => TryReadToolProgress(update.DataJson) ?? CleanSummary(update.Summary),
+            AgentEventTypes.ToolHookBlocked => CleanSummary(update.Summary),
+            AgentEventTypes.ToolRollbackPlan => "Rollback plan ready.",
             AgentEventTypes.ToolResult => render?.Activity ?? CleanSummary(update.Summary),
             AgentEventTypes.ApprovalRequested => render?.Activity ?? CleanSummary(update.Summary),
             AgentEventTypes.RuntimeMetrics => TryReadRuntimeMetrics(update.DataJson) ?? "Runtime metrics captured.",
@@ -931,6 +937,24 @@ public partial class ChatPageViewModel : ObservableObject
             if (eventCount == null && dbWriteMs == null && elapsedMs == null)
                 return null;
             return $"Events {eventCount ?? 0} · DB {dbWriteMs ?? 0:0}ms · elapsed {elapsedMs ?? 0:0}ms";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryReadToolProgress(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var message = TryReadString(root, "Message") ?? TryReadString(root, "message");
+            var percent = TryReadInt(root, "Percent") ?? TryReadInt(root, "percent");
+            if (string.IsNullOrWhiteSpace(message))
+                return null;
+            return percent is null ? message : $"{message} ({percent}%)";
         }
         catch
         {

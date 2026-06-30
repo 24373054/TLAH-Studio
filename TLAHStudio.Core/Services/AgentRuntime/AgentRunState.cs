@@ -1,5 +1,6 @@
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.Tools.Models;
 
 namespace TLAHStudio.Core.Services.AgentRuntime;
 
@@ -90,7 +91,8 @@ public sealed record ToolBatchItem(
     LlmToolCall ToolCall,
     IAgentTool Tool,
     ToolInvocation Invocation,
-    ToolSafetyAssessment Safety);
+    ToolSafetyAssessment Safety,
+    ToolEffectPlan? EffectPlan = null);
 
 /// <summary>
 /// Streaming metrics captured during a model call.

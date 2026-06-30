@@ -16,6 +16,7 @@ using TLAHStudio.Core.Services.Observability;
 using TLAHStudio.Core.Services.Plugins;
 using TLAHStudio.Core.Services.Sandbox;
 using TLAHStudio.Core.Services.Sdk;
+using TLAHStudio.Core.Services.Tools;
 using TLAHStudio.Core.Services.Tools.PerTool;
 using TLAHStudio.Core.Services.Workspace;
 using TLAHStudio.Data;
@@ -116,6 +117,13 @@ public partial class App : Application
             services.AddScoped<IAgentTool, CodeRollbackAgentTool>();
             services.AddScoped<IAgentTool, CodeDiagnosticsAgentTool>();
             services.AddScoped<IAgentToolRegistry, AgentToolRegistry>();
+            services.AddScoped<IToolHookRegistry>(_ =>
+            {
+                var registry = new ToolHookRegistry();
+                registry.Register(new SecretRedactionHook());
+                return registry;
+            });
+            services.AddScoped<IToolLifecycleRunner, DefaultToolLifecycleRunner>();
             services.AddScoped<IAgentEventStream, AgentEventStream>();
             services.AddScoped<ICheckpointStore, CheckpointStore>();
             services.AddScoped<IProviderStreamAdapter, ProviderStreamAdapter>();

@@ -2,7 +2,7 @@
 ; Supports: manual install (GUI wizard) and silent update (/VERYSILENT /NORESTART)
 
 #define MyAppName "TLAH Studio"
-#define MyAppVersion "3.2.0"
+#define MyAppVersion "3.3.0"
 #define MyAppPublisher "KeEntropy Technology"
 #define MyAppExeName "TLAHStudio.App.exe"
 #define MyAppUpdaterName "TLAHStudio.Updater.exe"

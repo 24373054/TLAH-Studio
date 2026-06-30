@@ -1,14 +1,14 @@
 {
-  "version": "3.2.0",
+  "version": "3.3.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.2.0.exe",
-  "sha256": "e506e1b9cf39474d3010ae922d527bfc8a1c7f1cd8ecff9923fed5571b5fdf5f",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.3.0.exe",
+  "sha256": "1b57f8339e439692b0c0b139f09e63a8176f59eebcc512840b85a2ccb97d1ccd",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Agent activity sidebar release.\n\nHighlights:\n- Moves detailed Agent execution activity out of the conversation stream into a dedicated right-side activity panel.\n- Keeps Agent activity persistent by loading all saved runs and events for the selected chat, not only the currently running task.\n- Adds a collapsible panel layout so the conversation and input return to full width when the activity panel is closed.\n- Adds responsive sizing and vertical-only scrolling to keep activity content from overlapping, clipping the chat input, or creating horizontal scroll.\n\nFixes:\n- Removes the transient live activity card from the message list so completed runs no longer leave stale spinning activity UI behind.\n- Preserves live updates in the new panel while continuing to show lightweight run status in the top status bar.\n\nValidation:\n- Added regression coverage for persistent Agent activity history ordering.\n- Passed Release tests and App/Updater builds.",
+  "releaseNotes": "Tool lifecycle stability release.\n\nHighlights:\n- Adds a documented 3.3.0 stability and tool lifecycle plan based on the Claude Code gap analysis.\n- Routes tool execution through a unified lifecycle runner with V3 safety preview, effect planning, hooks, progress collection, output limiting, and rollback metadata.\n- Persists lifecycle progress, hook blocks, and rollback plans as AgentEvents so the right-side activity panel can replay completed runs.\n- Keeps legacy tools compatible while deriving conservative effect plans from the existing safety preview.\n\nValidation:\n- Added lifecycle unit coverage for V3 order, hook block, hook argument rewrite, legacy compatibility, safety block, progress, and rollback.\n- Added agent integration coverage proving lifecycle progress and rollback events persist to the database.\n- Passed Release CI and smoke validation.",
   "forceUpdate": true,
-  "minSupportedVersion": "3.2.0",
+  "minSupportedVersion": "3.3.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96969776
+  "installerSizeBytes": 96954044
 }

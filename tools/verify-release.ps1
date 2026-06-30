@@ -146,10 +146,15 @@ try {
 
     $authenticode = Get-AuthenticodeSignature -FilePath $installer.Path
     if ($authenticode.Status -ne "Valid") {
-        if (-not ($AllowUntrustedAuthenticode -and $authenticode.SignerCertificate)) {
+        if (-not $AllowUntrustedAuthenticode) {
             throw "Installer Authenticode status is $($authenticode.Status)."
         }
-        Write-Warning "Installer is signed but not trusted by this machine: $($authenticode.Status)."
+        if ($authenticode.SignerCertificate) {
+            Write-Warning "Installer is signed but not trusted by this machine: $($authenticode.Status)."
+        }
+        else {
+            Write-Warning "Installer is not Authenticode signed; continuing because -AllowUntrustedAuthenticode was provided."
+        }
     }
 
     if (-not $SkipSmokeInstall) {

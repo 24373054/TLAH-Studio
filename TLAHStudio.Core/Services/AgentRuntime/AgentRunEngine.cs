@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.Tools.Models;
 
 #pragma warning disable CA1416
 
@@ -54,6 +55,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private readonly ICheckpointStore _checkpointStore;
     private readonly IProviderStreamAdapter _providerStreamAdapter;
     private readonly IToolExecutionScheduler _toolExecutionScheduler;
+    private readonly IToolLifecycleRunner _toolLifecycleRunner;
     private readonly IAgentContextManager _contextManager;
     private readonly IProjectMemoryService _projectMemory;
     private readonly IToolResultPersistenceService _toolResultPersistence;
@@ -72,7 +74,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         IToolExecutionScheduler toolExecutionScheduler,
         IAgentContextManager contextManager,
         IProjectMemoryService projectMemory,
-        IToolResultPersistenceService toolResultPersistence)
+        IToolResultPersistenceService toolResultPersistence,
+        IToolLifecycleRunner? toolLifecycleRunner = null)
     {
         _db = db;
         _chatService = chatService;
@@ -85,6 +88,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         _checkpointStore = checkpointStore;
         _providerStreamAdapter = providerStreamAdapter;
         _toolExecutionScheduler = toolExecutionScheduler;
+        _toolLifecycleRunner = toolLifecycleRunner ??
+            new DefaultToolLifecycleRunner(agentTools, sandboxCommandService);
         _contextManager = contextManager;
         _projectMemory = projectMemory;
         _toolResultPersistence = toolResultPersistence;
@@ -337,8 +342,12 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                         if (!_agentTools.TryGet(matchingCall.Name, out var tool)) continue;
 
-                        var safety = ToolSafetyKernel.Assess(_sandboxCommandService, state.ChatId,
-                            matchingCall.Name, matchingCall.ArgumentsJson);
+                        var preview = await _toolLifecycleRunner.PreviewAsync(
+                            state.ChatId,
+                            matchingCall.Name,
+                            matchingCall.ArgumentsJson,
+                            ct);
+                        var safety = preview.Safety;
                         var invocation = new ToolInvocation
                         {
                             AgentRunId = state.RunId, AgentStepId = step.Id,
@@ -349,7 +358,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             RequiresApproval = tool.Metadata.RequiresApproval
                         };
                         _db.Set<ToolInvocation>().Add(invocation);
-                        batchItems.Add(new ToolBatchItem(matchingCall, tool, invocation, safety));
+                        batchItems.Add(new ToolBatchItem(matchingCall, tool, invocation, safety, preview.EffectPlan));
                     }
 
                     await _db.SaveChangesAsync(ct);
@@ -375,6 +384,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                                 item.Safety.IsWriteOperation,
                                 item.Safety.RequiresExplicitApproval,
                                 item.Safety.IsBlocked,
+                                effectPlan = item.EffectPlan,
                                 render = toolUseRender
                             },
                             step.Id, item.Invocation.Id,
@@ -765,9 +775,17 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             return (null, events);
         }
 
+        var preview = await _toolLifecycleRunner.PreviewAsync(
+            state.ChatId,
+            invocation.ToolName,
+            invocation.ArgumentsJson,
+            ct);
         var item = new ToolBatchItem(
             new LlmToolCall(invocation.ProviderCallId, invocation.ToolName, invocation.ArgumentsJson),
-            tool, invocation, ToolSafetyAssessment.LowRead(invocation.ToolName, invocation.ToolName));
+            tool,
+            invocation,
+            preview.Safety,
+            preview.EffectPlan);
 
         return await ExecuteSingleInvocationAsync(state, item, step, options, events, ct);
     }
@@ -806,8 +824,59 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             new ToolExecutionRequest(CreateRunShell(state), item.Invocation,
                 options.CommandTimeoutSeconds, options.MaxCommandOutputChars), ct);
 
+        item.Invocation.SafetyLevel = scheduled.Safety.Level;
+        item.Invocation.SafetySummary = scheduled.Safety.Summary;
+        item.Invocation.SafetyJson = SecretRedactor.RedactJson(scheduled.Safety.PreviewJson);
+        await AppendLifecycleEventsAsync(state, options, item, step, scheduled, events, ct);
         await CompleteInvocationWithResultAsync(state, item, step, scheduled.Result, options, events, ct);
         return (new AgentRunFrame(step.StepNumber, AgentRunFrameKinds.ToolResult, events.ToArray()), events);
+    }
+
+    private async Task AppendLifecycleEventsAsync(
+        AgentRunState state,
+        AgentEngineOptions options,
+        ToolBatchItem item,
+        AgentStep step,
+        ToolExecutionOutcome outcome,
+        List<AgentEvent> events,
+        CancellationToken ct)
+    {
+        foreach (var progress in outcome.ProgressEvents)
+        {
+            var isHookBlocked = string.Equals(progress.Phase, "hook_blocked", StringComparison.OrdinalIgnoreCase);
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                new AgentRun { Id = state.RunId },
+                isHookBlocked ? AgentEventTypes.ToolHookBlocked : AgentEventTypes.ToolProgress,
+                progress.Message,
+                new
+                {
+                    item.ToolCall.Name,
+                    phase = progress.Phase,
+                    progress.Percent,
+                    progress.Message,
+                    effectPlan = outcome.EffectPlan
+                },
+                step.Id,
+                item.Invocation.Id,
+                isHookBlocked ? AgentEventSeverities.Warning : AgentEventSeverities.Info), events, ct);
+        }
+
+        if (outcome.RollbackPlan != null)
+        {
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                new AgentRun { Id = state.RunId },
+                AgentEventTypes.ToolRollbackPlan,
+                $"Rollback plan ready for {item.ToolCall.Name}.",
+                new
+                {
+                    item.ToolCall.Name,
+                    rollbackPlan = outcome.RollbackPlan,
+                    effectPlan = outcome.EffectPlan
+                },
+                step.Id,
+                item.Invocation.Id,
+                AgentEventSeverities.Info), events, ct);
+        }
     }
 
     private async Task CompleteInvocationWithResultAsync(AgentRunState state, ToolBatchItem item, AgentStep step,

@@ -4,6 +4,7 @@ using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.AgentRuntime;
+using TLAHStudio.Core.Services.Tools.Models;
 
 namespace TLAHStudio.Core.Services;
 
@@ -280,12 +281,37 @@ public sealed record ToolExecutionRequest(
     int TimeoutSeconds,
     int MaxOutputChars);
 
-public sealed record ToolExecutionOutcome(
-    ToolExecutionRequest Request,
-    IAgentTool? Tool,
-    AgentToolMetadata Metadata,
-    ToolSafetyAssessment Safety,
-    AgentToolResult Result);
+public sealed record ToolExecutionOutcome
+{
+    public ToolExecutionOutcome(
+        ToolExecutionRequest request,
+        IAgentTool? tool,
+        AgentToolMetadata metadata,
+        ToolSafetyAssessment safety,
+        AgentToolResult result,
+        ToolEffectPlan? effectPlan = null,
+        ToolRollbackPlan? rollbackPlan = null,
+        IReadOnlyList<AgentToolProgress>? progressEvents = null)
+    {
+        Request = request;
+        Tool = tool;
+        Metadata = metadata;
+        Safety = safety;
+        Result = result;
+        EffectPlan = effectPlan;
+        RollbackPlan = rollbackPlan;
+        ProgressEvents = progressEvents ?? [];
+    }
+
+    public ToolExecutionRequest Request { get; init; }
+    public IAgentTool? Tool { get; init; }
+    public AgentToolMetadata Metadata { get; init; }
+    public ToolSafetyAssessment Safety { get; init; }
+    public AgentToolResult Result { get; init; }
+    public ToolEffectPlan? EffectPlan { get; init; }
+    public ToolRollbackPlan? RollbackPlan { get; init; }
+    public IReadOnlyList<AgentToolProgress> ProgressEvents { get; init; }
+}
 
 public interface IToolExecutionScheduler
 {
@@ -299,12 +325,15 @@ public interface IToolExecutionScheduler
 public sealed class ToolExecutionScheduler : IToolExecutionScheduler
 {
     private readonly IAgentToolRegistry _registry;
-    private readonly ISandboxCommandService _sandbox;
+    private readonly IToolLifecycleRunner _lifecycleRunner;
 
-    public ToolExecutionScheduler(IAgentToolRegistry registry, ISandboxCommandService sandbox)
+    public ToolExecutionScheduler(
+        IAgentToolRegistry registry,
+        ISandboxCommandService sandbox,
+        IToolLifecycleRunner? lifecycleRunner = null)
     {
         _registry = registry;
-        _sandbox = sandbox;
+        _lifecycleRunner = lifecycleRunner ?? new DefaultToolLifecycleRunner(registry, sandbox);
     }
 
     public IReadOnlyList<ToolExecutionBatch> PlanBatches(IReadOnlyList<ToolExecutionPlanItem> items)
@@ -344,76 +373,7 @@ public sealed class ToolExecutionScheduler : IToolExecutionScheduler
     public async Task<ToolExecutionOutcome> ExecuteAsync(
         ToolExecutionRequest request,
         CancellationToken ct = default)
-    {
-        var toolName = AgentToolNames.Normalize(request.Invocation.ToolName);
-        if (!_registry.TryGet(toolName, out var tool))
-        {
-            var metadata = AgentToolMetadata.For(toolName, requiresApproval: true);
-            var safety = ToolSafetyAssessment.Blocked(
-                "tool",
-                $"Unknown tool: {toolName}",
-                "The requested tool is not registered.");
-            return new ToolExecutionOutcome(
-                request,
-                null,
-                metadata,
-                safety,
-                new AgentToolResult(false, string.Empty, safety.Warning ?? safety.Summary));
-        }
-
-        var validation = tool.ValidateInput(request.Invocation.ArgumentsJson);
-        if (!validation.Success)
-        {
-            var safety = ToolSafetyAssessment.Blocked(
-                "protocol",
-                "Tool arguments failed validation.",
-                validation.Error ?? "Invalid tool arguments.");
-            return new ToolExecutionOutcome(
-                request,
-                tool,
-                tool.Metadata,
-                safety,
-                new AgentToolResult(false, string.Empty, validation.Error));
-        }
-
-        var safetyAssessment = ToolSafetyKernel.Assess(
-            _sandbox,
-            request.Run.ChatId,
-            toolName,
-            request.Invocation.ArgumentsJson);
-        if (safetyAssessment.IsBlocked)
-        {
-            return new ToolExecutionOutcome(
-                request,
-                tool,
-                tool.Metadata,
-                safetyAssessment,
-                new AgentToolResult(
-                    false,
-                    string.Empty,
-                    $"Safety policy blocked this tool call. {safetyAssessment.Warning ?? safetyAssessment.Summary}"));
-        }
-
-        var maxOutputChars = Math.Max(
-            1,
-            Math.Min(request.MaxOutputChars, tool.Metadata.MaxResultSizeChars));
-        var result = await tool.ExecuteAsync(
-            new AgentToolExecutionContext(
-                request.Run.ChatId,
-                request.Run.Id,
-                request.Invocation.Id,
-                request.TimeoutSeconds,
-                maxOutputChars),
-            request.Invocation.ArgumentsJson,
-            ct);
-
-        return new ToolExecutionOutcome(
-            request,
-            tool,
-            tool.Metadata,
-            safetyAssessment,
-            LimitResult(result, maxOutputChars));
-    }
+        => await _lifecycleRunner.ExecuteAsync(request, ct);
 
     public async Task<IReadOnlyList<ToolExecutionOutcome>> ExecuteBatchAsync(
         IReadOnlyList<ToolExecutionRequest> requests,
@@ -459,16 +419,6 @@ public sealed class ToolExecutionScheduler : IToolExecutionScheduler
         return request;
     }
 
-    private static AgentToolResult LimitResult(AgentToolResult result, int maxChars)
-    {
-        if (result.Output.Length <= maxChars)
-            return result;
-
-        return result with
-        {
-            Output = result.Output[..maxChars] + "\n[tool output truncated by scheduler]"
-        };
-    }
 }
 
 public interface IAgentRunEngine

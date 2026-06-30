@@ -48,6 +48,9 @@ public static class AgentEventTypes
     public const string ApprovalGranted = "approval_granted";
     public const string ApprovalDenied = "approval_denied";
     public const string ToolStarted = "tool_started";
+    public const string ToolProgress = "tool_progress";
+    public const string ToolHookBlocked = "tool_hook_blocked";
+    public const string ToolRollbackPlan = "tool_rollback_plan";
     public const string ToolResult = "tool_result";
     public const string RuntimeMetrics = "runtime_metrics";
     public const string Error = "error";
