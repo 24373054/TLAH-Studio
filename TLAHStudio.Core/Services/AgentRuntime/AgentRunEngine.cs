@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
@@ -95,7 +96,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         IProgress<AgentRunFrame>? frameProgress = null,
         CancellationToken ct = default)
     {
-        using var scope = _eventStream.BeginRun(new AgentRun { Id = state.RunId });
+        var run = await _db.Set<AgentRun>().FirstAsync(r => r.Id == state.RunId, ct);
+        SyncRunState(run, state);
+        await _db.SaveChangesAsync(ct);
+
+        using var scope = _eventStream.BeginRun(run);
         var events = new List<AgentEvent>();
         var contextOptions = BuildContextOptions(options);
         string? assistantContent = null;
@@ -135,6 +140,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             {
                 ct.ThrowIfCancellationRequested();
                 var stepNumber = state.CurrentStep + 1;
+                state.CurrentStep = stepNumber;
+                SyncRunState(run, state);
 
                 // Create step record
                 var step = new AgentStep
@@ -156,7 +163,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     state.Messages = prepared.Messages;
                     step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
                     await SaveCheckpointAsync(state, ct);
-                    await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                    await AppendEventAsync(state, options, new AgentEventAppendRequest(
                         new AgentRun { Id = state.RunId },
                         AgentEventTypes.ContextCompacted,
                         prepared.Summary,
@@ -170,7 +177,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 if (guard.HasRepairs)
                 {
                     state.Messages = guard.Messages.ToList();
-                    await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                    await AppendEventAsync(state, options, new AgentEventAppendRequest(
                         new AgentRun { Id = state.RunId },
                         AgentEventTypes.ProtocolRepair,
                         "Tool protocol guard repaired messages.",
@@ -181,13 +188,13 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 if (guard.IsRejected)
                 {
-                    await FinalizeStepFailed(step, state, guard.RejectionReason!, events, ct);
+                    await FinalizeStepFailed(run, step, state, options, guard.RejectionReason!, events, ct);
                     assistantContent = $"Agent stopped: {guard.RejectionReason}";
                     break;
                 }
 
                 // Call the model
-                await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                await AppendEventAsync(state, options, new AgentEventAppendRequest(
                     new AgentRun { Id = state.RunId },
                     AgentEventTypes.ModelRequest,
                     $"Sending to model (step {stepNumber}, {guard.Messages.Count} msgs, {guard.Tools.Count} tools).",
@@ -211,7 +218,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     {
                         state.Messages = forced.Messages;
                         await SaveCheckpointAsync(state, ct);
-                        await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                        await AppendEventAsync(state, options, new AgentEventAppendRequest(
                             new AgentRun { Id = state.RunId },
                             AgentEventTypes.ContextCompacted,
                             "Context limit hit; compacted and retrying.",
@@ -232,7 +239,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 }
 
                 step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(lastResponse.RawResponse));
-                await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                await AppendEventAsync(state, options, new AgentEventAppendRequest(
                     new AgentRun { Id = state.RunId },
                     AgentEventTypes.ModelResponse,
                     $"Model returned HTTP {lastResponse.HttpStatus}.",
@@ -243,7 +250,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 // Provider error
                 if (lastResponse.HttpStatus is < 200 or >= 300 || !string.IsNullOrWhiteSpace(lastResponse.Error))
                 {
-                    await FinalizeStepFailed(step, state,
+                    await FinalizeStepFailed(run, step, state, options,
                         lastResponse.Error ?? $"HTTP {lastResponse.HttpStatus}", events, ct);
                     assistantContent = lastResponse.AssistantText;
                     break;
@@ -267,8 +274,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     step.CompletedAt = DateTime.UtcNow;
                     state.CurrentStep = stepNumber;
                     state.Status = AgentRunStatuses.Completed;
+                    SyncRunState(run, state, terminal: true);
                     state.Messages.Add(new MessagePayload("assistant", lastResponse.AssistantText, ReasoningContent: lastResponse.ReasoningText));
-                    await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                    await AppendEventAsync(state, options, new AgentEventAppendRequest(
                         new AgentRun { Id = state.RunId }, AgentEventTypes.RunCompleted,
                         "Run completed.", new { state.CurrentStep, state.MaxSteps }, step.Id), events, ct);
                     assistantContent = lastResponse.AssistantText;
@@ -287,7 +295,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 if (validToolCalls.Count == 0)
                 {
-                    await FinalizeStepFailed(step, state, "All tool calls were invalid.", events, ct);
+                    await FinalizeStepFailed(run, step, state, options, "All tool calls were invalid.", events, ct);
                     assistantContent = "Agent stopped: invalid tool requests.";
                     break;
                 }
@@ -349,10 +357,26 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     // Emit ToolRequest events for each tool call
                     foreach (var item in batchItems)
                     {
-                        await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                        var toolUseRender = item.Tool.RenderToolUse(item.ToolCall.ArgumentsJson, item.Safety);
+                        await AppendEventAsync(state, options, new AgentEventAppendRequest(
                             new AgentRun { Id = state.RunId }, AgentEventTypes.ToolRequest,
                             $"Model requested {item.ToolCall.Name}.",
-                            new { item.ToolCall.Name, safetyLevel = item.Safety.Level },
+                            new
+                            {
+                                item.ToolCall.Name,
+                                displayName = item.Tool.UserFacingName,
+                                activity = item.Tool.ActivityDescription,
+                                renderHint = item.Tool.RenderHint,
+                                interruptBehavior = item.Tool.InterruptBehavior,
+                                reason = ReadToolReason(item.ToolCall.ArgumentsJson),
+                                safetyLevel = item.Safety.Level,
+                                item.Safety.Category,
+                                item.Safety.IsReadOnly,
+                                item.Safety.IsWriteOperation,
+                                item.Safety.RequiresExplicitApproval,
+                                item.Safety.IsBlocked,
+                                render = toolUseRender
+                            },
                             step.Id, item.Invocation.Id,
                             Severity: AgentEventSeverities.Info), events, ct);
                     }
@@ -379,12 +403,25 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             state.Status = AgentRunStatuses.AwaitingApproval;
                             state.PendingToolInvocationId = item.Invocation.Id;
                             state.CurrentStep = stepNumber;
+                            SyncRunState(run, state);
                             await SaveCheckpointAsync(state, ct);
                             await _db.SaveChangesAsync(ct);
-                            await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                            var toolUseRender = item.Tool.RenderToolUse(item.ToolCall.ArgumentsJson, item.Safety);
+                            await AppendEventAsync(state, options, new AgentEventAppendRequest(
                                 new AgentRun { Id = state.RunId }, AgentEventTypes.ApprovalRequested,
                                 $"Approval needed: {item.ToolCall.Name}.",
-                                new { item.ToolCall.Name, item.Safety.Level, item.Safety.Warning }, step.Id, item.Invocation.Id,
+                                new
+                                {
+                                    item.ToolCall.Name,
+                                    displayName = item.Tool.UserFacingName,
+                                    activity = item.Tool.ActivityDescription,
+                                    renderHint = item.Tool.RenderHint,
+                                    interruptBehavior = item.Tool.InterruptBehavior,
+                                    item.Safety.Level,
+                                    item.Safety.Warning,
+                                    autoApproveRequested = options.AutoApproveTools,
+                                    render = toolUseRender
+                                }, step.Id, item.Invocation.Id,
                                 Severity: item.Safety.RequiresExplicitApproval ? AgentEventSeverities.Warning : AgentEventSeverities.Info), events, ct);
 
                             frameProgress?.Report(new AgentRunFrame(stepNumber, AgentRunFrameKinds.ApprovalNeeded, events.ToArray()));
@@ -411,6 +448,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 }
 
                 state.CurrentStep = stepNumber;
+                SyncRunState(run, state);
             }
 
             // Step budget finalization
@@ -421,11 +459,13 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 {
                     assistantContent = finalResult;
                     state.Status = AgentRunStatuses.Completed;
+                    SyncRunState(run, state, terminal: true);
                 }
                 else
                 {
                     state.Status = AgentRunStatuses.Paused;
-                    await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+                    SyncRunState(run, state);
+                    await AppendEventAsync(state, options, new AgentEventAppendRequest(
                         new AgentRun { Id = state.RunId }, AgentEventTypes.RunPaused,
                         "Step budget reached.", new { state.CurrentStep, state.MaxSteps },
                         Severity: AgentEventSeverities.Warning), events, ct);
@@ -439,8 +479,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         {
             state.Status = AgentRunStatuses.Cancelled;
             state.ErrorMessage = "Stopped by the user.";
+            SyncRunState(run, state, terminal: true);
+            await _db.SaveChangesAsync(CancellationToken.None);
             await SaveCheckpointAsync(state, CancellationToken.None);
-            await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
                 new AgentRun { Id = state.RunId }, AgentEventTypes.RunCancelled,
                 "Cancelled.", new { state.CurrentStep, state.MaxSteps },
                 Severity: AgentEventSeverities.Warning), events, CancellationToken.None);
@@ -450,8 +492,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         {
             state.Status = AgentRunStatuses.Failed;
             state.ErrorMessage = SecretRedactor.RedactText(ex.Message);
+            SyncRunState(run, state, terminal: true);
+            await _db.SaveChangesAsync(CancellationToken.None);
             await SaveCheckpointAsync(state, CancellationToken.None);
-            await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
                 new AgentRun { Id = state.RunId }, AgentEventTypes.Error,
                 state.ErrorMessage, new { exceptionType = ex.GetType().Name },
                 Severity: AgentEventSeverities.Error), events, CancellationToken.None);
@@ -511,12 +555,144 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         """;
     }
 
-    private async Task<AgentEvent> AppendEventAsync(Guid runId, AgentEventAppendRequest request,
-        List<AgentEvent> events, CancellationToken ct)
+    private async Task<AgentEvent> AppendEventAsync(
+        AgentRunState state,
+        AgentEngineOptions options,
+        AgentEventAppendRequest request,
+        List<AgentEvent> events,
+        CancellationToken ct)
     {
         var evt = await _eventStream.AppendAsync(request, ct);
         events.Add(evt);
+        if (options.Progress != null)
+        {
+            var snapshot = await BuildSnapshotAsync(state, ct);
+            options.Progress.Report(new AgentProgressUpdate(
+                evt.AgentRunId,
+                evt.SequenceNumber,
+                evt.EventType,
+                evt.Severity,
+                evt.Summary,
+                evt.CreatedAt,
+                snapshot,
+                evt.AgentStepId,
+                evt.ToolInvocationId,
+                evt.DataJson));
+        }
+
         return evt;
+    }
+
+    private async Task<AgentRunSnapshot> BuildSnapshotAsync(AgentRunState state, CancellationToken ct)
+    {
+        var pending = await _db.Set<ToolInvocation>()
+            .Where(i => i.AgentRunId == state.RunId &&
+                        i.Status == ToolInvocationStatuses.AwaitingApproval)
+            .OrderBy(i => i.CreatedAt)
+            .Select(i => new ToolInvocationSnapshot(
+                i.Id,
+                i.ToolName,
+                i.ArgumentsJson,
+                i.Status,
+                i.SafetyLevel,
+                i.SafetySummary,
+                i.SafetyJson,
+                null))
+            .FirstOrDefaultAsync(ct);
+        var artifactCount = await _db.Set<AgentArtifact>()
+            .CountAsync(a => a.AgentRunId == state.RunId, ct);
+        return new AgentRunSnapshot(
+            state.RunId,
+            state.ChatId,
+            state.TurnId,
+            state.Status,
+            state.CurrentStep,
+            state.MaxSteps,
+            state.ErrorMessage,
+            artifactCount,
+            pending);
+    }
+
+    private static void SyncRunState(AgentRun run, AgentRunState state, bool terminal = false)
+    {
+        run.Status = state.Status;
+        run.CurrentStep = state.CurrentStep;
+        run.MaxSteps = state.MaxSteps;
+        run.ErrorMessage = state.ErrorMessage;
+        run.UpdatedAt = DateTime.UtcNow;
+        if (terminal && run.CompletedAt == null)
+            run.CompletedAt = DateTime.UtcNow;
+    }
+
+    private async Task UpsertArtifactsAsync(
+        Guid runId,
+        IReadOnlyList<AgentToolArtifact>? artifacts,
+        CancellationToken ct)
+    {
+        if (artifacts is not { Count: > 0 })
+            return;
+
+        foreach (var artifact in artifacts)
+        {
+            var existing = await _db.Set<AgentArtifact>().FirstOrDefaultAsync(
+                a => a.AgentRunId == runId && a.RelativePath == artifact.RelativePath,
+                ct);
+            if (existing == null)
+            {
+                _db.Set<AgentArtifact>().Add(new AgentArtifact
+                {
+                    AgentRunId = runId,
+                    RelativePath = artifact.RelativePath,
+                    ContentType = artifact.ContentType,
+                    SizeBytes = artifact.SizeBytes,
+                    Sha256 = artifact.Sha256
+                });
+                continue;
+            }
+
+            existing.ContentType = artifact.ContentType;
+            existing.SizeBytes = artifact.SizeBytes;
+            existing.Sha256 = artifact.Sha256;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+
+    private static string FormatToolResultMessage(
+        int step,
+        string toolName,
+        AgentToolResult result,
+        AgentToolRenderBlock? render = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Agent tool result #{step}");
+        sb.AppendLine($"Tool: {render?.Title ?? AgentToolUx.UserFacingName(toolName)}");
+        if (!string.IsNullOrWhiteSpace(render?.Subtitle))
+            sb.AppendLine($"Summary: {render.Subtitle}");
+        sb.AppendLine($"Success: {result.Success}");
+        var output = render?.Body ?? result.Output;
+        if (!string.IsNullOrWhiteSpace(output))
+            sb.AppendLine(output.TrimEnd());
+        if (!string.IsNullOrWhiteSpace(result.Error))
+            sb.AppendLine($"Error: {result.Error}");
+        if (result.Artifacts is { Count: > 0 })
+        {
+            sb.AppendLine("Artifacts:");
+            foreach (var artifact in result.Artifacts)
+                sb.AppendLine($"- {artifact.RelativePath} ({artifact.SizeBytes} bytes)");
+        }
+
+        var text = sb.ToString().TrimEnd();
+        if (string.Equals(toolName, AgentToolNames.FileSend, StringComparison.OrdinalIgnoreCase) &&
+            result.Artifacts is { Count: > 0 })
+        {
+            text = MessageAttachmentFormatter.Compose(
+                text,
+                result.Artifacts
+                    .Select(a => new MessageAttachment(a.RelativePath, a.ContentType, a.SizeBytes, a.Sha256))
+                    .ToArray());
+        }
+
+        return text;
     }
 
     private async Task SaveCheckpointAsync(AgentRunState state, CancellationToken ct)
@@ -526,8 +702,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             JsonSerializer.Serialize(state), ct);
     }
 
-    private async Task FinalizeStepFailed(AgentStep step, AgentRunState state, string error,
-        List<AgentEvent> events, CancellationToken ct)
+    private async Task FinalizeStepFailed(
+        AgentRun run,
+        AgentStep step,
+        AgentRunState state,
+        AgentEngineOptions options,
+        string error,
+        List<AgentEvent> events,
+        CancellationToken ct)
     {
         step.Kind = "error";
         step.Status = AgentStepStatuses.Failed;
@@ -535,7 +717,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         step.CompletedAt = DateTime.UtcNow;
         state.Status = AgentRunStatuses.Failed;
         state.ErrorMessage = step.Summary;
-        await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+        SyncRunState(run, state, terminal: true);
+        await AppendEventAsync(state, options, new AgentEventAppendRequest(
             new AgentRun { Id = state.RunId }, AgentEventTypes.Error, step.Summary,
             Severity: AgentEventSeverities.Error), events, ct);
         await SaveCheckpointAsync(state, ct);
@@ -548,10 +731,17 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         item.Invocation.Approved = false;
         item.Invocation.ApprovedAt = DateTime.UtcNow;
         item.Invocation.Status = reason == "denied_by_policy" ? ToolInvocationStatuses.Denied : ToolInvocationStatuses.Failed;
-        await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+        await AppendEventAsync(state, options, new AgentEventAppendRequest(
             new AgentRun { Id = state.RunId }, reason == "denied_by_policy" ? AgentEventTypes.ApprovalDenied : AgentEventTypes.Error,
             $"Invocation {reason}: {item.ToolCall.Name}.",
-            new { item.ToolCall.Name, item.Safety.Level }, step.Id, item.Invocation.Id,
+            new
+            {
+                item.ToolCall.Name,
+                displayName = item.Tool.UserFacingName,
+                activity = item.Tool.ActivityDescription,
+                item.Safety.Level,
+                item.Safety.Warning
+            }, step.Id, item.Invocation.Id,
             Severity: AgentEventSeverities.Warning), events, ct);
         await CompleteInvocationWithResultAsync(state, item, step,
             new AgentToolResult(false, string.Empty, reason == "denied_by_policy" ? "Denied by policy." : "Blocked by safety."),
@@ -598,9 +788,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         item.Invocation.Status = ToolInvocationStatuses.Running;
         item.Invocation.StartedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+        var toolUseRender = item.Tool.RenderToolUse(item.ToolCall.ArgumentsJson, item.Safety);
+        await AppendEventAsync(state, options, new AgentEventAppendRequest(
             new AgentRun { Id = state.RunId }, AgentEventTypes.ToolStarted,
-            $"Running {item.ToolCall.Name}.", new { item.ToolCall.Name }, step.Id, item.Invocation.Id), events, ct);
+            $"Running {item.ToolCall.Name}.",
+            new
+            {
+                item.ToolCall.Name,
+                displayName = item.Tool.UserFacingName,
+                activity = item.Tool.ActivityDescription,
+                renderHint = item.Tool.RenderHint,
+                interruptBehavior = item.Tool.InterruptBehavior,
+                render = toolUseRender
+            }, step.Id, item.Invocation.Id), events, ct);
 
         var scheduled = await _toolExecutionScheduler.ExecuteAsync(
             new ToolExecutionRequest(CreateRunShell(state), item.Invocation,
@@ -624,10 +824,15 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         if (persistence.Persisted)
         {
             contextResult = persistence.ContextResult;
-            await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
                 new AgentRun { Id = state.RunId }, AgentEventTypes.ToolResultPersisted,
                 $"Large output persisted: {item.ToolCall.Name}.",
-                new { item.ToolCall.Name, persistence.PersistedPath }, step.Id, item.Invocation.Id), events, ct);
+                new
+                {
+                    item.ToolCall.Name,
+                    persistence.PersistedPath,
+                    artifact = persistence.PersistedArtifact
+                }, step.Id, item.Invocation.Id), events, ct);
         }
 
         item.Invocation.ResultJson = contextResult.ToJson();
@@ -635,37 +840,43 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         step.OutputJson = item.Invocation.ResultJson;
         step.CompletedAt = DateTime.UtcNow;
 
+        var resultRender = item.Tool.RenderToolResult(contextResult);
+        var toolContent = FormatToolResultMessage(
+            step.StepNumber,
+            item.ToolCall.Name,
+            contextResult,
+            resultRender);
+
         // Persist tool result message to DB (compat with old loop behavior)
         _db.Set<Models.Message>().Add(new Models.Message
         {
             ChatId = state.ChatId, Role = "tool",
-            Content = contextResult.Output,
+            Content = toolContent,
             TurnId = state.TurnId, SequenceNum = state.SequenceNum++
         });
 
-        // Persist artifacts
-        if (contextResult.Artifacts != null)
-        {
-            foreach (var artifact in contextResult.Artifacts)
-            {
-                _db.Set<AgentArtifact>().Add(new AgentArtifact
-                {
-                    AgentRunId = state.RunId, RelativePath = artifact.RelativePath,
-                    ContentType = artifact.ContentType, SizeBytes = artifact.SizeBytes,
-                    Sha256 = artifact.Sha256
-                });
-            }
-        }
+        await UpsertArtifactsAsync(state.RunId, contextResult.Artifacts, ct);
 
-        state.Messages.Add(new MessagePayload("tool", contextResult.Output,
+        state.Messages.Add(new MessagePayload("tool", contextResult.ToJson(),
             item.Invocation.ProviderCallId));
         await SaveCheckpointAsync(state, ct);
         await _db.SaveChangesAsync(ct);
 
-        await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+        await AppendEventAsync(state, options, new AgentEventAppendRequest(
             new AgentRun { Id = state.RunId }, AgentEventTypes.ToolResult,
             result.Success ? $"{item.ToolCall.Name} completed." : $"{item.ToolCall.Name} failed.",
-            new { item.ToolCall.Name, result.Success, error = result.Error },
+            new
+            {
+                item.ToolCall.Name,
+                displayName = item.Tool.UserFacingName,
+                activity = item.Tool.ActivityDescription,
+                renderHint = item.Tool.RenderHint,
+                contextResult.Success,
+                isTruncated = item.Tool.IsResultTruncated(contextResult),
+                error = contextResult.Error,
+                artifactCount = contextResult.Artifacts?.Count ?? 0,
+                render = resultRender
+            },
             step.Id, item.Invocation.Id,
             Severity: result.Success ? AgentEventSeverities.Info : AgentEventSeverities.Error), events, ct);
     }
@@ -709,9 +920,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             step.Status = AgentStepStatuses.Completed;
             step.CompletedAt = DateTime.UtcNow;
             state.CurrentStep = stepNumber;
+            state.MaxSteps = Math.Max(state.MaxSteps, stepNumber);
+            state.Status = AgentRunStatuses.Completed;
             state.Messages.Add(new MessagePayload("assistant", response.AssistantText));
             await SaveCheckpointAsync(state, ct);
-            await AppendEventAsync(state.RunId, new AgentEventAppendRequest(
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
                 new AgentRun { Id = state.RunId }, AgentEventTypes.RunCompleted,
                 "Run completed after step-budget finalization.",
                 new { state.CurrentStep, state.MaxSteps }, step.Id), events, ct);

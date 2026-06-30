@@ -1,14 +1,14 @@
 {
-  "version": "3.0.0",
+  "version": "3.2.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.0.0.exe",
-  "sha256": "ada8ccdac10711cd84ef902d0006fb201506a6fa4f9bbbde8fe60bf1e13d172e",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.2.0.exe",
+  "sha256": "e506e1b9cf39474d3010ae922d527bfc8a1c7f1cd8ecff9923fed5571b5fdf5f",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Professional Agent GA.\n\nHighlights:\n- Agent runtime v3 with durable checkpoint/resume, event replay, live event publishing, and protocol guard hardening.\n- Tool platform improvements for workspace code operations, file transfer artifacts, MCP configuration, permissions, and safety validation.\n- Context and memory improvements for long-running tasks, compacted context boundaries, persisted large tool output, and project memory.\n- UI and release reliability fixes from 2.x, including stable update metadata, installer version consistency, and regression coverage.\n\nFixes:\n- Restored approval-resume tests and fixed resumed tools running in the wrong sandbox.\n- Event subscriptions now replay without background DbContext contention and publish live events to all subscribers.\n- Step-budget finalization records a completed event and persists a usable final answer.\n- Tool scheduling keeps provider tool-call IDs so repeated same-name calls do not collide.\n- App, updater, installer manifest, version.json, and latest.json are synchronized to prevent update loops.",
+  "releaseNotes": "Agent activity sidebar release.\n\nHighlights:\n- Moves detailed Agent execution activity out of the conversation stream into a dedicated right-side activity panel.\n- Keeps Agent activity persistent by loading all saved runs and events for the selected chat, not only the currently running task.\n- Adds a collapsible panel layout so the conversation and input return to full width when the activity panel is closed.\n- Adds responsive sizing and vertical-only scrolling to keep activity content from overlapping, clipping the chat input, or creating horizontal scroll.\n\nFixes:\n- Removes the transient live activity card from the message list so completed runs no longer leave stale spinning activity UI behind.\n- Preserves live updates in the new panel while continuing to show lightweight run status in the top status bar.\n\nValidation:\n- Added regression coverage for persistent Agent activity history ordering.\n- Passed Release tests and App/Updater builds.",
   "forceUpdate": true,
-  "minSupportedVersion": "3.0.0",
+  "minSupportedVersion": "3.2.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96966368
+  "installerSizeBytes": 96969776
 }

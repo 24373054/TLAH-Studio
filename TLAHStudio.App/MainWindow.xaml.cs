@@ -78,6 +78,12 @@ public sealed partial class MainWindow : Window
 
         DebugPanelView.Bind(DebugVM);
         ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService, SandboxCommandService, SoundService);
+        AgentActivityPanelView.Bind(ChatVM, UiDensityService, SoundService);
+        ChatVM.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ChatPageViewModel.IsAgentActivityPanelOpen))
+                DispatcherQueue.TryEnqueue(UpdateAgentActivityPanelLayout);
+        };
         ChatVM.AgentApprovalRequested += OnAgentApprovalRequested;
         DebugVM.TurnReplayed += async (_, turnId) =>
         {
@@ -106,6 +112,7 @@ public sealed partial class MainWindow : Window
         RootGrid.SizeChanged += OnRootGridSizeChanged;
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnGlobalKeyDown), true);
         Activated += OnFirst;
+        UpdateAgentActivityPanelLayout();
     }
 
     private async void OnAgentApprovalRequested(object? sender, AgentApprovalRequest request)
@@ -371,10 +378,14 @@ public sealed partial class MainWindow : Window
     {
         var isNarrow = e.NewSize.Width < 900;
         if (_isNarrowLayout == isNarrow)
+        {
+            UpdateAgentActivityPanelLayout();
             return;
+        }
 
         _isNarrowLayout = isNarrow;
         SidebarView.SetResponsiveCompact(isNarrow);
+        UpdateAgentActivityPanelLayout();
     }
 
     private async void OnGlobalKeyDown(object sender, KeyRoutedEventArgs e)
@@ -446,6 +457,44 @@ public sealed partial class MainWindow : Window
     }
 
     public void FocusMessageInput() => MessageInputView.FocusMessageInput();
+
+    public void ToggleAgentActivityPanel(bool? open = null)
+    {
+        ChatVM.IsAgentActivityPanelOpen = open ?? !ChatVM.IsAgentActivityPanelOpen;
+        UpdateAgentActivityPanelLayout();
+    }
+
+    private void UpdateAgentActivityPanelLayout()
+    {
+        if (AgentActivityColumn == null || AgentActivityPanelView == null)
+            return;
+
+        var availableWidth = WorkbenchGrid.ActualWidth;
+        if (double.IsNaN(availableWidth) || availableWidth <= 0)
+            availableWidth = Math.Max(0, RootGrid.ActualWidth - SidebarView.ActualWidth);
+
+        var canShow = ChatVM.IsAgentActivityPanelOpen && availableWidth >= 780;
+        if (!canShow)
+        {
+            AgentActivityPanelView.Visibility = Visibility.Collapsed;
+            AgentActivityColumn.Width = new GridLength(0);
+            return;
+        }
+
+        var targetWidth = Math.Clamp(availableWidth * 0.30, 320, 420);
+        if (availableWidth - targetWidth < 520)
+            targetWidth = Math.Max(300, availableWidth - 520);
+
+        if (targetWidth < 300)
+        {
+            AgentActivityPanelView.Visibility = Visibility.Collapsed;
+            AgentActivityColumn.Width = new GridLength(0);
+            return;
+        }
+
+        AgentActivityColumn.Width = new GridLength(targetWidth);
+        AgentActivityPanelView.Visibility = Visibility.Visible;
+    }
 
     private static bool IsKeyDown(VirtualKey key) =>
         Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(key)

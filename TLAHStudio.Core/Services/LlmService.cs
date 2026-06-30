@@ -345,22 +345,10 @@ public class LlmService : ILlmService
             maxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
             options.AutoApproveTools, options.ContextBudgetTokens,
             options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
-            options.OutputStream);
+            options.OutputStream,
+            options.Progress);
 
         var result = await _agentRunEngineV2.RunAsync(runState, engineOptions, ct: ct);
-
-        // Forward engine events to agent progress sink (compat with old loop)
-        if (options.Progress != null)
-        {
-            var snapshot = await ToAgentRunSnapshotAsync(run, ct);
-            foreach (var evt in result.Events)
-            {
-                options.Progress.Report(new AgentProgressUpdate(
-                    evt.AgentRunId, evt.SequenceNumber, evt.EventType,
-                    evt.Severity, evt.Summary, evt.CreatedAt, snapshot,
-                    evt.AgentStepId, evt.ToolInvocationId, evt.DataJson));
-            }
-        }
 
         // Sync state back to DB
         run.CurrentStep = result.FinalState.CurrentStep;
@@ -448,7 +436,8 @@ public class LlmService : ILlmService
             run.MaxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
             options.AutoApproveTools, options.ContextBudgetTokens,
             options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
-            options.OutputStream);
+            options.OutputStream,
+            options.Progress);
 
         var result = await _agentRunEngineV2.ResumeAsync(runState, engineOptions, ct: ct);
 
@@ -497,6 +486,74 @@ public class LlmService : ILlmService
             .OrderByDescending(r => r.CreatedAt)
             .FirstOrDefaultAsync(ct);
         return run == null ? null : await ToAgentRunSnapshotAsync(run, ct);
+    }
+
+    public async Task<IReadOnlyList<AgentActivityRunSnapshot>> GetAgentActivityAsync(
+        Guid chatId,
+        CancellationToken ct = default)
+    {
+        var runs = await _db.Set<AgentRun>()
+            .AsNoTracking()
+            .Where(r => r.ChatId == chatId)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new
+            {
+                r.Id,
+                r.ChatId,
+                r.TurnId,
+                r.Status,
+                r.UserRequest,
+                r.CurrentStep,
+                r.MaxSteps,
+                r.ErrorMessage,
+                r.CreatedAt,
+                r.UpdatedAt,
+                r.CompletedAt,
+                ArtifactCount = _db.Set<AgentArtifact>().Count(a => a.AgentRunId == r.Id)
+            })
+            .ToListAsync(ct);
+
+        if (runs.Count == 0)
+            return Array.Empty<AgentActivityRunSnapshot>();
+
+        var runIds = runs.Select(r => r.Id).ToArray();
+        var events = await _db.Set<AgentEvent>()
+            .AsNoTracking()
+            .Where(e => runIds.Contains(e.AgentRunId))
+            .OrderBy(e => e.AgentRunId)
+            .ThenBy(e => e.SequenceNumber)
+            .Select(e => new AgentActivityEventSnapshot(
+                e.Id,
+                e.AgentRunId,
+                e.AgentStepId,
+                e.ToolInvocationId,
+                e.SequenceNumber,
+                e.EventType,
+                e.Severity,
+                e.Summary,
+                e.DataJson,
+                e.CreatedAt))
+            .ToListAsync(ct);
+        var eventsByRun = events
+            .GroupBy(e => e.AgentRunId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<AgentActivityEventSnapshot>)g.ToList());
+
+        return runs
+            .Select(r => new AgentActivityRunSnapshot(
+                r.Id,
+                r.ChatId,
+                r.TurnId,
+                r.Status,
+                r.UserRequest,
+                r.CurrentStep,
+                r.MaxSteps,
+                r.ErrorMessage,
+                r.ArtifactCount,
+                r.CreatedAt,
+                r.UpdatedAt,
+                r.CompletedAt,
+                eventsByRun.GetValueOrDefault(r.Id) ?? Array.Empty<AgentActivityEventSnapshot>()))
+            .ToList();
     }
 
     public async Task SetAgentToolApprovalAsync(
@@ -566,6 +623,12 @@ public class LlmService : ILlmService
             ?? throw new InvalidOperationException($"Agent run not found: {agentRunId}");
         if (run.Status == AgentRunStatuses.Completed)
             return;
+        var latestStep = await _db.Set<AgentStep>()
+            .Where(s => s.AgentRunId == run.Id)
+            .Select(s => (int?)s.StepNumber)
+            .MaxAsync(ct) ?? 0;
+        if (latestStep > run.CurrentStep)
+            run.CurrentStep = latestStep;
         run.Status = AgentRunStatuses.Cancelled;
         run.UpdatedAt = DateTime.UtcNow;
         run.CompletedAt = DateTime.UtcNow;

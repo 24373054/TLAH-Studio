@@ -23,6 +23,8 @@ public partial class ChatPageViewModel : ObservableObject
     private CancellationTokenSource? _sendCts;
     private IProgress<AgentProgressUpdate>? _activeAgentProgress;
     private AssistantStreamState? _activeStream;
+    private string? _activeAgentRequest;
+    private const string AgentActivityPanelStorageKey = "tlah-agent-activity-panel-open";
 
     /// <summary>
     /// M2.8.0: Typed content blocks for virtualized rendering.
@@ -34,6 +36,7 @@ public partial class ChatPageViewModel : ObservableObject
 
     public ObservableCollection<Message> Messages { get; } = new();
     public ObservableCollection<AgentProgressLine> AgentProgressLines { get; } = new();
+    public ObservableCollection<AgentActivityRun> AgentActivityRuns { get; } = new();
 
     [ObservableProperty]
     private string _inputText = string.Empty;
@@ -69,6 +72,16 @@ public partial class ChatPageViewModel : ObservableObject
     private string _agentLiveSummary = string.Empty;
 
     [ObservableProperty]
+    private bool _isAgentActivityPanelOpen =
+        !string.Equals(LocalStore.Get(AgentActivityPanelStorageKey), "false", StringComparison.OrdinalIgnoreCase);
+
+    [ObservableProperty]
+    private bool _hasAgentActivity;
+
+    [ObservableProperty]
+    private string _agentActivitySummary = "No agent activity yet.";
+
+    [ObservableProperty]
     private Guid? _currentAgentRunId;
 
     [ObservableProperty]
@@ -92,6 +105,11 @@ public partial class ChatPageViewModel : ObservableObject
         _appState.ChatDeselected += OnChatDeselected;
     }
 
+    partial void OnIsAgentActivityPanelOpenChanged(bool value)
+    {
+        LocalStore.Set(AgentActivityPanelStorageKey, value ? "true" : "false");
+    }
+
     private async void OnChatSelected(object? sender, Guid chatId)
     {
         await LoadChatAsync(chatId);
@@ -103,6 +121,7 @@ public partial class ChatPageViewModel : ObservableObject
         Messages.Clear();
         ChatMessageBlocks.Clear();
         ClearAgentProgress();
+        ClearAgentActivity();
         UpdateAgentStatus(null);
     }
 
@@ -118,6 +137,7 @@ public partial class ChatPageViewModel : ObservableObject
             Messages.Clear();
             ChatMessageBlocks.Clear();
             ClearAgentProgress();
+            ClearAgentActivity();
             if (chat?.Messages != null)
             {
                 var msgList = chat.Messages.ToList();
@@ -128,6 +148,7 @@ public partial class ChatPageViewModel : ObservableObject
                 foreach (var block in _chatRenderer.RenderAll(msgList))
                     ChatMessageBlocks.Add(block);
             }
+            await LoadAgentActivityAsync(chatId);
             UpdateAgentStatus(await _llmService.GetLatestAgentRunAsync(chatId));
         }
         catch (Exception e)
@@ -151,6 +172,9 @@ public partial class ChatPageViewModel : ObservableObject
 
         var content = InputText;
         var role = SelectedRole == "system" ? "system" : null;
+        var agentMode = IsAgentModeEnabled;
+        if (agentMode)
+            _activeAgentRequest = content;
 
         InputText = string.Empty;
         var optimisticMessage = AddOptimisticUserMessage(content, role ?? "user");
@@ -162,8 +186,8 @@ public partial class ChatPageViewModel : ObservableObject
 
         try
         {
-            var agentProgress = IsAgentModeEnabled ? BeginAgentProgress(reset: true) : null;
-            var result = IsAgentModeEnabled
+            var agentProgress = agentMode ? BeginAgentProgress(reset: true) : null;
+            var result = agentMode
                 ? await _llmService.RunAgentTaskAsync(
                     _appState.CurrentChatId.Value,
                     content,
@@ -177,11 +201,13 @@ public partial class ChatPageViewModel : ObservableObject
                     _sendCts.Token,
                     stream.Progress);
 
-            if (IsAgentModeEnabled)
+            if (agentMode)
                 result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
 
             await stream.WaitForFinalDrainAsync(_sendCts.Token);
             ApplySendResultToLiveMessages(result, optimisticMessage, stream);
+            if (agentMode)
+                await ReloadCurrentChatAsync();
 
             // Notify debug panel of the new turn
             TurnCreated?.Invoke(this, result.Turn.Id);
@@ -201,6 +227,7 @@ public partial class ChatPageViewModel : ObservableObject
         finally
         {
             IsAgentLiveVisible = false;
+            _activeAgentRequest = null;
             _activeStream = null;
             IsSending = false;
         }
@@ -239,6 +266,7 @@ public partial class ChatPageViewModel : ObservableObject
             result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
             await stream.WaitForFinalDrainAsync(_sendCts.Token);
             ApplySendResultToLiveMessages(result, userMessage: null, stream);
+            await ReloadCurrentChatAsync();
             TurnCreated?.Invoke(this, result.Turn.Id);
         }
         catch (OperationCanceledException)
@@ -252,6 +280,7 @@ public partial class ChatPageViewModel : ObservableObject
         finally
         {
             IsAgentLiveVisible = false;
+            _activeAgentRequest = null;
             _activeStream = null;
             IsSending = false;
         }
@@ -699,11 +728,102 @@ public partial class ChatPageViewModel : ObservableObject
         }
 
         AgentProgressLines.Add(line);
-        while (AgentProgressLines.Count > 18)
+        while (AgentProgressLines.Count > 200)
             AgentProgressLines.RemoveAt(0);
 
+        UpsertAgentActivity(update, line);
         AgentLiveSummary = line.Text;
         IsAgentLiveVisible = true;
+    }
+
+    private async Task LoadAgentActivityAsync(Guid chatId)
+    {
+        var snapshots = await _llmService.GetAgentActivityAsync(chatId);
+        AgentActivityRuns.Clear();
+        foreach (var snapshot in snapshots)
+        {
+            var run = AgentActivityRun.FromSnapshot(snapshot);
+            foreach (var evt in snapshot.Events)
+            {
+                var line = FormatAgentProgress(snapshot, evt);
+                if (line != null)
+                    run.Lines.Add(line);
+            }
+            AgentActivityRuns.Add(run);
+        }
+        RefreshAgentActivityState();
+    }
+
+    private void ClearAgentActivity()
+    {
+        AgentActivityRuns.Clear();
+        HasAgentActivity = false;
+        AgentActivitySummary = "No agent activity yet.";
+        AgentActivityChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UpsertAgentActivity(AgentProgressUpdate update, AgentProgressLine line)
+    {
+        var run = AgentActivityRuns.FirstOrDefault(r => r.Id == update.AgentRunId);
+        if (run == null)
+        {
+            run = AgentActivityRun.FromLive(update.Run, _activeAgentRequest);
+            AgentActivityRuns.Insert(0, run);
+        }
+        else
+        {
+            run.UpdateFromLive(update.Run);
+            var index = AgentActivityRuns.IndexOf(run);
+            if (index > 0)
+            {
+                AgentActivityRuns.RemoveAt(index);
+                AgentActivityRuns.Insert(0, run);
+            }
+        }
+
+        if (!run.Lines.Any(l => l.SequenceNumber == line.SequenceNumber))
+        {
+            run.Lines.Add(line);
+            run.Lines.Sort(static (a, b) => a.SequenceNumber.CompareTo(b.SequenceNumber));
+        }
+
+        RefreshAgentActivityState();
+    }
+
+    private void RefreshAgentActivityState()
+    {
+        HasAgentActivity = AgentActivityRuns.Count > 0;
+        AgentActivitySummary = AgentActivityRuns.FirstOrDefault() is { } latest
+            ? $"{latest.StatusText} · {latest.Lines.Count} event{(latest.Lines.Count == 1 ? string.Empty : "s")}"
+            : "No agent activity yet.";
+        AgentActivityChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static AgentProgressLine? FormatAgentProgress(
+        AgentActivityRunSnapshot run,
+        AgentActivityEventSnapshot evt)
+    {
+        var snapshot = new AgentRunSnapshot(
+            run.Id,
+            run.ChatId,
+            run.TurnId,
+            run.Status,
+            run.CurrentStep,
+            run.MaxSteps,
+            run.ErrorMessage,
+            run.ArtifactCount,
+            null);
+        return FormatAgentProgress(new AgentProgressUpdate(
+            run.Id,
+            evt.SequenceNumber,
+            evt.EventType,
+            evt.Severity,
+            evt.Summary,
+            evt.CreatedAt,
+            snapshot,
+            evt.AgentStepId,
+            evt.ToolInvocationId,
+            evt.DataJson));
     }
 
     private static AgentProgressLine? FormatAgentProgress(AgentProgressUpdate update)
@@ -730,9 +850,10 @@ public partial class ChatPageViewModel : ObservableObject
         };
 
         var render = TryReadRender(update.DataJson);
+        var stepNumber = TryReadStepNumber(update.DataJson) ?? update.Run.CurrentStep;
         var text = update.EventType switch
         {
-            AgentEventTypes.ModelRequest => $"Planning step {Math.Max(update.Run.CurrentStep + 1, 1)}...",
+            AgentEventTypes.ModelRequest => $"Planning step {Math.Max(stepNumber, 1)}...",
             AgentEventTypes.ModelResponse => TryReadToolCount(update.DataJson) > 0
                 ? "Model selected a tool call."
                 : "Model returned a response.",
@@ -782,6 +903,19 @@ public partial class ChatPageViewModel : ObservableObject
         catch
         {
             return 0;
+        }
+    }
+
+    private static int? TryReadStepNumber(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return TryReadInt(doc.RootElement, "stepNumber");
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -913,6 +1047,7 @@ public partial class ChatPageViewModel : ObservableObject
     public event EventHandler<Guid>? TurnCreated;
     public event EventHandler<AgentApprovalRequest>? AgentApprovalRequested;
     public event EventHandler? StreamingMessageUpdated;
+    public event EventHandler? AgentActivityChanged;
     protected virtual void OnTurnCreated(Guid turnId) =>
         TurnCreated?.Invoke(this, turnId);
 }
@@ -993,6 +1128,159 @@ public sealed record AgentProgressLine(
     string? RenderHint = null,
     bool IsTruncated = false,
     string? PrimaryPath = null);
+
+public sealed class AgentActivityRun
+{
+    public Guid Id { get; private set; }
+    public Guid ChatId { get; private set; }
+    public Guid TurnId { get; private set; }
+    public string Status { get; private set; } = AgentRunStatuses.Running;
+    public string UserRequest { get; private set; } = string.Empty;
+    public int CurrentStep { get; private set; }
+    public int MaxSteps { get; private set; }
+    public string? ErrorMessage { get; private set; }
+    public int ArtifactCount { get; private set; }
+    public DateTime CreatedAt { get; private set; }
+    public DateTime UpdatedAt { get; private set; }
+    public DateTime? CompletedAt { get; private set; }
+    public List<AgentProgressLine> Lines { get; } = new();
+
+    public bool IsActive =>
+        Status is AgentRunStatuses.Running or AgentRunStatuses.AwaitingApproval;
+
+    public string DisplayTitle
+    {
+        get
+        {
+            var title = Compact(UserRequest);
+            if (string.IsNullOrWhiteSpace(title))
+                title = "Agent run";
+            return title.Length <= 88 ? title : title[..88] + "...";
+        }
+    }
+
+    public string StatusText
+    {
+        get
+        {
+            var artifacts = ArtifactCount == 0
+                ? string.Empty
+                : $" · {ArtifactCount} artifact{(ArtifactCount == 1 ? string.Empty : "s")}";
+            return Status switch
+            {
+                AgentRunStatuses.Running => $"running · step {CurrentStep}/{MaxSteps}{artifacts}",
+                AgentRunStatuses.AwaitingApproval => $"waiting · step {CurrentStep}/{MaxSteps}{artifacts}",
+                AgentRunStatuses.Paused => $"paused · step {CurrentStep}/{MaxSteps}{artifacts}",
+                AgentRunStatuses.Completed => $"completed · {CurrentStep} steps{artifacts}",
+                AgentRunStatuses.Cancelled => $"stopped · step {CurrentStep}{artifacts}",
+                AgentRunStatuses.Failed => $"failed · step {CurrentStep}{artifacts}",
+                _ => $"{Status} · step {CurrentStep}/{MaxSteps}{artifacts}"
+            };
+        }
+    }
+
+    public string TimeText
+    {
+        get
+        {
+            var start = CreatedAt.ToLocalTime().ToString("MM/dd HH:mm");
+            if (CompletedAt == null)
+                return start;
+            return $"{start} - {CompletedAt.Value.ToLocalTime():HH:mm}";
+        }
+    }
+
+    public static AgentActivityRun FromSnapshot(AgentActivityRunSnapshot snapshot)
+    {
+        var run = new AgentActivityRun();
+        run.Apply(
+            snapshot.Id,
+            snapshot.ChatId,
+            snapshot.TurnId,
+            snapshot.Status,
+            snapshot.UserRequest,
+            snapshot.CurrentStep,
+            snapshot.MaxSteps,
+            snapshot.ErrorMessage,
+            snapshot.ArtifactCount,
+            snapshot.CreatedAt,
+            snapshot.UpdatedAt,
+            snapshot.CompletedAt);
+        return run;
+    }
+
+    public static AgentActivityRun FromLive(AgentRunSnapshot snapshot, string? userRequest)
+    {
+        var run = new AgentActivityRun();
+        run.Apply(
+            snapshot.Id,
+            snapshot.ChatId,
+            snapshot.TurnId,
+            snapshot.Status,
+            userRequest ?? string.Empty,
+            snapshot.CurrentStep,
+            snapshot.MaxSteps,
+            snapshot.ErrorMessage,
+            snapshot.ArtifactCount,
+            DateTime.UtcNow,
+            DateTime.UtcNow,
+            null);
+        return run;
+    }
+
+    public void UpdateFromLive(AgentRunSnapshot snapshot)
+    {
+        Apply(
+            snapshot.Id,
+            snapshot.ChatId,
+            snapshot.TurnId,
+            snapshot.Status,
+            UserRequest,
+            snapshot.CurrentStep,
+            snapshot.MaxSteps,
+            snapshot.ErrorMessage,
+            snapshot.ArtifactCount,
+            CreatedAt == default ? DateTime.UtcNow : CreatedAt,
+            DateTime.UtcNow,
+            snapshot.Status is AgentRunStatuses.Completed or AgentRunStatuses.Cancelled or AgentRunStatuses.Failed
+                ? DateTime.UtcNow
+                : CompletedAt);
+    }
+
+    private void Apply(
+        Guid id,
+        Guid chatId,
+        Guid turnId,
+        string status,
+        string userRequest,
+        int currentStep,
+        int maxSteps,
+        string? errorMessage,
+        int artifactCount,
+        DateTime createdAt,
+        DateTime updatedAt,
+        DateTime? completedAt)
+    {
+        Id = id;
+        ChatId = chatId;
+        TurnId = turnId;
+        Status = status;
+        UserRequest = userRequest;
+        CurrentStep = currentStep;
+        MaxSteps = maxSteps;
+        ErrorMessage = errorMessage;
+        ArtifactCount = artifactCount;
+        CreatedAt = createdAt;
+        UpdatedAt = updatedAt;
+        CompletedAt = completedAt;
+    }
+
+    private static string Compact(string value) =>
+        string.Join(
+            " ",
+            value.Replace("\r", "\n")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+}
 
 internal sealed record AgentProgressRender(
     string Title,

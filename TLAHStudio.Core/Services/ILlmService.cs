@@ -42,6 +42,10 @@ public interface ILlmService
         Guid chatId,
         CancellationToken ct = default);
 
+    Task<IReadOnlyList<AgentActivityRunSnapshot>> GetAgentActivityAsync(
+        Guid chatId,
+        CancellationToken ct = default);
+
     Task SetAgentToolApprovalAsync(
         Guid invocationId,
         bool approved,
@@ -137,3 +141,30 @@ public sealed record ToolInvocationSnapshot(
     string SafetySummary = "",
     string SafetyJson = "{}",
     string? SafetyWarning = null);
+
+public sealed record AgentActivityRunSnapshot(
+    Guid Id,
+    Guid ChatId,
+    Guid TurnId,
+    string Status,
+    string UserRequest,
+    int CurrentStep,
+    int MaxSteps,
+    string? ErrorMessage,
+    int ArtifactCount,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    DateTime? CompletedAt,
+    IReadOnlyList<AgentActivityEventSnapshot> Events);
+
+public sealed record AgentActivityEventSnapshot(
+    Guid Id,
+    Guid AgentRunId,
+    Guid? AgentStepId,
+    Guid? ToolInvocationId,
+    int SequenceNumber,
+    string EventType,
+    string Severity,
+    string Summary,
+    string DataJson,
+    DateTime CreatedAt);

@@ -1,0 +1,497 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using TLAHStudio.App.ViewModels;
+using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services;
+using Windows.UI;
+
+namespace TLAHStudio.App.Views;
+
+public sealed partial class AgentActivityPanelControl : UserControl
+{
+    private ChatPageViewModel? _vm;
+    private IUiDensityService? _densityService;
+    private IInteractionSoundService? _sound;
+    private bool _renderQueued;
+    private readonly HashSet<Guid> _expandedRuns = new();
+    private readonly HashSet<Guid> _collapsedRuns = new();
+
+    public AgentActivityPanelControl()
+    {
+        InitializeComponent();
+        ActualThemeChanged += (_, _) => RequestRender(immediate: true);
+    }
+
+    public void Bind(
+        ChatPageViewModel vm,
+        IUiDensityService densityService,
+        IInteractionSoundService sound)
+    {
+        _vm = vm;
+        _densityService = densityService;
+        _sound = sound;
+        _vm.AgentActivityChanged += (_, _) => RequestRender();
+        _vm.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
+                or nameof(ChatPageViewModel.AgentActivitySummary)
+                or nameof(ChatPageViewModel.HasAgentActivity))
+            {
+                RequestRender();
+            }
+        };
+        _densityService.DensityChanged += (_, _) => DispatcherQueue.TryEnqueue(() => RequestRender(immediate: true));
+        RequestRender(immediate: true);
+    }
+
+    private void Collapse_Click(object sender, RoutedEventArgs e)
+    {
+        _sound?.Play(InteractionSound.Toggle);
+        if (App.MainWindow is MainWindow window)
+            window.ToggleAgentActivityPanel(false);
+    }
+
+    private void RequestRender(bool immediate = false)
+    {
+        if (immediate)
+        {
+            DispatcherQueue.TryEnqueue(Render);
+            return;
+        }
+
+        if (_renderQueued)
+            return;
+
+        _renderQueued = true;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(40);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _renderQueued = false;
+                Render();
+            });
+        });
+    }
+
+    private void Render()
+    {
+        if (_vm == null)
+            return;
+
+        SummaryText.Text = _vm.AgentActivitySummary;
+        ActivityStack.Children.Clear();
+
+        if (_vm.CurrentChat == null)
+        {
+            ActivityStack.Children.Add(BuildEmptyState("Select a chat", "Agent runs for the selected conversation will appear here."));
+            return;
+        }
+
+        if (!_vm.HasAgentActivity)
+        {
+            ActivityStack.Children.Add(BuildEmptyState("No agent runs yet", "Start Agent mode to build a persistent execution trail."));
+            return;
+        }
+
+        for (var i = 0; i < _vm.AgentActivityRuns.Count; i++)
+        {
+            var run = _vm.AgentActivityRuns[i];
+            ActivityStack.Children.Add(BuildRunExpander(run, i));
+        }
+    }
+
+    private UIElement BuildEmptyState(string title, string body)
+    {
+        var stack = new StackPanel
+        {
+            Spacing = 8,
+            Padding = new Thickness(10, 28, 10, 0),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        stack.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = TextPrimaryBrush(),
+            TextAlignment = TextAlignment.Center
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = body,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Foreground = TextSecondaryBrush(),
+            FontSize = 12,
+            LineHeight = 18
+        });
+        return stack;
+    }
+
+    private UIElement BuildRunExpander(AgentActivityRun run, int index)
+    {
+        var isExpanded = ShouldExpand(run, index);
+        var expander = new Expander
+        {
+            IsExpanded = isExpanded,
+            Header = BuildRunHeader(run),
+            Content = BuildRunContent(run),
+            Background = RunBackgroundBrush(run),
+            BorderBrush = run.IsActive ? AccentSubtleBrush() : PanelBorderBrush(),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(0)
+        };
+        expander.Expanding += (_, _) =>
+        {
+            _expandedRuns.Add(run.Id);
+            _collapsedRuns.Remove(run.Id);
+        };
+        expander.Collapsed += (_, _) =>
+        {
+            _collapsedRuns.Add(run.Id);
+            _expandedRuns.Remove(run.Id);
+        };
+        return expander;
+    }
+
+    private bool ShouldExpand(AgentActivityRun run, int index)
+    {
+        if (_expandedRuns.Contains(run.Id))
+            return true;
+        if (_collapsedRuns.Contains(run.Id))
+            return false;
+        return run.IsActive || index == 0;
+    }
+
+    private UIElement BuildRunHeader(AgentActivityRun run)
+    {
+        var grid = new Grid
+        {
+            ColumnSpacing = 8,
+            Padding = new Thickness(10, 9, 8, 9),
+            MinWidth = 0
+        };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var title = new StackPanel { Spacing = 4, MinWidth = 0 };
+        title.Children.Add(new TextBlock
+        {
+            Text = run.DisplayTitle,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = TextPrimaryBrush(),
+            MaxLines = 1
+        });
+        title.Children.Add(new TextBlock
+        {
+            Text = $"{run.StatusText} · {run.TimeText}",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = TextSecondaryBrush(),
+            FontSize = 11,
+            LineHeight = 16,
+            MaxLines = 2
+        });
+        grid.Children.Add(title);
+
+        var status = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(7, 3, 7, 3),
+            Background = StatusBrush(run.Status),
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = StatusLabel(run.Status),
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = StatusTextBrush(run.Status)
+            }
+        };
+        Grid.SetColumn(status, 1);
+        grid.Children.Add(status);
+        return grid;
+    }
+
+    private UIElement BuildRunContent(AgentActivityRun run)
+    {
+        var stack = new StackPanel
+        {
+            Spacing = IsCompactDensity() ? 8 : 10,
+            Padding = new Thickness(10, 0, 10, 10)
+        };
+
+        if (run.Lines.Count == 0)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = "No persisted events for this run.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = TextSecondaryBrush(),
+                FontSize = 12
+            });
+            return stack;
+        }
+
+        foreach (var line in run.Lines)
+            stack.Children.Add(BuildActivityLine(line));
+
+        return stack;
+    }
+
+    private UIElement BuildActivityLine(AgentProgressLine line)
+    {
+        var grid = new Grid
+        {
+            ColumnSpacing = 8,
+            MinWidth = 0
+        };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var tag = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(6, 3, 6, 3),
+            Background = ProgressTagBrush(line.Severity),
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = line.Label,
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = ProgressTagTextBrush(line.Severity)
+            }
+        };
+        grid.Children.Add(tag);
+
+        var content = new StackPanel
+        {
+            Spacing = 5,
+            MinWidth = 0
+        };
+        content.Children.Add(new TextBlock
+        {
+            Text = line.Text,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = TextPrimaryBrush(),
+            FontSize = IsCompactDensity() ? 12 : 13,
+            LineHeight = IsCompactDensity() ? 17 : 19
+        });
+
+        var preview = BuildToolPreview(line);
+        if (preview != null)
+            content.Children.Add(preview);
+
+        Grid.SetColumn(content, 1);
+        grid.Children.Add(content);
+        return grid;
+    }
+
+    private UIElement? BuildToolPreview(AgentProgressLine line)
+    {
+        if (string.IsNullOrWhiteSpace(line.ToolTitle) &&
+            string.IsNullOrWhiteSpace(line.Preview) &&
+            string.IsNullOrWhiteSpace(line.PrimaryPath))
+        {
+            return null;
+        }
+
+        var stack = new StackPanel { Spacing = 4, MinWidth = 0 };
+        var titleText = string.IsNullOrWhiteSpace(line.PrimaryPath)
+            ? line.ToolTitle
+            : string.IsNullOrWhiteSpace(line.ToolTitle)
+                ? line.PrimaryPath
+                : $"{line.ToolTitle} · {line.PrimaryPath}";
+        if (!string.IsNullOrWhiteSpace(titleText))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = titleText,
+                Foreground = TextPrimaryBrush(),
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 2
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(line.Preview))
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = line.IsTruncated ? $"{line.Preview} [truncated]" : line.Preview,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = TextSecondaryBrush(),
+                FontSize = 11,
+                LineHeight = 16,
+                MaxLines = 5
+            });
+        }
+
+        return new Border
+        {
+            CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(9, 7, 9, 7),
+            BorderThickness = new Thickness(1),
+            BorderBrush = ToolPreviewBorderBrush(line.RenderHint),
+            Background = ToolPreviewBackgroundBrush(line.RenderHint),
+            Child = stack
+        };
+    }
+
+    private static string StatusLabel(string status) => status switch
+    {
+        AgentRunStatuses.Running => "RUN",
+        AgentRunStatuses.AwaitingApproval => "WAIT",
+        AgentRunStatuses.Completed => "DONE",
+        AgentRunStatuses.Paused => "PAUSE",
+        AgentRunStatuses.Cancelled => "STOP",
+        AgentRunStatuses.Failed => "ERR",
+        _ => "RUN"
+    };
+
+    private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
+
+    private bool IsLightTheme() => ActualTheme == Microsoft.UI.Xaml.ElementTheme.Light;
+
+    private Color ThemeColor(Color light, Color dark) => IsLightTheme() ? light : dark;
+
+    private SolidColorBrush ThemeBrush(Color light, Color dark) => new(ThemeColor(light, dark));
+
+    private SolidColorBrush TextPrimaryBrush() => new(ThemeColor(
+        Color.FromArgb(0xFF, 0x17, 0x20, 0x33),
+        Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)));
+
+    private SolidColorBrush TextSecondaryBrush() => new(ThemeColor(
+        Color.FromArgb(0xFF, 0x56, 0x65, 0x7A),
+        Color.FromArgb(0xFF, 0xE0, 0xE8, 0xF4)));
+
+    private SolidColorBrush AccentSubtleBrush() => new(ThemeColor(
+        Color.FromArgb(0xFF, 0xBF, 0xD2, 0xFF),
+        Color.FromArgb(0x99, 0x71, 0xA7, 0xFF)));
+
+    private SolidColorBrush PanelBorderBrush() => new(ThemeColor(
+        Color.FromArgb(0xFF, 0xD2, 0xDC, 0xEB),
+        Color.FromArgb(0x6E, 0x71, 0x81, 0x95)));
+
+    private SolidColorBrush RunBackgroundBrush(AgentActivityRun run) => run.IsActive
+        ? ThemeBrush(
+            Color.FromArgb(0xF8, 0xFA, 0xFD, 0xFF),
+            Color.FromArgb(0xE8, 0x12, 0x1B, 0x2B))
+        : ThemeBrush(
+            Color.FromArgb(0xEE, 0xFF, 0xFF, 0xFF),
+            Color.FromArgb(0xCA, 0x0E, 0x16, 0x24));
+
+    private SolidColorBrush StatusBrush(string status) => new(status switch
+    {
+        AgentRunStatuses.Completed => ThemeColor(
+            Color.FromArgb(0xFF, 0xDB, 0xF7, 0xE8),
+            Color.FromArgb(0xFF, 0x16, 0x3A, 0x2B)),
+        AgentRunStatuses.Failed => ThemeColor(
+            Color.FromArgb(0xFF, 0xFE, 0xE2, 0xE2),
+            Color.FromArgb(0xFF, 0x45, 0x1D, 0x24)),
+        AgentRunStatuses.Cancelled => ThemeColor(
+            Color.FromArgb(0xFF, 0xEA, 0xEF, 0xF7),
+            Color.FromArgb(0xFF, 0x2A, 0x34, 0x45)),
+        AgentRunStatuses.AwaitingApproval => ThemeColor(
+            Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
+            Color.FromArgb(0xFF, 0x43, 0x34, 0x18)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0xDB, 0xEA, 0xFF),
+            Color.FromArgb(0xFF, 0x1A, 0x2F, 0x52))
+    });
+
+    private SolidColorBrush StatusTextBrush(string status) => new(status switch
+    {
+        AgentRunStatuses.Completed => ThemeColor(
+            Color.FromArgb(0xFF, 0x16, 0x6B, 0x42),
+            Color.FromArgb(0xFF, 0xA7, 0xF3, 0xD0)),
+        AgentRunStatuses.Failed => ThemeColor(
+            Color.FromArgb(0xFF, 0xB9, 0x1C, 0x1C),
+            Color.FromArgb(0xFF, 0xFF, 0xB4, 0xB4)),
+        AgentRunStatuses.AwaitingApproval => ThemeColor(
+            Color.FromArgb(0xFF, 0x92, 0x4E, 0x0E),
+            Color.FromArgb(0xFF, 0xF8, 0xD6, 0x7A)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
+            Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
+    });
+
+    private SolidColorBrush ProgressTagBrush(string severity) => new(severity switch
+    {
+        AgentEventSeverities.Error => ThemeColor(
+            Color.FromArgb(0xFF, 0xFE, 0xE2, 0xE2),
+            Color.FromArgb(0xFF, 0x45, 0x1D, 0x24)),
+        AgentEventSeverities.Warning => ThemeColor(
+            Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
+            Color.FromArgb(0xFF, 0x43, 0x34, 0x18)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0xDB, 0xEA, 0xFF),
+            Color.FromArgb(0xFF, 0x1A, 0x2F, 0x52))
+    });
+
+    private SolidColorBrush ProgressTagTextBrush(string severity) => new(severity switch
+    {
+        AgentEventSeverities.Error => ThemeColor(
+            Color.FromArgb(0xFF, 0xB9, 0x1C, 0x1C),
+            Color.FromArgb(0xFF, 0xFF, 0xB4, 0xB4)),
+        AgentEventSeverities.Warning => ThemeColor(
+            Color.FromArgb(0xFF, 0x92, 0x4E, 0x0E),
+            Color.FromArgb(0xFF, 0xF8, 0xD6, 0x7A)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
+            Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
+    });
+
+    private Brush ToolPreviewBackgroundBrush(string? renderHint)
+    {
+        var dark = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xDC, 0x08, 0x10, 0x1F),
+            AgentToolRenderHints.File => Color.FromArgb(0xDC, 0x0E, 0x1A, 0x2A),
+            AgentToolRenderHints.Network => Color.FromArgb(0xDC, 0x0C, 0x16, 0x25),
+            AgentToolRenderHints.Git => Color.FromArgb(0xDC, 0x14, 0x13, 0x24),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xDC, 0x12, 0x14, 0x22),
+            _ => Color.FromArgb(0xDC, 0x10, 0x18, 0x28)
+        };
+        var light = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xF5, 0xF7, 0xFB, 0xFF),
+            AgentToolRenderHints.File => Color.FromArgb(0xF5, 0xF7, 0xFA, 0xFD),
+            AgentToolRenderHints.Network => Color.FromArgb(0xF5, 0xF5, 0xFA, 0xFF),
+            AgentToolRenderHints.Git => Color.FromArgb(0xF5, 0xFB, 0xF7, 0xFF),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xF5, 0xF8, 0xF7, 0xFF),
+            _ => Color.FromArgb(0xF5, 0xF7, 0xFA, 0xFD)
+        };
+        return ThemeBrush(light, dark);
+    }
+
+    private Brush ToolPreviewBorderBrush(string? renderHint)
+    {
+        var dark = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xA0, 0x46, 0x5F, 0x83),
+            AgentToolRenderHints.File => Color.FromArgb(0xA0, 0x3A, 0x61, 0x83),
+            AgentToolRenderHints.Network => Color.FromArgb(0xA0, 0x3B, 0x5D, 0x8A),
+            AgentToolRenderHints.Git => Color.FromArgb(0xA0, 0x5C, 0x54, 0x8A),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xA0, 0x56, 0x56, 0x83),
+            _ => Color.FromArgb(0xA0, 0x3A, 0x4C, 0x66)
+        };
+        var light = renderHint switch
+        {
+            AgentToolRenderHints.Terminal => Color.FromArgb(0xFF, 0xD7, 0xE2, 0xF0),
+            AgentToolRenderHints.File => Color.FromArgb(0xFF, 0xD4, 0xE1, 0xEE),
+            AgentToolRenderHints.Network => Color.FromArgb(0xFF, 0xD3, 0xE0, 0xF2),
+            AgentToolRenderHints.Git => Color.FromArgb(0xFF, 0xDF, 0xD9, 0xF1),
+            AgentToolRenderHints.Mcp => Color.FromArgb(0xFF, 0xDC, 0xDF, 0xEF),
+            _ => Color.FromArgb(0xFF, 0xD8, 0xE1, 0xEC)
+        };
+        return ThemeBrush(light, dark);
+    }
+}

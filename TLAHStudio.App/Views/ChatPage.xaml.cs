@@ -77,15 +77,12 @@ public sealed partial class ChatPage : UserControl
         _sound = sound;
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
-        _vm.AgentProgressLines.CollectionChanged += OnAgentProgressChanged;
         _vm.StreamingMessageUpdated += (_, _) => RequestRender();
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
                 or nameof(ChatPageViewModel.ErrorMessage)
-                or nameof(ChatPageViewModel.IsLoading)
-                or nameof(ChatPageViewModel.IsAgentLiveVisible)
-                or nameof(ChatPageViewModel.AgentLiveSummary))
+                or nameof(ChatPageViewModel.IsLoading))
                 RequestRender();
             if (args.PropertyName is nameof(ChatPageViewModel.AgentStatusText)
                 or nameof(ChatPageViewModel.IsAgentStatusVisible)
@@ -148,9 +145,6 @@ public sealed partial class ChatPage : UserControl
 
         RequestRender(immediate: e.Action is NotifyCollectionChangedAction.Reset);
     }
-
-    private void OnAgentProgressChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
-        RequestRender();
 
     private void RequestRender(bool immediate = false)
     {
@@ -231,13 +225,10 @@ public sealed partial class ChatPage : UserControl
         foreach (var message in _vm.Messages)
             elements.Add(GetCachedMessageElement(message));
 
-        if (_vm.IsAgentLiveVisible && _vm.AgentProgressLines.Count > 0)
-            elements.Add(BuildAgentLiveCard());
-
         var signature = string.Join(
             "|",
             _vm.Messages.Select(m => $"{m.Id:N}:{m.Role}:{m.Content.Length}:{m.TurnId?.ToString("N") ?? "draft"}"))
-            + $"|err:{_vm.ErrorMessage?.Length ?? 0}|live:{_vm.AgentProgressLines.Count}";
+            + $"|err:{_vm.ErrorMessage?.Length ?? 0}";
         SyncMessageChildren(elements, signature);
 
         if (shouldScrollToBottom)

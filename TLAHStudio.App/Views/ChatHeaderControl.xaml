@@ -66,6 +66,20 @@
                 <SymbolIcon Symbol="Pictures" />
             </Button>
             <Button
+                x:Name="ActivityButton"
+                Click="Activity_Click"
+                Width="38"
+                Height="38"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="0"
+                ToolTipService.ToolTip="Agent activity"
+                AutomationProperties.Name="Agent activity">
+                <SymbolIcon Symbol="List" />
+            </Button>
+            <Button
                 Click="Agent_Click"
                 Width="38"
                 Height="38"

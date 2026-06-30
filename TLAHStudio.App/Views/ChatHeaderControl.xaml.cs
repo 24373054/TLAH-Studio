@@ -27,7 +27,10 @@ public sealed partial class ChatHeaderControl : UserControl
         {
             if (args.PropertyName == nameof(ChatPageViewModel.CurrentChat))
                 DispatcherQueue.TryEnqueue(() => UpdateTitle(w.ChatVM.CurrentChat?.Title));
+            if (args.PropertyName == nameof(ChatPageViewModel.IsAgentActivityPanelOpen))
+                DispatcherQueue.TryEnqueue(UpdateActivityButton);
         };
+        UpdateActivityButton();
     }
 
     private void UpdateTitle(string? title)
@@ -126,6 +129,14 @@ public sealed partial class ChatHeaderControl : UserControl
         await w.TryShowDialogAsync(dlg);
     }
 
+    private void Activity_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindow is not MainWindow w) return;
+        w.ToggleAgentActivityPanel();
+        Play(InteractionSound.Toggle);
+        UpdateActivityButton();
+    }
+
     private async void Agent_Click(object sender, RoutedEventArgs e)
     {
         if (App.MainWindow is not MainWindow w) return;
@@ -137,6 +148,14 @@ public sealed partial class ChatHeaderControl : UserControl
             XamlRoot = w.Content.XamlRoot
         };
         await w.TryShowDialogAsync(dlg);
+    }
+
+    private void UpdateActivityButton()
+    {
+        var isOpen = App.MainWindow is MainWindow window && window.ChatVM.IsAgentActivityPanelOpen;
+        ActivityButton.Background = isOpen ? Brush("AccentStrongBrush") : Brush("SurfaceElevatedBrush");
+        ActivityButton.Foreground = isOpen ? Brush("AccentTextBrush") : Brush("TextSecondaryBrush");
+        ActivityButton.BorderBrush = isOpen ? Brush("AccentStrongBrush") : Brush("BorderSubtleBrush");
     }
 
     private async void Settings_Click(object s, RoutedEventArgs e)

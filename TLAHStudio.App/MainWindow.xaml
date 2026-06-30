@@ -68,15 +68,27 @@
                     Opacity="0"
                     IsHitTestVisible="False" />
 
-                <Grid Background="{ThemeResource WorkbenchOverlayBrush}">
+                <Grid
+                    x:Name="WorkbenchGrid"
+                    Background="{ThemeResource WorkbenchOverlayBrush}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <views:ChatHeaderControl x:Name="ChatHeaderView" Grid.Row="0" />
-                    <views:ChatPage x:Name="ChatPageView" Grid.Row="1" />
-                    <views:MessageInputControl x:Name="MessageInputView" Grid.Row="2" />
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition x:Name="AgentActivityColumn" Width="0" MinWidth="0" />
+                    </Grid.ColumnDefinitions>
+                    <views:ChatHeaderControl x:Name="ChatHeaderView" Grid.Row="0" Grid.Column="0" />
+                    <views:ChatPage x:Name="ChatPageView" Grid.Row="1" Grid.Column="0" />
+                    <views:MessageInputControl x:Name="MessageInputView" Grid.Row="2" Grid.Column="0" />
+                    <views:AgentActivityPanelControl
+                        x:Name="AgentActivityPanelView"
+                        Grid.Row="0"
+                        Grid.RowSpan="3"
+                        Grid.Column="1"
+                        Visibility="Collapsed" />
                 </Grid>
             </Grid>
 

@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
 
@@ -139,6 +140,91 @@ public class AgentServiceTests
             p => p.ChatId == chat.Id &&
                  p.ToolName == "sandbox_exec" &&
                  p.Decision == ToolPolicyDecisions.Allow));
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_FileSendCreatesVisibleAttachmentAndLiveProgress()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai",
+            ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com",
+            Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("File send");
+
+        var responses = new Queue<string>([
+            """
+            {
+              "choices": [{
+                "message": {
+                  "content": null,
+                  "tool_calls": [
+                    {
+                      "id": "call-write",
+                      "type": "function",
+                      "function": {
+                        "name": "file_write",
+                        "arguments": "{\"path\":\"landscape.svg\",\"content\":\"<svg xmlns='http://www.w3.org/2000/svg' width='64' height='32'><rect width='64' height='32' fill='skyblue'/></svg>\",\"reason\":\"Create the SVG file.\"}"
+                      }
+                    },
+                    {
+                      "id": "call-send",
+                      "type": "function",
+                      "function": {
+                        "name": "file_send",
+                        "arguments": "{\"path\":\"landscape.svg\",\"caption\":\"SVG landscape\"}"
+                      }
+                    }
+                  ]
+                }
+              }]
+            }
+            """,
+            """
+            {
+              "choices": [
+                { "message": { "content": "Done. The SVG file has been sent." } }
+              ]
+            }
+            """
+        ]);
+
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+        var progress = new List<AgentProgressUpdate>();
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Create and send an SVG.",
+            options: new AgentRunOptions(
+                MaxSteps: 4,
+                AutoApproveTools: true,
+                Progress: new CollectingAgentProgress(progress)));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Contains(progress, p => p.EventType == AgentEventTypes.ToolRequest && p.Run.CurrentStep >= 1);
+        var messages = await db.Set<Message>()
+            .Where(m => m.ChatId == chat.Id)
+            .OrderBy(m => m.SequenceNum)
+            .ToListAsync();
+        var fileSendMessage = Assert.Single(messages.Where(m =>
+            m.Role == "tool" &&
+            m.Content.Contains(MessageAttachmentFormatter.AttachmentsStart, StringComparison.Ordinal)));
+        var parsed = MessageAttachmentFormatter.Extract(fileSendMessage.Content);
+        var attachment = Assert.Single(parsed.Attachments);
+        Assert.Equal("landscape.svg", attachment.RelativePath);
+        Assert.Equal("image/svg+xml", attachment.ContentType);
+        Assert.True(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "landscape.svg")));
+        Assert.Equal(1, await db.Set<AgentArtifact>()
+            .CountAsync(a => a.AgentRunId == result.AgentRun.Id && a.RelativePath == "landscape.svg"));
     }
 
     [Fact]
@@ -282,6 +368,131 @@ public class AgentServiceTests
         Assert.Equal(ToolInvocationStatuses.AwaitingApproval, invocation.Status);
         Assert.Single(handler.Requests);
         Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.ApprovalRequested);
+    }
+
+    [Fact]
+    public async Task CancelAgentRunAsync_PreservesLatestPersistedStep()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        var chat = await chatService.CreateChatAsync("Cancel");
+        var turn = new Turn { ChatId = chat.Id, TurnNumber = 1 };
+        db.Set<Turn>().Add(turn);
+        await db.SaveChangesAsync();
+        var run = new AgentRun
+        {
+            ChatId = chat.Id,
+            TurnId = turn.Id,
+            Status = AgentRunStatuses.Running,
+            UserRequest = "Long task",
+            CurrentStep = 0,
+            MaxSteps = 48
+        };
+        db.Set<AgentRun>().Add(run);
+        await db.SaveChangesAsync();
+        db.Set<AgentStep>().Add(new AgentStep
+        {
+            AgentRunId = run.Id,
+            StepNumber = 5,
+            Kind = "file_write",
+            Status = AgentStepStatuses.Running,
+            Summary = "Writing file"
+        });
+        await db.SaveChangesAsync();
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(new HttpClient(new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, "{}")))));
+
+        await service.CancelAgentRunAsync(run.Id);
+
+        var cancelled = await db.Set<AgentRun>().FirstAsync(r => r.Id == run.Id);
+        Assert.Equal(AgentRunStatuses.Cancelled, cancelled.Status);
+        Assert.Equal(5, cancelled.CurrentStep);
+    }
+
+    [Fact]
+    public async Task GetAgentActivityAsync_ReturnsPersistentRunsAndOrderedEvents()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        var chat = await chatService.CreateChatAsync("Activity");
+        var olderTurn = new Turn { ChatId = chat.Id, TurnNumber = 1 };
+        var newerTurn = new Turn { ChatId = chat.Id, TurnNumber = 2 };
+        db.Set<Turn>().AddRange(olderTurn, newerTurn);
+        await db.SaveChangesAsync();
+
+        var olderRun = new AgentRun
+        {
+            ChatId = chat.Id,
+            TurnId = olderTurn.Id,
+            Status = AgentRunStatuses.Completed,
+            UserRequest = "Older request",
+            CurrentStep = 2,
+            MaxSteps = 48,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-10),
+            UpdatedAt = DateTime.UtcNow.AddMinutes(-9),
+            CompletedAt = DateTime.UtcNow.AddMinutes(-9)
+        };
+        var newerRun = new AgentRun
+        {
+            ChatId = chat.Id,
+            TurnId = newerTurn.Id,
+            Status = AgentRunStatuses.Running,
+            UserRequest = "Newer request",
+            CurrentStep = 1,
+            MaxSteps = 48,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Set<AgentRun>().AddRange(olderRun, newerRun);
+        await db.SaveChangesAsync();
+
+        db.Set<AgentEvent>().AddRange(
+            new AgentEvent
+            {
+                AgentRunId = newerRun.Id,
+                SequenceNumber = 2,
+                EventType = AgentEventTypes.ToolResult,
+                Summary = "Result ready"
+            },
+            new AgentEvent
+            {
+                AgentRunId = newerRun.Id,
+                SequenceNumber = 1,
+                EventType = AgentEventTypes.ModelRequest,
+                Summary = "Planning",
+                DataJson = """{"stepNumber":1}"""
+            },
+            new AgentEvent
+            {
+                AgentRunId = olderRun.Id,
+                SequenceNumber = 1,
+                EventType = AgentEventTypes.RunCompleted,
+                Summary = "Done"
+            });
+        db.Set<AgentArtifact>().Add(new AgentArtifact
+        {
+            AgentRunId = newerRun.Id,
+            RelativePath = "result.txt",
+            SizeBytes = 12,
+            Sha256 = "abc"
+        });
+        await db.SaveChangesAsync();
+
+        var service = new LlmService(
+            db,
+            chatService,
+            settingsService,
+            new StaticHttpClientFactory(new HttpClient(new MapHttpMessageHandler(_ =>
+                MapHttpMessageHandler.Json(HttpStatusCode.OK, "{}")))));
+
+        var activity = await service.GetAgentActivityAsync(chat.Id);
+
+        Assert.Equal([newerRun.Id, olderRun.Id], activity.Select(r => r.Id).ToArray());
+        Assert.Equal("Newer request", activity[0].UserRequest);
+        Assert.Equal(1, activity[0].ArtifactCount);
+        Assert.Equal([1, 2], activity[0].Events.Select(e => e.SequenceNumber).ToArray());
+        Assert.Equal(AgentEventTypes.RunCompleted, Assert.Single(activity[1].Events).EventType);
     }
 
     private sealed class CollectingAgentProgress(List<AgentProgressUpdate> events) : IProgress<AgentProgressUpdate>
