@@ -796,6 +796,9 @@ public partial class ChatPageViewModel : ObservableObject
             run.Lines.Sort(static (a, b) => a.SequenceNumber.CompareTo(b.SequenceNumber));
         }
 
+        if (update.EventType is AgentEventTypes.TaskUpdated or AgentEventTypes.BackgroundTaskUpdated)
+            run.UpdateTasksFromEvent(update.DataJson);
+
         RefreshAgentActivityState();
     }
 
@@ -852,6 +855,8 @@ public partial class ChatPageViewModel : ObservableObject
             AgentEventTypes.ToolHookBlocked => "Hook",
             AgentEventTypes.ToolRollbackPlan => "Rollback",
             AgentEventTypes.ToolResult => "Result",
+            AgentEventTypes.TaskUpdated => "Tasks",
+            AgentEventTypes.BackgroundTaskUpdated => "Task",
             AgentEventTypes.ProtocolRepair => "Repair",
             AgentEventTypes.RuntimeMetrics => "Metrics",
             AgentEventTypes.RunCompleted => "Done",
@@ -875,6 +880,8 @@ public partial class ChatPageViewModel : ObservableObject
             AgentEventTypes.ToolHookBlocked => CleanSummary(update.Summary),
             AgentEventTypes.ToolRollbackPlan => "Rollback plan ready.",
             AgentEventTypes.ToolResult => render?.Activity ?? CleanSummary(update.Summary),
+            AgentEventTypes.TaskUpdated => "Task list updated.",
+            AgentEventTypes.BackgroundTaskUpdated => "Background task updated.",
             AgentEventTypes.ApprovalRequested => render?.Activity ?? CleanSummary(update.Summary),
             AgentEventTypes.RuntimeMetrics => TryReadRuntimeMetrics(update.DataJson) ?? "Runtime metrics captured.",
             AgentEventTypes.RunCompleted => "Agent completed the task.",
@@ -1177,6 +1184,7 @@ public sealed class AgentActivityRun
     public DateTime UpdatedAt { get; private set; }
     public DateTime? CompletedAt { get; private set; }
     public List<AgentProgressLine> Lines { get; } = new();
+    public List<AgentTaskSnapshot> Tasks { get; } = new();
 
     public bool IsActive =>
         Status is AgentRunStatuses.Running or AgentRunStatuses.AwaitingApproval;
@@ -1239,6 +1247,9 @@ public sealed class AgentActivityRun
             snapshot.CreatedAt,
             snapshot.UpdatedAt,
             snapshot.CompletedAt);
+        run.Tasks.Clear();
+        if (snapshot.Tasks is { Count: > 0 })
+            run.Tasks.AddRange(snapshot.Tasks);
         return run;
     }
 
@@ -1306,6 +1317,99 @@ public sealed class AgentActivityRun
         CreatedAt = createdAt;
         UpdatedAt = updatedAt;
         CompletedAt = completedAt;
+    }
+
+    public void UpdateTasksFromEvent(string dataJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(dataJson);
+            if (!TryGetProperty(doc.RootElement, "tasks", out var tasksElement) ||
+                tasksElement.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+
+            var parsed = new List<AgentTaskSnapshot>();
+            foreach (var item in tasksElement.EnumerateArray())
+            {
+                if (!TryReadTask(item, out var task))
+                    continue;
+                parsed.Add(task);
+            }
+
+            if (parsed.Count > 0)
+            {
+                Tasks.Clear();
+                Tasks.AddRange(parsed);
+            }
+        }
+        catch
+        {
+            // Ignore malformed live task metadata; persisted snapshots will catch up on reload.
+        }
+    }
+
+    private static bool TryReadTask(JsonElement item, out AgentTaskSnapshot task)
+    {
+        task = default!;
+        if (!TryGetGuid(item, "id", out var id) || !TryGetGuid(item, "chatId", out var chatId))
+            return false;
+        TryGetGuid(item, "agentRunId", out var runId);
+        task = new AgentTaskSnapshot(
+            id,
+            chatId,
+            runId == Guid.Empty ? null : runId,
+            GetString(item, "title"),
+            GetString(item, "description"),
+            GetString(item, "status", AgentTaskStatuses.Pending),
+            GetString(item, "priority", "medium"),
+            GetString(item, "source"),
+            GetDate(item, "createdAt"),
+            GetDate(item, "updatedAt"),
+            TryGetDate(item, "completedAt", out var completedAt) ? completedAt : null,
+            GetString(item, "metadataJson", "{}"));
+        return true;
+    }
+
+    private static bool TryGetProperty(JsonElement item, string name, out JsonElement value)
+    {
+        if (item.TryGetProperty(name, out value))
+            return true;
+        foreach (var property in item.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+        value = default;
+        return false;
+    }
+
+    private static bool TryGetGuid(JsonElement item, string name, out Guid value)
+    {
+        value = Guid.Empty;
+        return TryGetProperty(item, name, out var element) &&
+               element.ValueKind == JsonValueKind.String &&
+               Guid.TryParse(element.GetString(), out value);
+    }
+
+    private static string GetString(JsonElement item, string name, string fallback = "") =>
+        TryGetProperty(item, name, out var element) && element.ValueKind == JsonValueKind.String
+            ? element.GetString() ?? fallback
+            : fallback;
+
+    private static DateTime GetDate(JsonElement item, string name) =>
+        TryGetDate(item, name, out var value) ? value : DateTime.UtcNow;
+
+    private static bool TryGetDate(JsonElement item, string name, out DateTime value)
+    {
+        value = default;
+        return TryGetProperty(item, name, out var element) &&
+               element.ValueKind == JsonValueKind.String &&
+               DateTime.TryParse(element.GetString(), out value);
     }
 
     private static string Compact(string value) =>

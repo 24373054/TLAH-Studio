@@ -34,6 +34,7 @@ public class Chat
     public ICollection<Message> Messages { get; set; } = new List<Message>();
     public ICollection<Turn> Turns { get; set; } = new List<Turn>();
     public ICollection<AgentRun> AgentRuns { get; set; } = new List<AgentRun>();
+    public ICollection<AgentTaskItem> AgentTasks { get; set; } = new List<AgentTaskItem>();
     public ICollection<ToolPermission> ToolPermissions { get; set; } = new List<ToolPermission>();
     public ProjectSpace? ProjectSpace { get; set; }
     public ConfigProfile? ConfigProfile { get; set; }

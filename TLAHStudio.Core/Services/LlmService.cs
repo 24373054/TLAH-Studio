@@ -6,6 +6,7 @@ using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.AgentRuntime;
+using TLAHStudio.Core.Services.Background;
 
 #pragma warning disable CA1416 // TLAH Studio is a Windows desktop client; DPAPI is intentionally Windows-only.
 
@@ -75,8 +76,19 @@ public class LlmService : ILlmService
             var router = new ExecutionBackendRouter(
                 _sandboxCommandService, _toolPlatform, network, httpClientFactory);
             var mcp = new McpClientService(db, _toolPlatform, network, httpClientFactory);
+            var taskService = new AgentTaskService(db);
+            var backgroundTaskService = new BackgroundTaskService(db);
             _agentTools = new AgentToolRegistry(
             [
+                new ToolSearchAgentTool(),
+                new TodoWriteAgentTool(taskService),
+                new TaskCreateAgentTool(taskService, backgroundTaskService, _sandboxCommandService),
+                new TaskUpdateAgentTool(taskService),
+                new TaskListAgentTool(taskService),
+                new TaskOutputAgentTool(backgroundTaskService),
+                new TaskStopAgentTool(backgroundTaskService),
+                new TaskSendMessageAgentTool(backgroundTaskService),
+                new ReadPersistedOutputAgentTool(_sandboxCommandService),
                 new SandboxExecAgentTool(_sandboxCommandService),
                 new TerminalExecAgentTool(router),
                 new FileListAgentTool(_sandboxCommandService),
@@ -89,6 +101,8 @@ public class LlmService : ILlmService
                 new WebSearchAgentTool(_toolPlatform, network, httpClientFactory),
                 new BrowserReadAgentTool(_toolPlatform, network, httpClientFactory),
                 new McpListToolsAgentTool(mcp),
+                new McpListResourcesAgentTool(mcp),
+                new McpReadResourceAgentTool(mcp),
                 new McpCallAgentTool(mcp),
                 new MemoryReadAgentTool(_projectMemory),
                 new MemoryWriteAgentTool(_projectMemory),
@@ -537,6 +551,23 @@ public class LlmService : ILlmService
         var eventsByRun = events
             .GroupBy(e => e.AgentRunId)
             .ToDictionary(g => g.Key, g => (IReadOnlyList<AgentActivityEventSnapshot>)g.ToList());
+        var taskRows = await _db.Set<AgentTaskItem>()
+            .AsNoTracking()
+            .Where(t => t.ChatId == chatId && (t.AgentRunId == null || runIds.Contains(t.AgentRunId.Value)))
+            .OrderBy(t => t.Status == AgentTaskStatuses.Completed || t.Status == AgentTaskStatuses.Cancelled)
+            .ThenByDescending(t => t.UpdatedAt)
+            .Take(160)
+            .ToListAsync(ct);
+        var tasksByRun = taskRows
+            .GroupBy(t => t.AgentRunId ?? Guid.Empty)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<AgentTaskSnapshot>)g
+                    .Select(t => new AgentTaskSnapshot(
+                        t.Id, t.ChatId, t.AgentRunId, t.Title, t.Description, t.Status,
+                        t.Priority, t.Source, t.CreatedAt, t.UpdatedAt, t.CompletedAt, t.MetadataJson))
+                    .ToList());
+        var chatLevelTasks = tasksByRun.GetValueOrDefault(Guid.Empty) ?? Array.Empty<AgentTaskSnapshot>();
 
         return runs
             .Select(r => new AgentActivityRunSnapshot(
@@ -552,7 +583,26 @@ public class LlmService : ILlmService
                 r.CreatedAt,
                 r.UpdatedAt,
                 r.CompletedAt,
-                eventsByRun.GetValueOrDefault(r.Id) ?? Array.Empty<AgentActivityEventSnapshot>()))
+                eventsByRun.GetValueOrDefault(r.Id) ?? Array.Empty<AgentActivityEventSnapshot>(),
+                MergeTasks(tasksByRun.GetValueOrDefault(r.Id), chatLevelTasks)))
+            .ToList();
+    }
+
+    private static IReadOnlyList<AgentTaskSnapshot> MergeTasks(
+        IReadOnlyList<AgentTaskSnapshot>? runTasks,
+        IReadOnlyList<AgentTaskSnapshot> chatTasks)
+    {
+        var seen = new HashSet<Guid>();
+        var merged = new List<AgentTaskSnapshot>();
+        foreach (var task in (runTasks ?? Array.Empty<AgentTaskSnapshot>()).Concat(chatTasks))
+        {
+            if (seen.Add(task.Id))
+                merged.Add(task);
+        }
+        return merged
+            .OrderBy(t => t.Status is AgentTaskStatuses.Completed or AgentTaskStatuses.Cancelled)
+            .ThenByDescending(t => t.UpdatedAt)
+            .Take(40)
             .ToList();
     }
 
@@ -2421,7 +2471,7 @@ public class LlmService : ILlmService
         builder.AppendLine("Use diff or diagnostics before risky code changes, and mention rollback backup ids when an edit returns them.");
         builder.AppendLine($"Prefer {AgentToolNames.FileList}, {AgentToolNames.FileRead}, {AgentToolNames.FileWrite}, {AgentToolNames.FileSend}, and {AgentToolNames.FileSearch} over terminal commands for file work.");
         builder.AppendLine($"When you create a file the user should see, preview, download, or use outside the sandbox, call {AgentToolNames.FileSend} with the relative sandbox path before giving the final answer.");
-        builder.AppendLine($"Use {AgentToolNames.TerminalExec} only when a typed tool cannot complete the task. Use {AgentToolNames.McpListTools} before {AgentToolNames.McpCall}.");
+        builder.AppendLine($"Use {AgentToolNames.TerminalExec} only when a typed tool cannot complete the task. Use {AgentToolNames.McpListTools} before {AgentToolNames.McpCall}, and {AgentToolNames.McpListResources} before {AgentToolNames.McpReadResource}.");
         builder.AppendLine("Network requests are limited to configured public-domain allowlists. Credentials can only be referenced by broker entry name and must never be requested, printed, or stored.");
         builder.AppendLine("Request one tool call at a time and provide a short reason argument.");
         builder.AppendLine("If the provider does not expose native tools, the compatibility fallback is this exact JSON object with no surrounding prose:");

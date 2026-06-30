@@ -109,6 +109,8 @@ public static partial class ToolSafetyKernel
             AgentToolNames.WebSearch => ToolSafetyAssessment.Medium("network", true, false, "Read-only public web search through the configured allowlist."),
             AgentToolNames.BrowserRead => ToolSafetyAssessment.Medium("network", true, false, "Read-only page fetch through the configured allowlist."),
             AgentToolNames.McpListTools => ToolSafetyAssessment.Medium("mcp", true, false, "Read MCP tool metadata from configured servers."),
+            AgentToolNames.McpListResources => ToolSafetyAssessment.Medium("mcp", true, false, "Read MCP resource metadata from configured servers."),
+            AgentToolNames.McpReadResource => ToolSafetyAssessment.Medium("mcp", true, false, "Read MCP resource content from a configured server."),
             AgentToolNames.McpCall => ToolSafetyAssessment.High("mcp", true, "Call an external MCP tool.", "MCP tools can perform actions outside TLAH Studio depending on the server."),
             AgentToolNames.MemoryRead => ToolSafetyAssessment.LowRead("memory", "Read the project memory file."),
             AgentToolNames.MemoryWrite => ToolSafetyAssessment.Medium("memory", false, true, "Update the project memory file."),

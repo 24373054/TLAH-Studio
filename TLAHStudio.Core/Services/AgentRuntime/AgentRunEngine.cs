@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.Context;
 using TLAHStudio.Core.Services.Tools.Models;
 
 #pragma warning disable CA1416
@@ -59,6 +60,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private readonly IAgentContextManager _contextManager;
     private readonly IProjectMemoryService _projectMemory;
     private readonly IToolResultPersistenceService _toolResultPersistence;
+    private readonly IAgentTaskService _agentTasks;
+    private readonly IReactiveCompactor _reactiveCompactor;
+    private readonly ITokenBudgetService _tokenBudget;
 
     public AgentRunEngineV2(
         DbContext db,
@@ -75,6 +79,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         IAgentContextManager contextManager,
         IProjectMemoryService projectMemory,
         IToolResultPersistenceService toolResultPersistence,
+        IAgentTaskService? agentTasks = null,
+        IReactiveCompactor? reactiveCompactor = null,
+        ITokenBudgetService? tokenBudget = null,
         IToolLifecycleRunner? toolLifecycleRunner = null)
     {
         _db = db;
@@ -93,6 +100,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         _contextManager = contextManager;
         _projectMemory = projectMemory;
         _toolResultPersistence = toolResultPersistence;
+        _agentTasks = agentTasks ?? new AgentTaskService(db);
+        _reactiveCompactor = reactiveCompactor ?? new ReactiveCompactor();
+        _tokenBudget = tokenBudget ?? new TokenBudgetService();
     }
 
     public async Task<AgentRunResult> RunAsync(
@@ -162,17 +172,28 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 await _db.SaveChangesAsync(ct);
 
                 // Context compaction check
-                var prepared = _contextManager.Prepare(state.Messages, contextOptions);
+                var prepared = await PrepareContextAsync(
+                    state, contextOptions, effective.Provider, effective.Model, forceCompact: false, ct);
                 if (prepared.WasCompacted)
                 {
                     state.Messages = prepared.Messages;
                     step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
                     await SaveCheckpointAsync(state, ct);
+                    var metadata = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
                     await AppendEventAsync(state, options, new AgentEventAppendRequest(
                         new AgentRun { Id = state.RunId },
                         AgentEventTypes.ContextCompacted,
                         prepared.Summary,
-                        new { prepared.EstimatedTokensBefore, prepared.EstimatedTokensAfter },
+                        new
+                        {
+                            prepared.EstimatedTokensBefore,
+                            prepared.EstimatedTokensAfter,
+                            files_changed = metadata.FilesChanged,
+                            commands_run = metadata.CommandsRun,
+                            open_questions = metadata.OpenQuestions,
+                            next_actions = metadata.NextActions,
+                            persisted_outputs = metadata.PersistedOutputs
+                        },
                         step.Id,
                         Severity: AgentEventSeverities.Warning), events, ct);
                 }
@@ -199,11 +220,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 }
 
                 // Call the model
+                var modelMessages = await BuildModelMessagesWithRuntimeContextAsync(
+                    state.ChatId, state.RunId, guard.Messages, ct);
+
                 await AppendEventAsync(state, options, new AgentEventAppendRequest(
                     new AgentRun { Id = state.RunId },
                     AgentEventTypes.ModelRequest,
-                    $"Sending to model (step {stepNumber}, {guard.Messages.Count} msgs, {guard.Tools.Count} tools).",
-                    new { stepNumber, messageCount = guard.Messages.Count, toolCount = guard.Tools.Count },
+                    $"Sending to model (step {stepNumber}, {modelMessages.Count} msgs, {guard.Tools.Count} tools).",
+                    new { stepNumber, messageCount = modelMessages.Count, toolCount = guard.Tools.Count, runtimeContextInjected = true },
                     step.Id), events, ct);
 
                 frameProgress?.Report(new AgentRunFrame(stepNumber, AgentRunFrameKinds.ModelRequest, events.ToArray()));
@@ -211,32 +235,45 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 var streamMetrics = CreateStreamMetrics();
                 var outputStream = CreateTrackedStream(options.OutputStream, streamMetrics);
                 lastResponse = await _providerStreamAdapter.ChatAsync(
-                    new ProviderStreamRequest(provider, guard.Messages.ToList(), systemPrompt,
+                    new ProviderStreamRequest(provider, modelMessages, systemPrompt,
                         effective.Temperature, effective.MaxTokens, guard.Tools, outputStream,
                         Reasoning: BuildReasoningOptions(effective)), ct);
 
                 // Context limit retry
                 if (_contextManager.IsContextLimitError(lastResponse))
                 {
-                    var forced = _contextManager.Prepare(state.Messages, contextOptions, forceCompact: true);
+                    var forced = await PrepareContextAsync(
+                        state, contextOptions, effective.Provider, effective.Model, forceCompact: true, ct);
                     if (forced.WasCompacted)
                     {
                         state.Messages = forced.Messages;
                         await SaveCheckpointAsync(state, ct);
+                        var metadata = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
                         await AppendEventAsync(state, options, new AgentEventAppendRequest(
                             new AgentRun { Id = state.RunId },
                             AgentEventTypes.ContextCompacted,
                             "Context limit hit; compacted and retrying.",
-                            new { forced.EstimatedTokensBefore, forced.EstimatedTokensAfter },
+                            new
+                            {
+                                forced.EstimatedTokensBefore,
+                                forced.EstimatedTokensAfter,
+                                files_changed = metadata.FilesChanged,
+                                commands_run = metadata.CommandsRun,
+                                open_questions = metadata.OpenQuestions,
+                                next_actions = metadata.NextActions,
+                                persisted_outputs = metadata.PersistedOutputs
+                            },
                             step.Id,
                             Severity: AgentEventSeverities.Warning), events, ct);
 
                         var retryGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
                         if (!retryGuard.IsRejected)
                         {
+                            var retryMessages = await BuildModelMessagesWithRuntimeContextAsync(
+                                state.ChatId, state.RunId, retryGuard.Messages, ct);
                             outputStream = CreateTrackedStream(options.OutputStream, streamMetrics);
                             lastResponse = await _providerStreamAdapter.ChatAsync(
-                                new ProviderStreamRequest(provider, retryGuard.Messages.ToList(), systemPrompt,
+                                new ProviderStreamRequest(provider, retryMessages, systemPrompt,
                                     effective.Temperature, effective.MaxTokens, retryGuard.Tools, outputStream,
                                     Reasoning: BuildReasoningOptions(effective)), ct);
                         }
@@ -531,6 +568,177 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     // Private helpers
     // ═══════════════════════════════════════════════════════════════
 
+    private sealed record RuntimeContextMetadata(
+        IReadOnlyList<string> FilesChanged,
+        IReadOnlyList<string> CommandsRun,
+        IReadOnlyList<string> OpenQuestions,
+        IReadOnlyList<string> NextActions,
+        IReadOnlyList<string> PersistedOutputs,
+        IReadOnlyList<string> RecentFailures);
+
+    private async Task<AgentContextPreparationResult> PrepareContextAsync(
+        AgentRunState state,
+        AgentContextOptions options,
+        string provider,
+        string model,
+        bool forceCompact,
+        CancellationToken ct)
+    {
+        var budget = _tokenBudget.GetBudget(provider, model);
+        var tokenState = forceCompact
+            ? TokenBudgetState.CompactNow
+            : _tokenBudget.CheckBudget(state.Messages, budget, options.AutoCompactTriggerTokens);
+
+        if (forceCompact || tokenState >= TokenBudgetState.CompactSoon)
+        {
+            var strategy = tokenState switch
+            {
+                TokenBudgetState.Blocking or TokenBudgetState.CompactNow => CompactionStrategy.SummarizeMiddle,
+                TokenBudgetState.CompactSoon => CompactionStrategy.Microcompact,
+                _ => CompactionStrategy.TrimToolOutputs
+            };
+            var compacted = await _reactiveCompactor.CompactAsync(
+                state.Messages, tokenState, strategy, _tokenBudget, ct);
+            if (compacted.WasCompacted && compacted.EstimatedTokensAfter < compacted.EstimatedTokensBefore)
+            {
+                return new AgentContextPreparationResult(
+                    compacted.Messages,
+                    true,
+                    compacted.EstimatedTokensBefore,
+                    compacted.EstimatedTokensAfter,
+                    compacted.Summary);
+            }
+        }
+
+        return _contextManager.Prepare(state.Messages, options, forceCompact);
+    }
+
+    private async Task<List<MessagePayload>> BuildModelMessagesWithRuntimeContextAsync(
+        Guid chatId,
+        Guid runId,
+        IReadOnlyList<MessagePayload> source,
+        CancellationToken ct)
+    {
+        var messages = source.ToList();
+        var runtimeContext = await BuildRuntimeContextBlockAsync(chatId, runId, ct);
+        if (!string.IsNullOrWhiteSpace(runtimeContext))
+            messages.Add(new MessagePayload("user", runtimeContext));
+        return messages;
+    }
+
+    private async Task<string> BuildRuntimeContextBlockAsync(Guid chatId, Guid runId, CancellationToken ct)
+    {
+        var taskSummary = await _agentTasks.BuildOpenTaskSummaryAsync(chatId, ct: ct);
+        var memory = await _projectMemory.ReadAsync(chatId, ct);
+        var metadata = await BuildRuntimeContextMetadataAsync(chatId, runId, ct);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("[runtime context]");
+        sb.AppendLine("This is durable execution context, not a new user request. Use it to continue accurately after long runs or compaction.");
+        sb.AppendLine();
+        sb.AppendLine("## Active Tasks");
+        sb.AppendLine(taskSummary);
+        sb.AppendLine();
+        sb.AppendLine("## Project Memory Preview");
+        sb.AppendLine(TrimForContext(memory, 4_000));
+        AppendList(sb, "## Files Changed", metadata.FilesChanged);
+        AppendList(sb, "## Persisted Output References", metadata.PersistedOutputs);
+        AppendList(sb, "## Recent Commands", metadata.CommandsRun);
+        AppendList(sb, "## Recent Failures", metadata.RecentFailures);
+        AppendList(sb, "## Open Questions", metadata.OpenQuestions);
+        AppendList(sb, "## Next Actions", metadata.NextActions);
+        sb.AppendLine("[/runtime context]");
+        return SecretRedactor.RedactText(sb.ToString());
+    }
+
+    private async Task<RuntimeContextMetadata> BuildRuntimeContextMetadataAsync(Guid chatId, Guid runId, CancellationToken ct)
+    {
+        var artifacts = await _db.Set<AgentArtifact>()
+            .Where(a => a.AgentRunId == runId)
+            .OrderByDescending(a => a.UpdatedAt)
+            .Take(24)
+            .ToListAsync(ct);
+        var persistedOutputs = artifacts
+            .Where(a => a.RelativePath.StartsWith(".tlah_context", StringComparison.OrdinalIgnoreCase) &&
+                        a.RelativePath.Contains("tool-results", StringComparison.OrdinalIgnoreCase))
+            .Select(a => $"{a.RelativePath} ({a.SizeBytes} bytes)")
+            .Take(12)
+            .ToList();
+        var filesChanged = artifacts
+            .Where(a => !persistedOutputs.Any(p => p.StartsWith(a.RelativePath, StringComparison.OrdinalIgnoreCase)))
+            .Select(a => $"{a.RelativePath} ({a.SizeBytes} bytes)")
+            .Take(12)
+            .ToList();
+
+        var invocations = await _db.Set<ToolInvocation>()
+            .Where(i => i.AgentRunId == runId)
+            .OrderByDescending(i => i.CreatedAt)
+            .Take(30)
+            .ToListAsync(ct);
+        var commands = invocations
+            .Where(i => i.ToolName is AgentToolNames.SandboxExec or AgentToolNames.TerminalExec or AgentToolNames.Git)
+            .Select(i => $"{i.ToolName}: {ReadJsonString(i.ArgumentsJson, "command") ?? ReadJsonString(i.ArgumentsJson, "args") ?? TrimForContext(i.ArgumentsJson, 160)}")
+            .Take(12)
+            .ToList();
+
+        var tasks = await _agentTasks.ListAsync(chatId, includeCompleted: false, limit: 20, ct);
+        var openQuestions = tasks
+            .Where(t => t.Status == AgentTaskStatuses.Blocked)
+            .Select(t => $"{t.Title}: {TrimForContext(t.Description, 140)}")
+            .Take(8)
+            .ToList();
+        var nextActions = tasks
+            .Where(t => t.Status is AgentTaskStatuses.Pending or AgentTaskStatuses.InProgress)
+            .Select(t => $"{t.Status}: {t.Title}")
+            .Take(12)
+            .ToList();
+
+        var failures = await _db.Set<AgentEvent>()
+            .Where(e => e.AgentRunId == runId && e.Severity == AgentEventSeverities.Error)
+            .OrderByDescending(e => e.CreatedAt)
+            .Take(8)
+            .Select(e => $"{e.EventType}: {e.Summary}")
+            .ToListAsync(ct);
+
+        return new RuntimeContextMetadata(filesChanged, commands, openQuestions, nextActions, persistedOutputs, failures);
+    }
+
+    private static void AppendList(StringBuilder sb, string title, IReadOnlyList<string> items)
+    {
+        sb.AppendLine();
+        sb.AppendLine(title);
+        if (items.Count == 0)
+        {
+            sb.AppendLine("- none");
+            return;
+        }
+
+        foreach (var item in items)
+            sb.AppendLine($"- {item}");
+    }
+
+    private static string TrimForContext(string value, int maxChars)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+        return value.Length <= maxChars ? value : value[..maxChars] + "\n[truncated for runtime context]";
+    }
+
+    private static string? ReadJsonString(string json, string property)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private async Task<string> BuildSystemPromptAsync(Guid chatId, CancellationToken ct)
     {
         var prompt = await SystemPromptBuilder.BuildAsync(
@@ -541,6 +749,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         // Simplified append (delegates to actual implementation in caller)
         if (!string.IsNullOrWhiteSpace(projectMemory))
             prompt += $"\n\n[project memory: {memoryPath}]\n{projectMemory[..Math.Min(projectMemory.Length, 12_000)]}";
+        var taskSummary = await _agentTasks.BuildOpenTaskSummaryAsync(chatId, ct: ct);
+        prompt += $"\n\n[current tracked tasks]\n{taskSummary}";
         prompt += BuildAgentInstructions(
             _sandboxCommandService.GetSandboxRoot(chatId),
             _agentTools.Definitions.Select(t => t.Name));
@@ -559,7 +769,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         Prefer typed memory, file, code, Git, HTTP, search, browser, terminal, and MCP tools over ad-hoc shell commands.
         For development work, prefer code_read, code_grep, code_glob, code_diff, code_edit, code_multi_edit, code_apply_patch, code_rollback, and code_diagnostics.
         For file work, prefer file_list, file_read, file_write, file_search, and file_send. When you create a file the user should see, preview, download, or use outside the sandbox, call file_send before the final answer.
-        Use mcp_list_tools before mcp_call. Keep credentials referenced only by broker entry name; never print, store, or ask for secrets.
+        For multi-step work, maintain a persistent task plan with todo_write, task_create, task_update, and task_list. Keep one current task in_progress when possible and mark completed tasks promptly.
+        When a tool output is persisted under .tlah_context/tool-results, use read_persisted_output to recover details instead of asking the user to rerun work.
+        Use tool_search when you need to discover less-common tools, MCP capabilities, task tools, or persisted-output tools.
+        Use task_create with background=true only for independent local background work; use task_output, task_stop, and task_send_message to inspect or control it.
+        Use mcp_list_tools before mcp_call, and mcp_list_resources before mcp_read_resource. Keep credentials referenced only by broker entry name; never print, store, or ask for secrets.
         Request one tool call at a time unless multiple read-only calls are clearly independent. Include a short reason in arguments when the schema supports it.
         After a tool result is returned, either request the next action or provide the final answer.
         """;
@@ -948,7 +1162,36 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             },
             step.Id, item.Invocation.Id,
             Severity: result.Success ? AgentEventSeverities.Info : AgentEventSeverities.Error), events, ct);
+
+        if (result.Success && IsTaskTool(item.ToolCall.Name))
+        {
+            var tasks = await _agentTasks.ListAsync(state.ChatId, includeCompleted: true, limit: 40, ct);
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                new AgentRun { Id = state.RunId },
+                IsBackgroundTaskTool(item.ToolCall.Name)
+                    ? AgentEventTypes.BackgroundTaskUpdated
+                    : AgentEventTypes.TaskUpdated,
+                IsBackgroundTaskTool(item.ToolCall.Name)
+                    ? "Background task state changed."
+                    : "Task list changed.",
+                new
+                {
+                    tool = item.ToolCall.Name,
+                    taskCount = tasks.Count,
+                    tasks
+                },
+                step.Id,
+                item.Invocation.Id), events, ct);
+        }
     }
+
+    private static bool IsTaskTool(string name) =>
+        name is AgentToolNames.TodoWrite or AgentToolNames.TaskCreate or AgentToolNames.TaskUpdate or
+            AgentToolNames.TaskList or AgentToolNames.TaskOutput or AgentToolNames.TaskStop or
+            AgentToolNames.TaskSendMessage;
+
+    private static bool IsBackgroundTaskTool(string name) =>
+        name is AgentToolNames.TaskOutput or AgentToolNames.TaskStop or AgentToolNames.TaskSendMessage;
 
     private async Task<string?> TryFinalizeAtStepBudgetAsync(AgentRunState state, string systemPrompt,
         EffectiveSettings effective, AgentEngineOptions options, List<AgentEvent> events, CancellationToken ct)
@@ -967,6 +1210,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         var summaryMessages = state.Messages.ToList();
         summaryMessages.Add(new MessagePayload("user",
             "The agent has reached its step budget. Do not request tools. Give the best possible final answer now."));
+        summaryMessages = await BuildModelMessagesWithRuntimeContextAsync(state.ChatId, state.RunId, summaryMessages, ct);
 
         try
         {

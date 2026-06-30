@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.Data.Common;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.Background;
 
 namespace TLAHStudio.Data;
 
@@ -27,11 +28,13 @@ public class TlahDbContext : DbContext
     public DbSet<AgentEvent> AgentEvents => Set<AgentEvent>();
     public DbSet<AgentCheckpoint> AgentCheckpoints => Set<AgentCheckpoint>();
     public DbSet<AgentArtifact> AgentArtifacts => Set<AgentArtifact>();
+    public DbSet<AgentTaskItem> AgentTaskItems => Set<AgentTaskItem>();
     public DbSet<ToolPermission> ToolPermissions => Set<ToolPermission>();
     public DbSet<ToolPlatformSettings> ToolPlatformSettings => Set<ToolPlatformSettings>();
     public DbSet<ToolPolicyRule> ToolPolicyRules => Set<ToolPolicyRule>();
     public DbSet<McpServerConfig> McpServerConfigs => Set<McpServerConfig>();
     public DbSet<CredentialEntry> CredentialEntries => Set<CredentialEntry>();
+    public DbSet<BackgroundTaskRecord> BackgroundTaskRecords => Set<BackgroundTaskRecord>();
 
     private readonly string _dbPath;
 
@@ -264,6 +267,26 @@ public class TlahDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<AgentTaskItem>(entity =>
+        {
+            entity.HasIndex(t => t.ChatId);
+            entity.HasIndex(t => t.AgentRunId);
+            entity.HasIndex(t => t.Status);
+            entity.HasIndex(t => t.UpdatedAt);
+            entity.HasOne(t => t.Chat)
+                  .WithMany(c => c.AgentTasks)
+                  .HasForeignKey(t => t.ChatId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(t => t.AgentRun)
+                  .WithMany(r => r.Tasks)
+                  .HasForeignKey(t => t.AgentRunId)
+                  .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(t => t.ParentTask)
+                  .WithMany()
+                  .HasForeignKey(t => t.ParentTaskId)
+                  .OnDelete(DeleteBehavior.SetNull);
+        });
+
         modelBuilder.Entity<ToolPermission>(entity =>
         {
             entity.HasIndex(p => new { p.ChatId, p.ToolName }).IsUnique();
@@ -305,6 +328,13 @@ public class TlahDbContext : DbContext
         modelBuilder.Entity<CredentialEntry>(entity =>
         {
             entity.HasIndex(c => c.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<BackgroundTaskRecord>(entity =>
+        {
+            entity.HasIndex(t => t.ChatId);
+            entity.HasIndex(t => t.Status);
+            entity.HasIndex(t => t.StartedAt);
         });
     }
 
@@ -523,6 +553,30 @@ public class TlahDbContext : DbContext
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_ToolInvocations_Status\" ON \"ToolInvocations\" (\"Status\");");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentCheckpoints_AgentRunId_StepNumber\" ON \"AgentCheckpoints\" (\"AgentRunId\", \"StepNumber\");");
         ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_AgentArtifacts_AgentRunId_RelativePath\" ON \"AgentArtifacts\" (\"AgentRunId\", \"RelativePath\");");
+        ExecuteNonQuery(connection, """
+            CREATE TABLE IF NOT EXISTS "AgentTaskItems" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_AgentTaskItems" PRIMARY KEY,
+                "ChatId" TEXT NOT NULL,
+                "AgentRunId" TEXT NULL,
+                "ParentTaskId" TEXT NULL,
+                "Title" TEXT NOT NULL,
+                "Description" TEXT NOT NULL,
+                "Status" TEXT NOT NULL,
+                "Priority" TEXT NOT NULL,
+                "Source" TEXT NOT NULL,
+                "MetadataJson" TEXT NOT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL,
+                "CompletedAt" TEXT NULL,
+                CONSTRAINT "FK_AgentTaskItems_Chats_ChatId" FOREIGN KEY ("ChatId") REFERENCES "Chats" ("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_AgentTaskItems_AgentRuns_AgentRunId" FOREIGN KEY ("AgentRunId") REFERENCES "AgentRuns" ("Id") ON DELETE SET NULL,
+                CONSTRAINT "FK_AgentTaskItems_AgentTaskItems_ParentTaskId" FOREIGN KEY ("ParentTaskId") REFERENCES "AgentTaskItems" ("Id") ON DELETE SET NULL
+            );
+            """);
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentTaskItems_ChatId\" ON \"AgentTaskItems\" (\"ChatId\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentTaskItems_AgentRunId\" ON \"AgentTaskItems\" (\"AgentRunId\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentTaskItems_Status\" ON \"AgentTaskItems\" (\"Status\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentTaskItems_UpdatedAt\" ON \"AgentTaskItems\" (\"UpdatedAt\");");
         ExecuteNonQuery(connection, "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_AgentEvents_AgentRunId_SequenceNumber\" ON \"AgentEvents\" (\"AgentRunId\", \"SequenceNumber\");");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentEvents_EventType\" ON \"AgentEvents\" (\"EventType\");");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_AgentEvents_CreatedAt\" ON \"AgentEvents\" (\"CreatedAt\");");
@@ -620,15 +674,25 @@ public class TlahDbContext : DbContext
             CREATE TABLE IF NOT EXISTS "BackgroundTaskRecords" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_BackgroundTaskRecords" PRIMARY KEY,
                 "ChatId" TEXT NOT NULL,
+                "Kind" TEXT NOT NULL DEFAULT 'task',
                 "Description" TEXT NOT NULL,
                 "Status" TEXT NOT NULL,
                 "StartedAt" TEXT NOT NULL,
                 "CompletedAt" TEXT NULL,
                 "ResultSummary" TEXT NULL,
-                "Error" TEXT NULL
+                "Error" TEXT NULL,
+                "OutputPath" TEXT NULL,
+                "InputJson" TEXT NOT NULL DEFAULT '{}',
+                "LastMessage" TEXT NULL
             );
             """);
+        AddColumnIfMissing(connection, "BackgroundTaskRecords", "Kind", "TEXT NOT NULL DEFAULT 'task'");
+        AddColumnIfMissing(connection, "BackgroundTaskRecords", "OutputPath", "TEXT NULL");
+        AddColumnIfMissing(connection, "BackgroundTaskRecords", "InputJson", "TEXT NOT NULL DEFAULT '{}'");
+        AddColumnIfMissing(connection, "BackgroundTaskRecords", "LastMessage", "TEXT NULL");
         ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_BackgroundTaskRecords_ChatId\" ON \"BackgroundTaskRecords\" (\"ChatId\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_BackgroundTaskRecords_Status\" ON \"BackgroundTaskRecords\" (\"Status\");");
+        ExecuteNonQuery(connection, "CREATE INDEX IF NOT EXISTS \"IX_BackgroundTaskRecords_StartedAt\" ON \"BackgroundTaskRecords\" (\"StartedAt\");");
         ExecuteNonQuery(connection, """
             UPDATE "AgentRuns"
             SET "Status" = 'paused',

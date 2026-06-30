@@ -20,7 +20,18 @@ public static class AgentToolNames
     public const string HttpRequest = "http_request";
     public const string WebSearch = "web_search";
     public const string BrowserRead = "browser_read";
+    public const string ReadPersistedOutput = "read_persisted_output";
+    public const string ToolSearch = "tool_search";
+    public const string TodoWrite = "todo_write";
+    public const string TaskCreate = "task_create";
+    public const string TaskUpdate = "task_update";
+    public const string TaskList = "task_list";
+    public const string TaskOutput = "task_output";
+    public const string TaskStop = "task_stop";
+    public const string TaskSendMessage = "task_send_message";
     public const string McpListTools = "mcp_list_tools";
+    public const string McpListResources = "mcp_list_resources";
+    public const string McpReadResource = "mcp_read_resource";
     public const string McpCall = "mcp_call";
     public const string MemoryRead = "memory_read";
     public const string MemoryWrite = "memory_write";
@@ -122,6 +133,10 @@ public sealed record AgentToolMetadata(
             AgentToolNames.CodeRead or
             AgentToolNames.CodeGrep or
             AgentToolNames.CodeGlob or
+            AgentToolNames.ToolSearch or
+            AgentToolNames.TaskList or
+            AgentToolNames.TaskOutput or
+            AgentToolNames.ReadPersistedOutput or
             AgentToolNames.CodeDiff or
             AgentToolNames.CodeDiagnostics => new(
                 normalized,
@@ -156,6 +171,18 @@ public sealed record AgentToolMetadata(
                 AgentToolResultPersistenceModes.PersistLargeOutputs,
                 IsOpenWorld: true),
 
+            AgentToolNames.McpListResources or
+            AgentToolNames.McpReadResource => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: true,
+                IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.Mcp,
+                18_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs,
+                IsOpenWorld: true),
+
             AgentToolNames.FileSend => new(
                 normalized,
                 requiresApproval,
@@ -168,6 +195,10 @@ public sealed record AgentToolMetadata(
 
             AgentToolNames.FileWrite or
             AgentToolNames.MemoryWrite or
+            AgentToolNames.TodoWrite or
+            AgentToolNames.TaskCreate or
+            AgentToolNames.TaskUpdate or
+            AgentToolNames.TaskSendMessage or
             AgentToolNames.CodeEdit or
             AgentToolNames.CodeMultiEdit or
             AgentToolNames.CodeApplyPatch or
@@ -213,6 +244,16 @@ public sealed record AgentToolMetadata(
                 AgentToolResultPersistenceModes.PersistLargeOutputs,
                 IsOpenWorld: true),
 
+            AgentToolNames.TaskStop => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: false,
+                AgentToolRenderHints.Text,
+                8_000,
+                AgentToolResultPersistenceModes.Inline),
+
             AgentToolNames.SandboxExec or
             AgentToolNames.TerminalExec => new(
                 normalized,
@@ -256,7 +297,18 @@ public static class AgentToolUx
             AgentToolNames.HttpRequest => "HTTP request",
             AgentToolNames.WebSearch => "Web search",
             AgentToolNames.BrowserRead => "Read web page",
+            AgentToolNames.ReadPersistedOutput => "Read persisted output",
+            AgentToolNames.ToolSearch => "Search tools",
+            AgentToolNames.TodoWrite => "Update todo list",
+            AgentToolNames.TaskCreate => "Create task",
+            AgentToolNames.TaskUpdate => "Update task",
+            AgentToolNames.TaskList => "List tasks",
+            AgentToolNames.TaskOutput => "Read task output",
+            AgentToolNames.TaskStop => "Stop task",
+            AgentToolNames.TaskSendMessage => "Message task",
             AgentToolNames.McpListTools => "List MCP tools",
+            AgentToolNames.McpListResources => "List MCP resources",
+            AgentToolNames.McpReadResource => "Read MCP resource",
             AgentToolNames.McpCall => "Call MCP tool",
             AgentToolNames.MemoryRead => "Read project memory",
             AgentToolNames.MemoryWrite => "Write project memory",
@@ -292,7 +344,18 @@ public static class AgentToolUx
             AgentToolNames.HttpRequest => "Calling HTTP endpoint",
             AgentToolNames.WebSearch => "Searching the web",
             AgentToolNames.BrowserRead => "Reading web content",
+            AgentToolNames.ReadPersistedOutput => "Reading persisted output",
+            AgentToolNames.ToolSearch => "Searching tool catalog",
+            AgentToolNames.TodoWrite => "Updating todo list",
+            AgentToolNames.TaskCreate => "Creating task",
+            AgentToolNames.TaskUpdate => "Updating task",
+            AgentToolNames.TaskList => "Listing tasks",
+            AgentToolNames.TaskOutput => "Reading background output",
+            AgentToolNames.TaskStop => "Stopping background task",
+            AgentToolNames.TaskSendMessage => "Sending background message",
             AgentToolNames.McpListTools => "Discovering MCP tools",
+            AgentToolNames.McpListResources => "Discovering MCP resources",
+            AgentToolNames.McpReadResource => "Reading MCP resource",
             AgentToolNames.McpCall => "Calling MCP server",
             AgentToolNames.MemoryRead => "Loading memory",
             AgentToolNames.MemoryWrite => "Saving memory",

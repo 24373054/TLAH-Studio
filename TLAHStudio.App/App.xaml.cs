@@ -92,6 +92,16 @@ public partial class App : Application
             services.AddScoped<IAgentContextManager, AgentContextManager>();
             services.AddScoped<IProjectMemoryService, ProjectMemoryService>();
             services.AddScoped<IToolResultPersistenceService, ToolResultPersistenceService>();
+            services.AddScoped<IAgentTaskService, AgentTaskService>();
+            services.AddScoped<IAgentTool, ToolSearchAgentTool>();
+            services.AddScoped<IAgentTool, TodoWriteAgentTool>();
+            services.AddScoped<IAgentTool, TaskCreateAgentTool>();
+            services.AddScoped<IAgentTool, TaskUpdateAgentTool>();
+            services.AddScoped<IAgentTool, TaskListAgentTool>();
+            services.AddScoped<IAgentTool, TaskOutputAgentTool>();
+            services.AddScoped<IAgentTool, TaskStopAgentTool>();
+            services.AddScoped<IAgentTool, TaskSendMessageAgentTool>();
+            services.AddScoped<IAgentTool, ReadPersistedOutputAgentTool>();
             services.AddScoped<IAgentTool, SandboxExecAgentTool>();
             services.AddScoped<IAgentTool, TerminalExecAgentTool>();
             services.AddScoped<IAgentTool, FileListAgentTool>();
@@ -104,6 +114,8 @@ public partial class App : Application
             services.AddScoped<IAgentTool, WebSearchAgentTool>();
             services.AddScoped<IAgentTool, BrowserReadAgentTool>();
             services.AddScoped<IAgentTool, McpListToolsAgentTool>();
+            services.AddScoped<IAgentTool, McpListResourcesAgentTool>();
+            services.AddScoped<IAgentTool, McpReadResourceAgentTool>();
             services.AddScoped<IAgentTool, McpCallAgentTool>();
             services.AddScoped<IAgentTool, MemoryReadAgentTool>();
             services.AddScoped<IAgentTool, MemoryWriteAgentTool>();

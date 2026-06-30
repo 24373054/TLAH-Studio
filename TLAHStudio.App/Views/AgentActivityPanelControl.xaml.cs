@@ -274,6 +274,13 @@ public sealed partial class AgentActivityPanelControl : UserControl
             Padding = new Thickness(10, 0, 10, 10)
         };
 
+        stack.Children.Add(BuildSectionTitle("Run summary"));
+        stack.Children.Add(BuildRunSummary(run));
+
+        stack.Children.Add(BuildSectionTitle("Task list"));
+        stack.Children.Add(BuildTaskList(run));
+
+        stack.Children.Add(BuildSectionTitle("Tool timeline"));
         if (run.Lines.Count == 0)
         {
             stack.Children.Add(new TextBlock
@@ -290,6 +297,109 @@ public sealed partial class AgentActivityPanelControl : UserControl
             stack.Children.Add(BuildActivityLine(line));
 
         return stack;
+    }
+
+    private UIElement BuildSectionTitle(string text) => new TextBlock
+    {
+        Text = text,
+        TextWrapping = TextWrapping.NoWrap,
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        FontSize = 11,
+        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        Foreground = TextSecondaryBrush(),
+        Margin = new Thickness(0, 4, 0, 0)
+    };
+
+    private UIElement BuildRunSummary(AgentActivityRun run)
+    {
+        var border = new Border
+        {
+            CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(9, 7, 9, 7),
+            Background = ToolPreviewBackgroundBrush(null),
+            BorderBrush = ToolPreviewBorderBrush(null),
+            BorderThickness = new Thickness(1),
+            Child = new TextBlock
+            {
+                Text = $"{run.StatusText}\n{run.Lines.Count} event{(run.Lines.Count == 1 ? string.Empty : "s")} · {run.TimeText}",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = TextPrimaryBrush(),
+                FontSize = IsCompactDensity() ? 12 : 13,
+                LineHeight = IsCompactDensity() ? 17 : 19
+            }
+        };
+        return border;
+    }
+
+    private UIElement BuildTaskList(AgentActivityRun run)
+    {
+        if (run.Tasks.Count == 0)
+        {
+            return new TextBlock
+            {
+                Text = "No tracked tasks for this run.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = TextSecondaryBrush(),
+                FontSize = 12
+            };
+        }
+
+        var stack = new StackPanel { Spacing = 6, MinWidth = 0 };
+        foreach (var task in run.Tasks.Take(12))
+            stack.Children.Add(BuildTaskRow(task));
+        if (run.Tasks.Count > 12)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"+ {run.Tasks.Count - 12} more",
+                Foreground = TextSecondaryBrush(),
+                FontSize = 11
+            });
+        }
+        return stack;
+    }
+
+    private UIElement BuildTaskRow(AgentTaskSnapshot task)
+    {
+        var grid = new Grid
+        {
+            ColumnSpacing = 7,
+            MinWidth = 0
+        };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var status = new Border
+        {
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(5, 2, 5, 2),
+            Background = TaskStatusBrush(task.Status),
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = TaskStatusLabel(task.Status),
+                FontSize = 9,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = TaskStatusTextBrush(task.Status)
+            }
+        };
+        grid.Children.Add(status);
+
+        var text = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(task.Description)
+                ? task.Title
+                : $"{task.Title} · {task.Description}",
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 3,
+            Foreground = TextPrimaryBrush(),
+            FontSize = IsCompactDensity() ? 12 : 13,
+            LineHeight = IsCompactDensity() ? 17 : 19
+        };
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
+        return grid;
     }
 
     private UIElement BuildActivityLine(AgentProgressLine line)
@@ -497,6 +607,47 @@ public sealed partial class AgentActivityPanelControl : UserControl
             Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
             Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
     });
+
+    private SolidColorBrush TaskStatusBrush(string status) => new(status switch
+    {
+        AgentTaskStatuses.Completed => ThemeColor(
+            Color.FromArgb(0xFF, 0xDB, 0xF7, 0xE8),
+            Color.FromArgb(0xFF, 0x16, 0x3A, 0x2B)),
+        AgentTaskStatuses.Blocked => ThemeColor(
+            Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
+            Color.FromArgb(0xFF, 0x43, 0x34, 0x18)),
+        AgentTaskStatuses.Cancelled => ThemeColor(
+            Color.FromArgb(0xFF, 0xEA, 0xEF, 0xF7),
+            Color.FromArgb(0xFF, 0x2A, 0x34, 0x45)),
+        AgentTaskStatuses.InProgress => ThemeColor(
+            Color.FromArgb(0xFF, 0xDB, 0xEA, 0xFF),
+            Color.FromArgb(0xFF, 0x1A, 0x2F, 0x52)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0xF0, 0xF5, 0xFF),
+            Color.FromArgb(0xFF, 0x1F, 0x29, 0x3A))
+    });
+
+    private SolidColorBrush TaskStatusTextBrush(string status) => new(status switch
+    {
+        AgentTaskStatuses.Completed => ThemeColor(
+            Color.FromArgb(0xFF, 0x16, 0x6B, 0x42),
+            Color.FromArgb(0xFF, 0xA7, 0xF3, 0xD0)),
+        AgentTaskStatuses.Blocked => ThemeColor(
+            Color.FromArgb(0xFF, 0x92, 0x4E, 0x0E),
+            Color.FromArgb(0xFF, 0xF8, 0xD6, 0x7A)),
+        _ => ThemeColor(
+            Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
+            Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
+    });
+
+    private static string TaskStatusLabel(string status) => status switch
+    {
+        AgentTaskStatuses.InProgress => "DOING",
+        AgentTaskStatuses.Completed => "DONE",
+        AgentTaskStatuses.Blocked => "BLOCK",
+        AgentTaskStatuses.Cancelled => "DROP",
+        _ => "TODO"
+    };
 
     private Brush ToolPreviewBackgroundBrush(string? renderHint)
     {

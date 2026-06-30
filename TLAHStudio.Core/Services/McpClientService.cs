@@ -14,6 +14,13 @@ public sealed record McpToolInfo(
     string Description,
     JsonElement InputSchema);
 
+public sealed record McpResourceInfo(
+    string Server,
+    string Uri,
+    string Name,
+    string Description,
+    string MimeType);
+
 public interface IMcpClientService
 {
     Task<IReadOnlyList<McpToolInfo>> TestServerAsync(
@@ -23,6 +30,17 @@ public interface IMcpClientService
     Task<IReadOnlyList<McpToolInfo>> ListToolsAsync(
         Guid chatId,
         string? serverName = null,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<McpResourceInfo>> ListResourcesAsync(
+        Guid chatId,
+        string? serverName = null,
+        CancellationToken ct = default);
+
+    Task<string> ReadResourceAsync(
+        Guid chatId,
+        string serverName,
+        string uri,
         CancellationToken ct = default);
 
     Task<string> CallToolAsync(
@@ -67,6 +85,32 @@ public sealed class McpClientService : IMcpClientService
         return results;
     }
 
+    public async Task<IReadOnlyList<McpResourceInfo>> ListResourcesAsync(
+        Guid chatId,
+        string? serverName = null,
+        CancellationToken ct = default)
+    {
+        var servers = await ResolveServersAsync(chatId, serverName, ct);
+        var results = new List<McpResourceInfo>();
+        foreach (var server in servers)
+            results.AddRange(await ListServerResourcesAsync(server, ct));
+        return results;
+    }
+
+    public async Task<string> ReadResourceAsync(
+        Guid chatId,
+        string serverName,
+        string uri,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+            throw new InvalidOperationException("MCP resource uri is required.");
+
+        var server = (await ResolveServersAsync(chatId, serverName, ct)).Single();
+        var response = await InvokeAsync(server, "resources/read", new { uri }, ct);
+        return SecretRedactor.RedactJson(response.GetRawText());
+    }
+
     public async Task<IReadOnlyList<McpToolInfo>> TestServerAsync(
         McpServerConfigDto server,
         CancellationToken ct = default)
@@ -89,6 +133,36 @@ public sealed class McpClientService : IMcpClientService
                 ? schemaValue.Clone()
                 : JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone();
             results.Add(new McpToolInfo(server.Name, name, description, schema));
+        }
+        return results;
+    }
+
+    private async Task<IReadOnlyList<McpResourceInfo>> ListServerResourcesAsync(
+        McpServerConfigDto server,
+        CancellationToken ct)
+    {
+        var response = await InvokeAsync(server, "resources/list", new { }, ct);
+        var results = new List<McpResourceInfo>();
+        if (!response.TryGetProperty("resources", out var resources) || resources.ValueKind != JsonValueKind.Array)
+            return results;
+
+        foreach (var resource in resources.EnumerateArray())
+        {
+            var uri = resource.TryGetProperty("uri", out var uriValue)
+                ? uriValue.GetString() ?? string.Empty
+                : string.Empty;
+            if (string.IsNullOrWhiteSpace(uri))
+                continue;
+            var name = resource.TryGetProperty("name", out var nameValue)
+                ? nameValue.GetString() ?? string.Empty
+                : string.Empty;
+            var description = resource.TryGetProperty("description", out var descriptionValue)
+                ? descriptionValue.GetString() ?? string.Empty
+                : string.Empty;
+            var mimeType = resource.TryGetProperty("mimeType", out var mimeValue)
+                ? mimeValue.GetString() ?? string.Empty
+                : string.Empty;
+            results.Add(new McpResourceInfo(server.Name, uri, name, description, mimeType));
         }
         return results;
     }

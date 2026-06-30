@@ -6,6 +6,7 @@ using System.Text.Json;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
+using TLAHStudio.Core.Services.Background;
 
 namespace TLAHStudio.Core.Tests;
 
@@ -74,6 +75,109 @@ public class BuiltInAgentToolsTests
         Assert.All(registry.Definitions, definition =>
             Assert.Matches("^[a-zA-Z0-9_-]+$", definition.Name));
         Assert.True(registry.TryGet("sandbox.exec", out _));
+    }
+
+    [Fact]
+    public async Task TaskToolsPersistTodosAndListAcrossServiceInstances()
+    {
+        await using var db = TestDb.Create();
+        var chatId = Guid.NewGuid();
+        db.Set<Chat>().Add(new Chat { Id = chatId, Title = "tasks" });
+        await db.SaveChangesAsync();
+        var context = new AgentToolExecutionContext(chatId, Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+        var taskService = new AgentTaskService(db);
+        var todo = new TodoWriteAgentTool(taskService);
+        var list = new TaskListAgentTool(new AgentTaskService(db));
+
+        var result = await todo.ExecuteAsync(context,
+            """
+            {"todos":[
+              {"title":"Stabilize lifecycle","status":"in_progress","priority":"high"},
+              {"title":"Verify release","status":"pending","priority":"medium"}
+            ]}
+            """);
+
+        Assert.True(result.Success, result.Error);
+        var listed = await list.ExecuteAsync(context, """{"include_completed":true}""");
+        Assert.True(listed.Success, listed.Error);
+        Assert.Contains("Stabilize lifecycle", listed.Output);
+        Assert.Contains("Verify release", listed.Output);
+    }
+
+    [Fact]
+    public async Task ReadPersistedOutputReadsOnlyToolResultFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "TLAHStudio.Tool.Tests", Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var chatId = Guid.NewGuid();
+        var dir = Path.Combine(sandbox.GetSandboxRoot(chatId), ".tlah_context", "tool-results");
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Combine(dir, "large.txt"), "alpha beta gamma");
+        var tool = new ReadPersistedOutputAgentTool(sandbox);
+        var context = new AgentToolExecutionContext(chatId, Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+
+        var ok = await tool.ExecuteAsync(context, """{"path":".tlah_context/tool-results/large.txt"}""");
+        Assert.True(ok.Success, ok.Error);
+        Assert.Contains("alpha beta", ok.Output);
+
+        var blocked = await tool.ExecuteAsync(context, """{"path":"notes/large.txt"}""");
+        Assert.False(blocked.Success);
+        Assert.Contains("tool-results", blocked.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ToolSearchFindsTaskAndPersistedOutputTools()
+    {
+        var tool = new ToolSearchAgentTool();
+        var result = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000),
+            """{"query":"task output persisted"}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains(AgentToolNames.TaskOutput, result.Output);
+        Assert.Contains(AgentToolNames.ReadPersistedOutput, result.Output);
+
+        var mcpResult = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000),
+            """{"query":"mcp resource"}""");
+        Assert.True(mcpResult.Success, mcpResult.Error);
+        Assert.Contains(AgentToolNames.McpReadResource, mcpResult.Output);
+    }
+
+    [Fact]
+    public async Task BackgroundTaskToolsWriteReadMessageAndStopOutput()
+    {
+        await using var db = TestDb.Create();
+        var chatId = Guid.NewGuid();
+        db.Set<Chat>().Add(new Chat { Id = chatId, Title = "background" });
+        await db.SaveChangesAsync();
+        var root = Path.Combine(Path.GetTempPath(), "TLAHStudio.Tool.Tests", Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var taskService = new AgentTaskService(db);
+        var background = new BackgroundTaskService(db);
+        var create = new TaskCreateAgentTool(taskService, background, sandbox);
+        var output = new TaskOutputAgentTool(background);
+        var send = new TaskSendMessageAgentTool(background);
+        var stop = new TaskStopAgentTool(background);
+        var context = new AgentToolExecutionContext(chatId, Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+
+        var created = await create.ExecuteAsync(context,
+            """{"title":"Survey repo","background":true,"prompt":"look around"}""");
+        Assert.True(created.Success, created.Error);
+        var task = db.Set<AgentTaskItem>().Single(t => t.ChatId == chatId);
+
+        await Task.Delay(300);
+        var read = await output.ExecuteAsync(context, $$"""{"id":"{{task.Id}}"}""");
+        Assert.True(read.Success, read.Error);
+        Assert.Contains("Background Task", read.Output);
+
+        var message = await send.ExecuteAsync(context, $$"""{"id":"{{task.Id}}","message":"status?"}""");
+        Assert.True(message.Success, message.Error);
+        var reread = await output.ExecuteAsync(context, $$"""{"id":"{{task.Id}}"}""");
+        Assert.Contains("status?", reread.Output);
+
+        var stopped = await stop.ExecuteAsync(context, $$"""{"id":"{{task.Id}}"}""");
+        Assert.True(stopped.Success, stopped.Error);
     }
 
     [Fact]
@@ -566,6 +670,62 @@ public class BuiltInAgentToolsTests
         Assert.Contains(handler.Requests, r =>
             r.Headers.TryGetValues("Mcp-Session-Id", out var values) &&
             values.Contains("session-1"));
+    }
+
+    [Fact]
+    public async Task McpStreamableHttpListsAndReadsResources()
+    {
+        await using var db = TestDb.Create();
+        var chat = new TLAHStudio.Core.Models.Chat { Title = "MCP resources" };
+        db.Set<TLAHStudio.Core.Models.Chat>().Add(chat);
+        await db.SaveChangesAsync();
+        var platform = new ToolPlatformService(db);
+        await platform.SaveMcpServerAsync(new McpServerConfigDto(
+            Guid.Empty,
+            null,
+            "docs",
+            TLAHStudio.Core.Models.McpTransportTypes.StreamableHttp,
+            string.Empty,
+            "[]",
+            "https://mcp.example.com/mcp",
+            "{}",
+            "{}",
+            true));
+
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            using var reader = new StreamReader(request.Content!.ReadAsStream());
+            var json = reader.ReadToEnd();
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("id", out var id))
+                return MapHttpMessageHandler.Json(HttpStatusCode.Accepted, "{}");
+            var method = root.GetProperty("method").GetString();
+            var result = method switch
+            {
+                "resources/list" => """{"resources":[{"uri":"file:///guide.md","name":"Guide","description":"Project guide","mimeType":"text/markdown"}]}""",
+                "resources/read" => """{"contents":[{"uri":"file:///guide.md","mimeType":"text/markdown","text":"hello from resource"}]}""",
+                _ => """{"protocolVersion":"2025-11-25","capabilities":{"resources":{}},"serverInfo":{"name":"docs","version":"1"}}"""
+            };
+            var response = MapHttpMessageHandler.Json(
+                HttpStatusCode.OK,
+                $$"""{"jsonrpc":"2.0","id":{{id.GetInt32()}},"result":{{result}}}""");
+            response.Headers.TryAddWithoutValidation("Mcp-Session-Id", "session-2");
+            return response;
+        });
+        using var http = new HttpClient(handler);
+        var service = new McpClientService(
+            db,
+            platform,
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(http));
+
+        var resources = await service.ListResourcesAsync(chat.Id, "docs");
+        var resource = Assert.Single(resources);
+        Assert.Equal("file:///guide.md", resource.Uri);
+
+        var text = await service.ReadResourceAsync(chat.Id, "docs", "file:///guide.md");
+        Assert.Contains("hello from resource", text);
     }
 
     [Fact]

@@ -171,7 +171,12 @@ public class PluginManifestService : IPluginManifestService
 /// </summary>
 public sealed record AgentSkill(
     string Id, string Name, string Description, string Content,
-    IReadOnlyList<string> Triggers, string SourcePath);
+    IReadOnlyList<string> Triggers, string SourcePath,
+    string WhenToUse = "",
+    IReadOnlyList<string>? AllowedTools = null,
+    string Model = "",
+    IReadOnlyList<string>? Paths = null,
+    IReadOnlyList<string>? Hooks = null);
 
 /// <summary>
 /// M2.12.0: Skill loader — discovers Markdown skills, matches by trigger keywords.
@@ -225,6 +230,8 @@ public class SkillLoader : ISkillLoader
         var lower = userMessage.ToLowerInvariant();
         return skills
             .Where(s => s.Triggers.Any(t => lower.Contains(t.ToLowerInvariant())) ||
+                        (!string.IsNullOrWhiteSpace(s.WhenToUse) &&
+                         lower.Contains(s.WhenToUse.ToLowerInvariant())) ||
                         lower.Contains(s.Name.ToLowerInvariant()))
             .Take(maxSkills)
             .ToList();
@@ -242,14 +249,34 @@ public class SkillLoader : ISkillLoader
             var name = ExtractField(fm, "name") ?? Path.GetFileNameWithoutExtension(path);
             var description = ExtractField(fm, "description") ?? "";
             var triggersStr = ExtractField(fm, "triggers") ?? "";
-            var triggers = triggersStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => t.Trim()).ToList();
+            var triggers = SplitList(triggersStr);
+            var whenToUse = ExtractField(fm, "when_to_use") ?? "";
+            var allowedTools = SplitList(ExtractField(fm, "allowed_tools") ?? "");
+            var model = ExtractField(fm, "model") ?? "";
+            var paths = SplitList(ExtractField(fm, "paths") ?? "");
+            var hooks = SplitList(ExtractField(fm, "hooks") ?? "");
             var body = FrontmatterRegex.Replace(content, "").Trim();
 
-            return new AgentSkill(name.ToLowerInvariant().Replace(' ', '-'), name, description, body, triggers, path);
+            return new AgentSkill(
+                name.ToLowerInvariant().Replace(' ', '-'),
+                name,
+                description,
+                body,
+                triggers,
+                path,
+                whenToUse,
+                allowedTools,
+                model,
+                paths,
+                hooks);
         }
         catch { return null; }
     }
+
+    private static IReadOnlyList<string> SplitList(string value) =>
+        value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .ToList();
 
     private static string? ExtractField(string frontmatter, string field)
     {

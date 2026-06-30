@@ -103,7 +103,8 @@ public class LocalSdkHost : ILocalSdkHost
                 "start_run" => await HandleStartRun(root, ct),
                 "approve_tool" => await HandleApprove(root, ct),
                 "list_chats" => await HandleListChats(ct),
-                "get_run_status" => JsonSerializer.Serialize(new SdkErrorResponse("Not implemented", 501)),
+                "get_run_status" => await HandleRunStatus(root, ct),
+                "get_run_events_jsonl" => await HandleRunEventsJsonl(root, ct),
                 _ => JsonSerializer.Serialize(new SdkErrorResponse($"Unknown method: {method}", 404))
             };
         }
@@ -153,5 +154,55 @@ public class LocalSdkHost : ILocalSdkHost
     {
         var chats = await _chatService.ListChatsAsync(ct: ct);
         return JsonSerializer.Serialize(new { chats = chats.Select(c => new { c.Id, c.Title, c.UpdatedAt, c.MessageCount }) });
+    }
+
+    private async Task<string> HandleRunStatus(JsonElement root, CancellationToken ct)
+    {
+        var chatId = Guid.Parse(root.GetProperty("chat_id").GetString()!);
+        var runId = Guid.Parse(root.GetProperty("run_id").GetString()!);
+        var runs = await _llmService.GetAgentActivityAsync(chatId, ct);
+        var run = runs.FirstOrDefault(r => r.Id == runId);
+        return run == null
+            ? JsonSerializer.Serialize(new SdkErrorResponse($"Run not found: {runId}", 404))
+            : JsonSerializer.Serialize(new
+            {
+                run.Id,
+                run.ChatId,
+                run.Status,
+                run.CurrentStep,
+                run.MaxSteps,
+                run.ErrorMessage,
+                run.ArtifactCount,
+                EventCount = run.Events.Count,
+                TaskCount = run.Tasks?.Count ?? 0
+            });
+    }
+
+    private async Task<string> HandleRunEventsJsonl(JsonElement root, CancellationToken ct)
+    {
+        var chatId = Guid.Parse(root.GetProperty("chat_id").GetString()!);
+        var runId = Guid.Parse(root.GetProperty("run_id").GetString()!);
+        var runs = await _llmService.GetAgentActivityAsync(chatId, ct);
+        var run = runs.FirstOrDefault(r => r.Id == runId);
+        if (run == null)
+            return JsonSerializer.Serialize(new SdkErrorResponse($"Run not found: {runId}", 404));
+
+        var sb = new StringBuilder();
+        foreach (var evt in run.Events.OrderBy(e => e.SequenceNumber))
+        {
+            sb.AppendLine(JsonSerializer.Serialize(new
+            {
+                type = "agent_event",
+                run_id = evt.AgentRunId,
+                sequence = evt.SequenceNumber,
+                event_type = evt.EventType,
+                severity = evt.Severity,
+                summary = evt.Summary,
+                data_json = evt.DataJson,
+                created_at = evt.CreatedAt
+            }));
+        }
+
+        return JsonSerializer.Serialize(new { run_id = runId, jsonl = sb.ToString() });
     }
 }

@@ -9,6 +9,48 @@ namespace TLAHStudio.Core.Tests;
 public class AgentServiceTests
 {
     [Fact]
+    public async Task RunAgentTaskAsync_InjectsOpenTaskSummaryIntoProviderRequest()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai",
+            ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com",
+            Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Tasks");
+        await new AgentTaskService(db).CreateAsync(
+            chat.Id,
+            null,
+            new AgentTaskInput(null, "Verify runtime task injection", "Must appear in the model request.", "in_progress", "high"));
+
+        var bodies = new List<string>();
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            using var reader = new StreamReader(request.Content!.ReadAsStream());
+            bodies.Add(reader.ReadToEnd());
+            return MapHttpMessageHandler.Json(HttpStatusCode.OK,
+                """
+                { "choices": [{ "message": { "content": "Task context received." } }] }
+                """);
+        });
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Continue.",
+            options: new AgentRunOptions(MaxSteps: 1));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        var body = Assert.Single(bodies);
+        Assert.Contains("Open tracked tasks", body);
+        Assert.Contains("Verify runtime task injection", body);
+    }
+
+    [Fact]
     public async Task RunAgentTaskAsync_ExecutesSandboxCommandAndContinuesToFinalAnswer()
     {
         if (!OperatingSystem.IsWindows())

@@ -52,11 +52,30 @@ public static class AgentEventTypes
     public const string ToolHookBlocked = "tool_hook_blocked";
     public const string ToolRollbackPlan = "tool_rollback_plan";
     public const string ToolResult = "tool_result";
+    public const string TaskUpdated = "task_updated";
+    public const string BackgroundTaskUpdated = "background_task_updated";
     public const string RuntimeMetrics = "runtime_metrics";
     public const string Error = "error";
     public const string RunCompleted = "run_completed";
     public const string RunPaused = "run_paused";
     public const string RunCancelled = "run_cancelled";
+}
+
+public static class AgentTaskStatuses
+{
+    public const string Pending = "pending";
+    public const string InProgress = "in_progress";
+    public const string Completed = "completed";
+    public const string Blocked = "blocked";
+    public const string Cancelled = "cancelled";
+}
+
+public static class AgentTaskSources
+{
+    public const string TodoWrite = "todo_write";
+    public const string TaskCreate = "task_create";
+    public const string Background = "background";
+    public const string Manual = "manual";
 }
 
 public static class AgentEventSeverities
@@ -96,6 +115,45 @@ public class AgentRun
     public ICollection<AgentCheckpoint> Checkpoints { get; set; } = new List<AgentCheckpoint>();
     public ICollection<AgentArtifact> Artifacts { get; set; } = new List<AgentArtifact>();
     public ICollection<AgentEvent> Events { get; set; } = new List<AgentEvent>();
+    public ICollection<AgentTaskItem> Tasks { get; set; } = new List<AgentTaskItem>();
+}
+
+public class AgentTaskItem
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid ChatId { get; set; }
+    public Guid? AgentRunId { get; set; }
+    public Guid? ParentTaskId { get; set; }
+
+    [MaxLength(240)]
+    public string Title { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
+
+    [MaxLength(40)]
+    public string Status { get; set; } = AgentTaskStatuses.Pending;
+
+    [MaxLength(40)]
+    public string Priority { get; set; } = "medium";
+
+    [MaxLength(80)]
+    public string Source { get; set; } = AgentTaskSources.Manual;
+
+    public string MetadataJson { get; set; } = "{}";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? CompletedAt { get; set; }
+
+    [ForeignKey(nameof(ChatId))]
+    public Chat Chat { get; set; } = null!;
+
+    [ForeignKey(nameof(AgentRunId))]
+    public AgentRun? AgentRun { get; set; }
+
+    [ForeignKey(nameof(ParentTaskId))]
+    public AgentTaskItem? ParentTask { get; set; }
 }
 
 public class AgentStep

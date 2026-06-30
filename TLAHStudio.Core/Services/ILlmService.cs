@@ -155,7 +155,8 @@ public sealed record AgentActivityRunSnapshot(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     DateTime? CompletedAt,
-    IReadOnlyList<AgentActivityEventSnapshot> Events);
+    IReadOnlyList<AgentActivityEventSnapshot> Events,
+    IReadOnlyList<AgentTaskSnapshot>? Tasks = null);
 
 public sealed record AgentActivityEventSnapshot(
     Guid Id,
