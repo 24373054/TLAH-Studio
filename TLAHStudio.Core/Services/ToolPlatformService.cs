@@ -21,7 +21,11 @@ public sealed class ToolPlatformService : IToolPlatformService
     {
         var settings = await _db.Set<ToolPlatformSettings>().FirstOrDefaultAsync(s => s.Id == 1, ct);
         if (settings != null)
+        {
+            if (EnsureBuiltInNetworkDomains(settings))
+                await _db.SaveChangesAsync(ct);
             return settings;
+        }
 
         settings = new ToolPlatformSettings();
         _db.Set<ToolPlatformSettings>().Add(settings);
@@ -50,6 +54,25 @@ public sealed class ToolPlatformService : IToolPlatformService
         settings.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return settings;
+    }
+
+    private static bool EnsureBuiltInNetworkDomains(ToolPlatformSettings settings)
+    {
+        var lines = NormalizeLines(settings.NetworkAllowlist)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+        var changed = false;
+        foreach (var domain in new[] { "html.duckduckgo.com", "lite.duckduckgo.com" })
+        {
+            if (lines.Any(line => string.Equals(line, domain, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            lines.Add(domain);
+            changed = true;
+        }
+
+        if (changed)
+            settings.NetworkAllowlist = string.Join('\n', lines);
+        return changed;
     }
 
     public async Task<ToolPolicyEvaluation> EvaluatePolicyAsync(

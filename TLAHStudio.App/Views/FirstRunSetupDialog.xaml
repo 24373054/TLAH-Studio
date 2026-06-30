@@ -71,6 +71,7 @@
                             <TextBox
                                 x:Name="ModelBox"
                                 MinHeight="40"
+                                InputScope="Text"
                                 Background="{ThemeResource InputBackgroundBrush}"
                                 Foreground="{ThemeResource TextPrimaryBrush}"
                                 BorderBrush="{ThemeResource BorderSubtleBrush}"
@@ -105,6 +106,7 @@
                 <TextBox
                     x:Name="BaseUrlBox"
                     MinHeight="40"
+                    InputScope="Url"
                     Background="{ThemeResource InputBackgroundBrush}"
                     Foreground="{ThemeResource TextPrimaryBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"

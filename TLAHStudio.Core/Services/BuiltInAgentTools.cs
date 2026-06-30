@@ -754,26 +754,30 @@ public sealed partial class WebSearchAgentTool : IAgentTool
             if (string.IsNullOrWhiteSpace(query))
                 return new AgentToolResult(false, string.Empty, "The query argument is required.");
             var settings = await _platform.GetSettingsAsync(ct);
-            var url = $"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}";
-            var uri = await _network.ValidateAsync(url, settings, ct);
-            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.UserAgent.ParseAdd("TLAHStudio/1.4");
-            using var response = await _httpClientFactory.CreateClient("Tools").SendAsync(request, ct);
-            var html = await response.Content.ReadAsStringAsync(ct);
-            var results = ResultRegex().Matches(html).Cast<Match>().Take(8)
-                .Select((match, index) =>
-                {
-                    var href = WebUtility.HtmlDecode(match.Groups["url"].Value);
-                    var title = CleanHtml(match.Groups["title"].Value);
-                    return $"{index + 1}. {title}\n   {href}";
-                });
-            var output = string.Join(Environment.NewLine + Environment.NewLine, results);
+            var client = _httpClientFactory.CreateClient("Tools");
+            var output = string.Empty;
+            var lastStatus = HttpStatusCode.OK;
+
+            foreach (var searchUrl in BuildSearchUrls(query))
+            {
+                var uri = await _network.ValidateAsync(searchUrl, settings, ct);
+                using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 TLAHStudio/1.4");
+                request.Headers.Accept.ParseAdd("text/html");
+                using var response = await client.SendAsync(request, ct);
+                lastStatus = response.StatusCode;
+                var html = await response.Content.ReadAsStringAsync(ct);
+                output = FormatResults(ParseResults(html), context.MaxOutputChars);
+                if (response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(output))
+                    return new AgentToolResult(true, output);
+            }
+
             return new AgentToolResult(
-                response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(output),
-                AgentToolSupport.Limit(output, context.MaxOutputChars),
-                response.IsSuccessStatusCode
-                    ? string.IsNullOrWhiteSpace(output) ? "No search results were parsed." : null
-                    : $"Search returned HTTP {(int)response.StatusCode}.");
+                false,
+                string.Empty,
+                lastStatus is >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices
+                    ? "No search results were parsed."
+                    : $"Search returned HTTP {(int)lastStatus}.");
         }
         catch (Exception ex)
         {
@@ -781,15 +785,112 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         }
     }
 
-    private static string CleanHtml(string value) =>
-        WebUtility.HtmlDecode(TagRegex().Replace(value, string.Empty)).Trim();
+    private static IEnumerable<string> BuildSearchUrls(string query)
+    {
+        var escaped = Uri.EscapeDataString(query);
+        yield return $"https://html.duckduckgo.com/html/?q={escaped}";
+        yield return $"https://lite.duckduckgo.com/lite/?q={escaped}";
+    }
 
-    [GeneratedRegex("""<a[^>]+class="result__a"[^>]+href="(?<url>[^"]+)"[^>]*>(?<title>.*?)</a>""",
+    private static IReadOnlyList<SearchResult> ParseResults(string html)
+    {
+        var results = new List<SearchResult>();
+        var matches = ResultRegex().Matches(html).Cast<Match>().ToArray();
+        for (var i = 0; i < matches.Length; i++)
+        {
+            var match = matches[i];
+            var segmentStart = match.Index + match.Length;
+            var segmentEnd = i + 1 < matches.Length ? matches[i + 1].Index : html.Length;
+            var segment = html.Substring(segmentStart, Math.Max(0, segmentEnd - segmentStart));
+            var snippet = SnippetRegex().Match(segment).Groups["snippet"].Value;
+            AddResult(results, match.Groups["title"].Value, match.Groups["url"].Value, snippet);
+            if (results.Count >= 8)
+                return results;
+        }
+
+        foreach (Match match in LiteResultRegex().Matches(html).Cast<Match>())
+        {
+            AddResult(results, match.Groups["title"].Value, match.Groups["url"].Value, string.Empty);
+            if (results.Count >= 8)
+                return results;
+        }
+
+        return results;
+    }
+
+    private static void AddResult(List<SearchResult> results, string titleHtml, string rawUrl, string snippetHtml)
+    {
+        var title = CleanHtml(titleHtml);
+        var url = NormalizeResultUrl(rawUrl);
+        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(url))
+            return;
+        if (results.Any(r => string.Equals(r.Url, url, StringComparison.OrdinalIgnoreCase)))
+            return;
+        results.Add(new SearchResult(title, url, CleanHtml(snippetHtml)));
+    }
+
+    private static string FormatResults(IReadOnlyList<SearchResult> results, int maxChars)
+    {
+        var lines = results.Select((result, index) =>
+        {
+            var snippet = string.IsNullOrWhiteSpace(result.Snippet)
+                ? string.Empty
+                : $"{Environment.NewLine}   {result.Snippet}";
+            return $"{index + 1}. {result.Title}{Environment.NewLine}   {result.Url}{snippet}";
+        });
+        return AgentToolSupport.Limit(string.Join(Environment.NewLine + Environment.NewLine, lines), maxChars);
+    }
+
+    private static string NormalizeResultUrl(string value)
+    {
+        var decoded = WebUtility.HtmlDecode(value).Trim();
+        if (decoded.StartsWith("//", StringComparison.Ordinal))
+            decoded = "https:" + decoded;
+        if (Uri.TryCreate(decoded, UriKind.Absolute, out var uri))
+        {
+            var uddg = ReadQueryValue(uri.Query, "uddg");
+            if (!string.IsNullOrWhiteSpace(uddg))
+                decoded = WebUtility.UrlDecode(uddg);
+        }
+
+        return decoded;
+    }
+
+    private static string? ReadQueryValue(string query, string name)
+    {
+        foreach (var pair in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            if (parts.Length == 2 &&
+                string.Equals(WebUtility.UrlDecode(parts[0]), name, StringComparison.OrdinalIgnoreCase))
+                return WebUtility.UrlDecode(parts[1]);
+        }
+
+        return null;
+    }
+
+    private static string CleanHtml(string value) =>
+        WhitespaceRegex().Replace(WebUtility.HtmlDecode(TagRegex().Replace(value, " ")), " ").Trim();
+
+    private sealed record SearchResult(string Title, string Url, string Snippet);
+
+    [GeneratedRegex("""<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="(?<url>[^"]+)"[^>]*>(?<title>.*?)</a>""",
         RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex ResultRegex();
 
+    [GeneratedRegex("""<(?:a|div)[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(?<snippet>.*?)</(?:a|div)>""",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex SnippetRegex();
+
+    [GeneratedRegex("""<a[^>]+class="[^"]*(?:result-link|result__a)[^"]*"[^>]+href="(?<url>[^"]+)"[^>]*>(?<title>.*?)</a>""",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex LiteResultRegex();
+
     [GeneratedRegex("<[^>]+>", RegexOptions.Singleline)]
     private static partial Regex TagRegex();
+
+    [GeneratedRegex(@"\s+", RegexOptions.Singleline)]
+    private static partial Regex WhitespaceRegex();
 }
 
 public sealed partial class BrowserReadAgentTool : IAgentTool

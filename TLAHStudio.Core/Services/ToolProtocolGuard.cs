@@ -43,6 +43,12 @@ public static partial class ToolProtocolGuard
             var role = NormalizeRole(message.Role, issues);
             var content = message.Content ?? string.Empty;
 
+            if (pendingToolIds.Count > 0 &&
+                !string.Equals(role, "tool", StringComparison.OrdinalIgnoreCase))
+            {
+                FlushMissingToolResults(safeMessages, pendingToolIds, issues);
+            }
+
             if (message.ToolCalls is { Count: > 0 })
             {
                 var safeCalls = new List<LlmToolCall>();
@@ -72,6 +78,7 @@ public static partial class ToolProtocolGuard
                 if (string.IsNullOrWhiteSpace(message.ToolCallId) ||
                     !pendingToolIds.Remove(message.ToolCallId))
                 {
+                    FlushMissingToolResults(safeMessages, pendingToolIds, issues);
                     safeMessages.Add(new MessagePayload(
                         "user",
                         $"[tool result]\n{content}"));
@@ -100,6 +107,8 @@ public static partial class ToolProtocolGuard
 
             safeMessages.Add(new MessagePayload(role, content));
         }
+
+        FlushMissingToolResults(safeMessages, pendingToolIds, issues);
 
         if (safeMessages.Count == 0)
         {
@@ -218,6 +227,34 @@ public static partial class ToolProtocolGuard
             "Tool arguments were not a valid JSON object and were replaced with an empty JSON object.",
             "repair"));
         return "{}";
+    }
+
+    private static void FlushMissingToolResults(
+        ICollection<MessagePayload> safeMessages,
+        ICollection<string> pendingToolIds,
+        ICollection<ToolProtocolGuardIssue> issues)
+    {
+        if (pendingToolIds.Count == 0)
+            return;
+
+        foreach (var id in pendingToolIds.ToArray())
+        {
+            safeMessages.Add(new MessagePayload(
+                "tool",
+                JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    output = string.Empty,
+                    error = "Tool result was not recorded for this tool call; history was repaired before the next model request."
+                }),
+                id));
+            pendingToolIds.Remove(id);
+        }
+
+        issues.Add(new ToolProtocolGuardIssue(
+            "missing_tool_result_repaired",
+            "One or more assistant tool calls were missing matching tool messages and were repaired before contacting the provider.",
+            "repair"));
     }
 
     [GeneratedRegex("^[a-zA-Z0-9_-]+$", RegexOptions.CultureInvariant)]

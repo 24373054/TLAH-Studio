@@ -77,6 +77,38 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public async Task WebSearchParsesDuckDuckGoHtmlResults()
+    {
+        await using var db = TestDb.Create();
+        var platform = new ToolPlatformService(db);
+        var html = """
+            <html><body>
+            <div class="result">
+              <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2Fmodelcontextprotocol%2Fservers">MCP Servers</a>
+              <a class="result__snippet">Reference servers for the Model Context Protocol.</a>
+            </div>
+            </body></html>
+            """;
+        var handler = new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(html, Encoding.UTF8, "text/html")
+        });
+        var tool = new WebSearchAgentTool(
+            platform,
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(handler)));
+
+        var result = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 2000),
+            """{"query":"mcp servers","reason":"test"}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("MCP Servers", result.Output);
+        Assert.Contains("https://github.com/modelcontextprotocol/servers", result.Output);
+        Assert.Contains("Reference servers", result.Output);
+    }
+
+    [Fact]
     public void ToolPlatformV2MetadataClassifiesReadAndWriteTools()
     {
         var sandbox = new SandboxCommandService(
@@ -386,11 +418,40 @@ public class BuiltInAgentToolsTests
 
         Assert.False(result.IsRejected);
         Assert.Equal(AgentToolNames.SandboxExec, result.Messages[0].ToolCalls![0].Name);
-        Assert.Equal("user", result.Messages[1].Role);
-        Assert.Contains("[tool result]", result.Messages[1].Content);
+        Assert.Equal("tool", result.Messages[1].Role);
+        Assert.Equal("call-1", result.Messages[1].ToolCallId);
         Assert.Equal("user", result.Messages[2].Role);
+        Assert.Contains("[tool result]", result.Messages[2].Content);
+        Assert.Equal("user", result.Messages[3].Role);
         Assert.Contains("tool_name_normalized", result.Issues.Select(i => i.Code));
+        Assert.Contains("missing_tool_result_repaired", result.Issues.Select(i => i.Code));
         Assert.Contains("orphan_tool_result", result.Issues.Select(i => i.Code));
+    }
+
+    [Fact]
+    public void ToolProtocolGuardRepairsAssistantToolCallsMissingSomeResults()
+    {
+        var messages = new List<MessagePayload>
+        {
+            new("assistant", "", ToolCalls:
+            [
+                new LlmToolCall("call-1", AgentToolNames.WebSearch, """{"query":"one"}"""),
+                new LlmToolCall("call-2", AgentToolNames.WebSearch, """{"query":"two"}""")
+            ]),
+            new("tool", """{"success":true,"output":"one","error":null}""", "call-1"),
+            new("assistant", "continuing")
+        };
+
+        var result = ToolProtocolGuard.RepairForProvider(messages, []);
+
+        Assert.False(result.IsRejected);
+        Assert.Equal("assistant", result.Messages[0].Role);
+        Assert.Equal("tool", result.Messages[1].Role);
+        Assert.Equal("call-1", result.Messages[1].ToolCallId);
+        Assert.Equal("tool", result.Messages[2].Role);
+        Assert.Equal("call-2", result.Messages[2].ToolCallId);
+        Assert.Equal("assistant", result.Messages[3].Role);
+        Assert.Contains("missing_tool_result_repaired", result.Issues.Select(i => i.Code));
     }
 
     [Fact]

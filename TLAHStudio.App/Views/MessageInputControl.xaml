@@ -61,6 +61,7 @@
             MinHeight="46"
             MaxHeight="160"
             AcceptsReturn="True"
+            InputScope="Text"
             TextWrapping="Wrap"
             ScrollViewer.VerticalScrollBarVisibility="Auto"
             PlaceholderText="Type a message..."

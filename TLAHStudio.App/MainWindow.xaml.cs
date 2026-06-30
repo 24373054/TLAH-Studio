@@ -570,14 +570,20 @@ public sealed partial class MainWindow : Window
         var titleBar = appWindow.TitleBar;
         titleBar.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
         titleBar.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
-        titleBar.ButtonHoverBackgroundColor = Microsoft.UI.ColorHelper.FromArgb(0x18, 0x78, 0x86, 0x98);
-        titleBar.ButtonPressedBackgroundColor = Microsoft.UI.ColorHelper.FromArgb(0x28, 0x78, 0x86, 0x98);
+        titleBar.ButtonHoverBackgroundColor = isLight
+            ? Microsoft.UI.ColorHelper.FromArgb(0x16, 0x0F, 0x17, 0x24)
+            : Microsoft.UI.ColorHelper.FromArgb(0x2A, 0xFF, 0xFF, 0xFF);
+        titleBar.ButtonPressedBackgroundColor = isLight
+            ? Microsoft.UI.ColorHelper.FromArgb(0x24, 0x0F, 0x17, 0x24)
+            : Microsoft.UI.ColorHelper.FromArgb(0x40, 0xFF, 0xFF, 0xFF);
         titleBar.ButtonForegroundColor = isLight
-            ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x58, 0x67, 0x79)
-            : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x9A, 0xA8, 0xBA);
+            ? Microsoft.UI.ColorHelper.FromArgb(0xFF, 0x12, 0x1A, 0x28)
+            : Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
         titleBar.ButtonInactiveForegroundColor = isLight
-            ? Microsoft.UI.ColorHelper.FromArgb(0x99, 0x58, 0x67, 0x79)
-            : Microsoft.UI.ColorHelper.FromArgb(0x99, 0x9A, 0xA8, 0xBA);
+            ? Microsoft.UI.ColorHelper.FromArgb(0xAA, 0x12, 0x1A, 0x28)
+            : Microsoft.UI.ColorHelper.FromArgb(0xCC, 0xFF, 0xFF, 0xFF);
+        titleBar.ButtonHoverForegroundColor = titleBar.ButtonForegroundColor;
+        titleBar.ButtonPressedForegroundColor = titleBar.ButtonForegroundColor;
     }
 
     private static void SetAppIcon(Microsoft.UI.Windowing.AppWindow appWindow)

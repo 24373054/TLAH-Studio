@@ -170,6 +170,7 @@
                     <TextBox
                         x:Name="ModelBox"
                         Grid.Column="0"
+                        InputScope="Text"
                         Background="{ThemeResource InputBackgroundBrush}"
                         Foreground="{ThemeResource TextPrimaryBrush}"
                         BorderBrush="{ThemeResource BorderSubtleBrush}"
@@ -224,6 +225,7 @@
                 <TextBox
                     x:Name="SysPromptBox"
                     AcceptsReturn="True"
+                    InputScope="Text"
                     MinHeight="96"
                     Background="{ThemeResource InputBackgroundBrush}"
                     Foreground="{ThemeResource TextPrimaryBrush}"
@@ -233,6 +235,7 @@
                 <TextBlock Text="User Role" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <TextBox
                     x:Name="UserRoleBox"
+                    InputScope="Text"
                     Background="{ThemeResource InputBackgroundBrush}"
                     Foreground="{ThemeResource TextPrimaryBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"

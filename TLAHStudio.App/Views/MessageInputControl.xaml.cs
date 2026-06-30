@@ -36,6 +36,7 @@ public sealed partial class MessageInputControl : UserControl
             UpdateAgentModeVisualState();
             Play(InteractionSound.Toggle);
         };
+        InputBox.PreviewKeyDown += OnPreviewKeyDown;
         InputBox.KeyDown += OnKeyDown;
         InputRoot.SizeChanged += OnInputRootSizeChanged;
         Loaded += OnLoaded;
@@ -93,9 +94,13 @@ public sealed partial class MessageInputControl : UserControl
             : new Thickness(14, 10, 14, 10);
     }
 
-    private void OnKeyDown(object sender, KeyRoutedEventArgs e)
+    private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e) => HandleEnterKey(e);
+
+    private void OnKeyDown(object sender, KeyRoutedEventArgs e) => HandleEnterKey(e);
+
+    private void HandleEnterKey(KeyRoutedEventArgs e)
     {
-        if (e.Key != Windows.System.VirtualKey.Enter)
+        if (e.Handled || e.Key != Windows.System.VirtualKey.Enter)
             return;
 
         var shift = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)

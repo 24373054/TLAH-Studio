@@ -1,14 +1,14 @@
 {
-  "version": "3.3.1",
+  "version": "3.3.2",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.3.1.exe",
-  "sha256": "bd4723a0e7e7b09697b473e856a23a3c248066efb622c04f3ea2d33e85c495fc",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.3.2.exe",
+  "sha256": "dd56c874a9dbe739036eea70bd230c69ba411f568f432727acc44f23a8e13249",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Streaming UI stability patch.\n\nFixes:\n- Keeps the live thinking dropdown expanded while reasoning tokens stream in, updating text in place instead of rebuilding the Expander on every token.\n- Keeps the agent activity panel's run dropdowns stable during live event updates, avoiding repeated collapse/expand animations and visual ghosting.\n- Updates duplicate live progress sequence entries in place instead of dropping or rebuilding them.\n\nValidation:\n- Passed Release CI with 139 tests and App/Updater x64 builds.",
+  "releaseNotes": "TLAH Studio 3.3.2 stability patch.\n\nFixes:\n- Repairs incomplete tool-call histories before provider requests so failed or partially approved multi-tool runs do not terminate with OpenAI 400 tool_call_id errors.\n- Makes web_search parsing more robust for DuckDuckGo HTML/lite results and keeps built-in search domains in the network allowlist for upgraded installs.\n- Restores Enter-to-send behavior while keeping Shift+Enter for multiline input.\n- Improves dark-mode title-bar button contrast on Windows 11 24H2 systems.\n- Adds explicit text/url input scopes for chat and setup/settings fields to improve IME candidate behavior.\n\nValidation:\n- Passed Release CI with 141 tests and App/Updater x64 builds.",
   "forceUpdate": true,
-  "minSupportedVersion": "3.3.1",
+  "minSupportedVersion": "3.3.2",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96952104
+  "installerSizeBytes": 96957405
 }
