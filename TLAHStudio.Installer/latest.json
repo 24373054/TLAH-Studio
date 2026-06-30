@@ -1,14 +1,14 @@
 {
-  "version": "3.3.0",
+  "version": "3.3.1",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.3.0.exe",
-  "sha256": "1b57f8339e439692b0c0b139f09e63a8176f59eebcc512840b85a2ccb97d1ccd",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-3.3.1.exe",
+  "sha256": "bd4723a0e7e7b09697b473e856a23a3c248066efb622c04f3ea2d33e85c495fc",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "Tool lifecycle stability release.\n\nHighlights:\n- Adds a documented 3.3.0 stability and tool lifecycle plan based on the Claude Code gap analysis.\n- Routes tool execution through a unified lifecycle runner with V3 safety preview, effect planning, hooks, progress collection, output limiting, and rollback metadata.\n- Persists lifecycle progress, hook blocks, and rollback plans as AgentEvents so the right-side activity panel can replay completed runs.\n- Keeps legacy tools compatible while deriving conservative effect plans from the existing safety preview.\n\nValidation:\n- Added lifecycle unit coverage for V3 order, hook block, hook argument rewrite, legacy compatibility, safety block, progress, and rollback.\n- Added agent integration coverage proving lifecycle progress and rollback events persist to the database.\n- Passed Release CI and smoke validation.",
+  "releaseNotes": "Streaming UI stability patch.\n\nFixes:\n- Keeps the live thinking dropdown expanded while reasoning tokens stream in, updating text in place instead of rebuilding the Expander on every token.\n- Keeps the agent activity panel's run dropdowns stable during live event updates, avoiding repeated collapse/expand animations and visual ghosting.\n- Updates duplicate live progress sequence entries in place instead of dropping or rebuilding them.\n\nValidation:\n- Passed Release CI with 139 tests and App/Updater x64 builds.",
   "forceUpdate": true,
-  "minSupportedVersion": "3.3.0",
+  "minSupportedVersion": "3.3.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96954044
+  "installerSizeBytes": 96952104
 }

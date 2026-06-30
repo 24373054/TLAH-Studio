@@ -724,6 +724,10 @@ public partial class ChatPageViewModel : ObservableObject
         if (AgentProgressLines.LastOrDefault() is { } last &&
             last.SequenceNumber == line.SequenceNumber)
         {
+            AgentProgressLines[^1] = line;
+            UpsertAgentActivity(update, line);
+            AgentLiveSummary = line.Text;
+            IsAgentLiveVisible = true;
             return;
         }
 
@@ -781,7 +785,12 @@ public partial class ChatPageViewModel : ObservableObject
             }
         }
 
-        if (!run.Lines.Any(l => l.SequenceNumber == line.SequenceNumber))
+        var lineIndex = run.Lines.FindIndex(l => l.SequenceNumber == line.SequenceNumber);
+        if (lineIndex >= 0)
+        {
+            run.Lines[lineIndex] = line;
+        }
+        else
         {
             run.Lines.Add(line);
             run.Lines.Sort(static (a, b) => a.SequenceNumber.CompareTo(b.SequenceNumber));

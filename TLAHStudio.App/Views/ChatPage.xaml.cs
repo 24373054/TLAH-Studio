@@ -240,16 +240,88 @@ public sealed partial class ChatPage : UserControl
 
     private UIElement GetCachedMessageElement(Message message)
     {
-        var signature = $"{message.Role}|{message.Content}|{message.TurnId?.ToString("N") ?? "draft"}|{_chatBubbleOpacity}|{IsCompactDensity()}";
+        var signature = IsStreamingDraft(message)
+            ? $"{message.Role}|streaming-draft|{message.Id:N}|{_chatBubbleOpacity}|{IsCompactDensity()}"
+            : $"{message.Role}|{message.Content}|{message.TurnId?.ToString("N") ?? "draft"}|{_chatBubbleOpacity}|{IsCompactDensity()}";
         if (_messageElementCache.TryGetValue(message.Id, out var cached) &&
             string.Equals(cached.Signature, signature, StringComparison.Ordinal))
         {
+            if (IsStreamingDraft(message))
+                UpdateCachedStreamingMessage(cached.Element, message);
             return cached.Element;
         }
 
         var element = BuildMessage(message);
         _messageElementCache[message.Id] = new CachedMessageElement(signature, element);
         return element;
+    }
+
+    private static bool IsStreamingDraft(Message message) =>
+        string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase) &&
+        message.TurnId == null;
+
+    private void UpdateCachedStreamingMessage(UIElement element, Message message)
+    {
+        if (!TryGetMessageContentStack(element, out var stack) ||
+            stack.Children.Count < 2)
+        {
+            return;
+        }
+
+        if (AssistantContentFormatter.TryParse(message.Content, out var thinking, out var answer, out var isExpanded))
+        {
+            var parsed = MessageAttachmentFormatter.Extract(answer);
+            if (stack.Children[1] is StackPanel bodyPanel &&
+                bodyPanel.Tag is LiveStreamBodyVisuals live)
+            {
+                UpdateLiveStreamBody(live, thinking, parsed.Body, isExpanded);
+            }
+            else
+            {
+                stack.Children[1] = BuildLiveStreamBody(thinking, parsed.Body, isExpanded, parsed.Attachments, message.ChatId);
+            }
+            return;
+        }
+
+        var body = MessageAttachmentFormatter.Extract(message.Content);
+        if (body.Attachments.Count > 0)
+        {
+            stack.Children[1] = BuildMessageBodyWithAttachments(
+                string.IsNullOrEmpty(body.Body) ? "Waiting for the first token..." : body.Body,
+                body.Attachments,
+                message.ChatId,
+                isUser: false,
+                isDraft: true);
+            return;
+        }
+
+        if (stack.Children[1] is TextBlock textBlock)
+        {
+            textBlock.Text = string.IsNullOrEmpty(message.Content)
+                ? "Waiting for the first token..."
+                : message.Content;
+            textBlock.Foreground = string.IsNullOrEmpty(message.Content)
+                ? TextSecondaryBrush()
+                : TextPrimaryBrush();
+        }
+        else
+        {
+            stack.Children[1] = BuildMessageBody(message, isDraft: true, isUser: false);
+        }
+    }
+
+    private static bool TryGetMessageContentStack(UIElement element, out StackPanel stack)
+    {
+        stack = null!;
+        if (element is not Grid row ||
+            row.Children.FirstOrDefault() is not Border border ||
+            border.Child is not StackPanel messageStack)
+        {
+            return false;
+        }
+
+        stack = messageStack;
+        return true;
     }
 
     private void SyncMessageChildren(IReadOnlyList<UIElement> elements, string signature)
@@ -482,26 +554,28 @@ public sealed partial class ChatPage : UserControl
     {
         var panel = new StackPanel { Spacing = 8 };
         var header = new StackPanel { Spacing = 2 };
-        header.Children.Add(new TextBlock
+        var headerText = new TextBlock
         {
             Text = isExpanded ? "Thinking..." : $"Thinking collapsed · {thinking.Length} chars",
             Foreground = TextSecondaryBrush(),
             FontSize = 12,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
-        });
+        };
+        header.Children.Add(headerText);
         var preview = AssistantContentFormatter.Preview(thinking);
-        if (!isExpanded && !string.IsNullOrWhiteSpace(preview))
+        var previewText = new TextBlock
         {
-            header.Children.Add(new TextBlock
-            {
-                Text = preview,
-                Foreground = TextMutedBrush(),
-                FontSize = 11,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                TextWrapping = TextWrapping.NoWrap,
-                MaxWidth = IsCompactDensity() ? 640 : 720
-            });
-        }
+            Text = preview,
+            Foreground = TextMutedBrush(),
+            FontSize = 11,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap,
+            MaxWidth = IsCompactDensity() ? 640 : 720,
+            Visibility = !isExpanded && !string.IsNullOrWhiteSpace(preview)
+                ? Visibility.Visible
+                : Visibility.Collapsed
+        };
+        header.Children.Add(previewText);
 
         var thinkingBox = new Expander
         {
@@ -514,36 +588,62 @@ public sealed partial class ChatPage : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8)
         };
+        var thinkingText = new TextBlock
+        {
+            Text = thinking,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = TextSecondaryBrush(),
+            FontSize = IsCompactDensity() ? 12 : 13,
+            LineHeight = IsCompactDensity() ? 18 : 20
+        };
         thinkingBox.Content = new ScrollViewer
         {
             MaxHeight = 180,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Content = new TextBlock
-            {
-                Text = thinking,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = TextSecondaryBrush(),
-                FontSize = IsCompactDensity() ? 12 : 13,
-                LineHeight = IsCompactDensity() ? 18 : 20
-            }
+            Content = thinkingText
         };
         panel.Children.Add(thinkingBox);
 
-        if (!string.IsNullOrEmpty(answer))
+        var answerText = new TextBlock
         {
-            panel.Children.Add(new TextBlock
-            {
-                Text = answer,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = TextPrimaryBrush(),
-                FontSize = IsCompactDensity() ? 13 : 14,
-                LineHeight = IsCompactDensity() ? 20 : 22
-            });
-        }
+            Text = answer,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = TextPrimaryBrush(),
+            FontSize = IsCompactDensity() ? 13 : 14,
+            LineHeight = IsCompactDensity() ? 20 : 22,
+            Visibility = string.IsNullOrEmpty(answer) ? Visibility.Collapsed : Visibility.Visible
+        };
+        panel.Children.Add(answerText);
 
         AddAttachmentCards(panel, attachments, chatId);
+        panel.Tag = new LiveStreamBodyVisuals(thinkingBox, headerText, previewText, thinkingText, answerText);
 
         return panel;
+    }
+
+    private void UpdateLiveStreamBody(
+        LiveStreamBodyVisuals visuals,
+        string thinking,
+        string answer,
+        bool isExpanded)
+    {
+        visuals.HeaderText.Text = isExpanded
+            ? "Thinking..."
+            : $"Thinking collapsed · {thinking.Length} chars";
+        var preview = AssistantContentFormatter.Preview(thinking);
+        visuals.PreviewText.Text = preview;
+        visuals.PreviewText.Visibility = !isExpanded && !string.IsNullOrWhiteSpace(preview)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (visuals.Expander.IsExpanded != isExpanded)
+            visuals.Expander.IsExpanded = isExpanded;
+
+        visuals.ThinkingText.Text = thinking;
+        visuals.AnswerText.Text = answer;
+        visuals.AnswerText.Visibility = string.IsNullOrEmpty(answer)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     private UIElement BuildMessageBodyWithAttachments(
@@ -1271,6 +1371,13 @@ public sealed partial class ChatPage : UserControl
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
 
     private sealed record CachedMessageElement(string Signature, UIElement Element);
+
+    private sealed record LiveStreamBodyVisuals(
+        Expander Expander,
+        TextBlock HeaderText,
+        TextBlock PreviewText,
+        TextBlock ThinkingText,
+        TextBlock AnswerText);
 
     private void ApplyDensity()
     {
