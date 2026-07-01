@@ -11,7 +11,8 @@ public sealed record ExecutionRequest(
     Guid ChatId,
     string Command,
     int TimeoutSeconds,
-    int MaxOutputChars);
+    int MaxOutputChars,
+    string PermissionMode = AgentPermissionModes.RequestApproval);
 
 public sealed record ExecutionResult(
     string Backend,
@@ -62,6 +63,12 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
     {
         var settings = await _platform.GetSettingsAsync(ct);
         backend = string.IsNullOrWhiteSpace(backend) ? settings.DefaultBackend : backend;
+        if (AgentPermissionModes.IsBypass(request.PermissionMode) &&
+            (string.IsNullOrWhiteSpace(backend) ||
+             string.Equals(backend, ToolExecutionBackends.RestrictedLocal, StringComparison.OrdinalIgnoreCase)))
+        {
+            backend = ToolExecutionBackends.UnrestrictedLocal;
+        }
         var timeout = Math.Clamp(
             Math.Min(request.TimeoutSeconds, settings.MaxRuntimeSeconds),
             1,
@@ -74,6 +81,7 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
 
         return backend switch
         {
+            ToolExecutionBackends.UnrestrictedLocal => await ExecuteUnrestrictedLocalAsync(request, ct),
             ToolExecutionBackends.Wsl => await ExecuteWslAsync(request, settings, ct),
             ToolExecutionBackends.Docker => await ExecuteDockerAsync(request, settings, ct),
             ToolExecutionBackends.Remote => await ExecuteRemoteAsync(request, settings, ct),
@@ -87,6 +95,7 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
         return new Dictionary<string, bool>
         {
             [ToolExecutionBackends.RestrictedLocal] = true,
+            [ToolExecutionBackends.UnrestrictedLocal] = true,
             [ToolExecutionBackends.Wsl] = await CanStartAsync("wsl.exe", ["--status"], ct),
             [ToolExecutionBackends.Docker] = await CanStartAsync("docker.exe", ["version", "--format", "{{.Server.Version}}"], ct),
             [ToolExecutionBackends.Remote] =
@@ -112,6 +121,29 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
             result.StandardOutput,
             result.StandardError,
             result.BlockedReason);
+    }
+
+    private async Task<ExecutionResult> ExecuteUnrestrictedLocalAsync(
+        ExecutionRequest request,
+        CancellationToken ct)
+    {
+        var workingDirectory = _sandbox.GetSandboxRoot(request.ChatId);
+        var args = new[]
+        {
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            SandboxCommandService.WithUtf8Console(request.Command)
+        };
+        return await RunProcessAsync(
+            ToolExecutionBackends.UnrestrictedLocal,
+            ResolvePowerShellPath(),
+            args,
+            workingDirectory,
+            request,
+            ct);
     }
 
     private async Task<ExecutionResult> ExecuteWslAsync(
@@ -301,6 +333,13 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
     }
 
     private static string QuoteBash(string value) => $"'{value.Replace("'", "'\\''", StringComparison.Ordinal)}'";
+
+    private static string ResolvePowerShellPath()
+    {
+        var systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var windowsPowerShell = Path.Combine(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+        return File.Exists(windowsPowerShell) ? windowsPowerShell : "powershell.exe";
+    }
 
     private static ExecutionResult Blocked(string backend, string workingDirectory, string reason) =>
         new(backend, workingDirectory, -1, false, TimeSpan.Zero, string.Empty, string.Empty, reason);

@@ -362,10 +362,12 @@ public class LlmService : ILlmService
         };
         var engineOptions = new AgentEngineOptions(
             maxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
-            options.AutoApproveTools, options.ContextBudgetTokens,
+            options.AutoApproveTools || AgentPermissionModes.IsAutoApprove(options.PermissionMode),
+            options.ContextBudgetTokens,
             options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
             options.OutputStream,
-            options.Progress);
+            options.Progress,
+            AgentPermissionModes.Normalize(options.PermissionMode));
 
         var result = await _agentRunEngineV2.RunAsync(runState, engineOptions, ct: ct);
 
@@ -452,11 +454,15 @@ public class LlmService : ILlmService
             MaxSteps = run.MaxSteps, UserRequest = run.UserRequest,
         };
         var engineOptions = new AgentEngineOptions(
-            run.MaxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
-            options.AutoApproveTools, options.ContextBudgetTokens,
+            run.MaxSteps,
+            options.CommandTimeoutSeconds,
+            options.MaxCommandOutputChars,
+            options.AutoApproveTools || AgentPermissionModes.IsAutoApprove(options.PermissionMode),
+            options.ContextBudgetTokens,
             options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
             options.OutputStream,
-            options.Progress);
+            options.Progress,
+            AgentPermissionModes.Normalize(options.PermissionMode));
 
         var result = await _agentRunEngineV2.ResumeAsync(runState, engineOptions, ct: ct);
 
@@ -593,6 +599,98 @@ public class LlmService : ILlmService
             .ToList();
     }
 
+    public async Task<ContextUsageSnapshot> GetContextUsageAsync(
+        Guid chatId,
+        CancellationToken ct = default)
+    {
+        var effective = await _settingsService.GetEffectiveSettingsAsync(chatId, ct);
+        var chat = await _db.Set<Chat>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == chatId, ct);
+        var messages = await _db.Set<Message>()
+            .AsNoTracking()
+            .Where(m => m.ChatId == chatId)
+            .OrderBy(m => m.SequenceNum)
+            .ToListAsync(ct);
+
+        var conversationTokens = messages
+            .Where(m => !string.Equals(m.Role, "tool", StringComparison.OrdinalIgnoreCase))
+            .Sum(m => EstimateContextTokens(MessageAttachmentFormatter.StripAttachments(
+                AssistantContentFormatter.StripThinking(m.Content))));
+        var executionResultTokens = messages
+            .Where(m => string.Equals(m.Role, "tool", StringComparison.OrdinalIgnoreCase))
+            .Sum(m => EstimateContextTokens(m.Content));
+
+        var recentRunIds = await _db.Set<AgentRun>()
+            .AsNoTracking()
+            .Where(r => r.ChatId == chatId)
+            .OrderByDescending(r => r.CreatedAt)
+            .Take(3)
+            .Select(r => r.Id)
+            .ToListAsync(ct);
+        if (recentRunIds.Count > 0)
+        {
+            var invocationResults = await _db.Set<ToolInvocation>()
+                .AsNoTracking()
+                .Where(i => recentRunIds.Contains(i.AgentRunId))
+                .OrderByDescending(i => i.CreatedAt)
+                .Take(80)
+                .Select(i => i.ResultJson)
+                .ToListAsync(ct);
+            executionResultTokens += invocationResults.Sum(EstimateContextTokens);
+        }
+
+        var toolsTokens = EstimateContextTokens(JsonSerializer.Serialize(new
+        {
+            tools = _agentTools.Definitions,
+            metadata = _agentTools.Metadata.Select(m => new
+            {
+                m.Name,
+                m.RequiresApproval,
+                m.IsReadOnly,
+                m.RenderHint,
+                m.ActivityDescription
+            })
+        }));
+
+        var mcpServers = await _toolPlatform.ListMcpServersAsync(chat?.ProjectSpaceId, ct);
+        var mcpTokens = EstimateContextTokens(JsonSerializer.Serialize(mcpServers
+            .Where(s => s.Enabled)
+            .Select(s => new
+            {
+                s.Name,
+                s.Transport,
+                hasEndpoint = !string.IsNullOrWhiteSpace(s.Endpoint),
+                hasCommand = !string.IsNullOrWhiteSpace(s.Command)
+            })));
+
+        var memory = await _projectMemory.ReadAsync(chatId, ct);
+        var artifactRefs = recentRunIds.Count == 0
+            ? new List<string>()
+            : await _db.Set<AgentArtifact>()
+                .AsNoTracking()
+                .Where(a => recentRunIds.Contains(a.AgentRunId))
+                .OrderByDescending(a => a.UpdatedAt)
+                .Take(60)
+                .Select(a => $"{a.RelativePath} ({a.SizeBytes} bytes)")
+                .ToListAsync(ct);
+        var filesTokens = EstimateContextTokens(memory) + EstimateContextTokens(string.Join('\n', artifactRefs));
+
+        var total = conversationTokens + executionResultTokens + toolsTokens + mcpTokens + filesTokens;
+        var available = Math.Max(1, effective.ContextBudgetTokens);
+        return new ContextUsageSnapshot(
+            total,
+            available,
+            Math.Round(Math.Min(1d, total / (double)available) * 100d, 1),
+            conversationTokens,
+            toolsTokens,
+            mcpTokens,
+            executionResultTokens,
+            filesTokens,
+            effective.Provider,
+            effective.Model);
+    }
+
     private static IReadOnlyList<AgentTaskSnapshot> MergeTasks(
         IReadOnlyList<AgentTaskSnapshot>? runTasks,
         IReadOnlyList<AgentTaskSnapshot> chatTasks)
@@ -610,6 +708,9 @@ public class LlmService : ILlmService
             .Take(40)
             .ToList();
     }
+
+    private static int EstimateContextTokens(string? text) =>
+        string.IsNullOrEmpty(text) ? 0 : Math.Max(1, (int)Math.Ceiling(text.Length / 3.2));
 
     public async Task SetAgentToolApprovalAsync(
         Guid invocationId,
@@ -1565,7 +1666,8 @@ public class LlmService : ILlmService
                     run,
                     invocation,
                     options.CommandTimeoutSeconds,
-                    options.MaxCommandOutputChars),
+                    options.MaxCommandOutputChars,
+                    AgentPermissionModes.Normalize(options.PermissionMode)),
                 ct);
             safety = scheduled.Safety;
             invocation.SafetyLevel = safety.Level;

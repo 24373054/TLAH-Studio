@@ -132,7 +132,7 @@ public sealed class TerminalExecAgentTool : IAgentTool
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
         AgentToolNames.TerminalExec,
-        "Execute a command through the configured restricted local, WSL2, Docker, or remote sandbox backend.",
+        "Execute a command through the configured local, WSL2, Docker, or remote backend. In Full access mode, local execution is unrestricted.",
         new Dictionary<string, object>
         {
             ["command"] = AgentToolSupport.StringProperty("The command to run inside the isolated chat workspace."),
@@ -141,7 +141,7 @@ public sealed class TerminalExecAgentTool : IAgentTool
                 ["type"] = "string",
                 ["enum"] = new[]
                 {
-                    "restricted_local", "wsl", "docker", "remote"
+                    "restricted_local", "unrestricted_local", "wsl", "docker", "remote"
                 },
                 ["description"] = "Optional backend override. Omit it to use the configured default."
             },
@@ -165,7 +165,11 @@ public sealed class TerminalExecAgentTool : IAgentTool
 
         var result = await _router.ExecuteAsync(
             new ExecutionRequest(
-                context.ChatId, command, context.TimeoutSeconds, context.MaxOutputChars),
+                context.ChatId,
+                command,
+                context.TimeoutSeconds,
+                context.MaxOutputChars,
+                context.PermissionMode),
             backend,
             ct);
         var output = $"""
@@ -1078,7 +1082,11 @@ public sealed class HttpRequestAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var settings = await _platform.GetSettingsAsync(ct);
-            var uri = await _network.ValidateAsync(AgentToolSupport.GetString(root, "url"), settings, ct);
+            var uri = await _network.ValidateAsync(
+                AgentToolSupport.GetString(root, "url"),
+                settings,
+                ct,
+                bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
             var methodName = AgentToolSupport.GetString(root, "method", "GET").ToUpperInvariant();
             var method = new HttpMethod(methodName);
             using var request = new HttpRequestMessage(method, uri);
@@ -1189,8 +1197,17 @@ public sealed partial class WebSearchAgentTool : IAgentTool
 
             foreach (var searchUrl in BuildSearchUrls(query))
             {
-                var uri = await _network.ValidateAsync(searchUrl, settings, ct);
-                var fetched = await FetchSearchPageAsync(client, uri, settings, ct);
+                var uri = await _network.ValidateAsync(
+                    searchUrl,
+                    settings,
+                    ct,
+                    bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
+                var fetched = await FetchSearchPageAsync(
+                    client,
+                    uri,
+                    settings,
+                    AgentPermissionModes.IsBypass(context.PermissionMode),
+                    ct);
                 lastStatus = fetched.StatusCode;
                 lastUri = fetched.FinalUri.ToString();
                 diagnostics.Add($"{(int)fetched.StatusCode} {fetched.FinalUri}");
@@ -1230,6 +1247,7 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         HttpClient client,
         Uri uri,
         ToolPlatformSettings settings,
+        bool bypassRestrictions,
         CancellationToken ct)
     {
         var current = uri;
@@ -1244,7 +1262,7 @@ public sealed partial class WebSearchAgentTool : IAgentTool
                 var next = response.Headers.Location.IsAbsoluteUri
                     ? response.Headers.Location
                     : new Uri(current, response.Headers.Location);
-                current = await _network.ValidateAsync(next.ToString(), settings, ct);
+                current = await _network.ValidateAsync(next.ToString(), settings, ct, bypassRestrictions);
                 continue;
             }
 
@@ -1450,7 +1468,11 @@ public sealed partial class BrowserReadAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var settings = await _platform.GetSettingsAsync(ct);
-            var uri = await _network.ValidateAsync(AgentToolSupport.GetString(root, "url"), settings, ct);
+            var uri = await _network.ValidateAsync(
+                AgentToolSupport.GetString(root, "url"),
+                settings,
+                ct,
+                bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.UserAgent.ParseAdd("TLAHStudio/1.4");
             using var response = await _httpClientFactory.CreateClient("Tools")

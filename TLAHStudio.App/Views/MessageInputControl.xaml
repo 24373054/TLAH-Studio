@@ -17,6 +17,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
@@ -55,9 +56,24 @@
             </StackPanel>
         </ToggleButton>
 
+        <ComboBox
+            x:Name="PermissionModeCombo"
+            Grid.Column="2"
+            Width="132"
+            MinHeight="46"
+            Margin="0,0,12,0"
+            Background="{ThemeResource InputBackgroundBrush}"
+            Foreground="{ThemeResource TextPrimaryBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            CornerRadius="8"
+            SelectedIndex="0"
+            TabIndex="12"
+            ToolTipService.ToolTip="Agent permission mode"
+            AutomationProperties.Name="Agent permission mode" />
+
         <TextBox
             x:Name="InputBox"
-            Grid.Column="2"
+            Grid.Column="3"
             MinHeight="46"
             MaxHeight="160"
             AcceptsReturn="True"
@@ -70,10 +86,10 @@
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             CornerRadius="8"
             Padding="14,10"
-            TabIndex="12"
+            TabIndex="13"
             AutomationProperties.Name="Message input" />
 
-        <Grid x:Name="ActionGrid" Grid.Column="3" Margin="12,0,0,0">
+        <Grid x:Name="ActionGrid" Grid.Column="4" Margin="12,0,0,0">
             <Button
                 x:Name="SendBtn"
                 Click="Send_Click"
@@ -83,7 +99,7 @@
                 MinWidth="54"
                 MinHeight="46"
                 Padding="14,8"
-                TabIndex="13"
+                TabIndex="14"
                 ToolTipService.ToolTip="Send"
                 AutomationProperties.Name="Send message">
                 <SymbolIcon Symbol="Send" />
@@ -107,7 +123,7 @@
                 MinHeight="46"
                 Padding="14,8"
                 ToolTipService.ToolTip="Stop"
-                TabIndex="13"
+                TabIndex="14"
                 AutomationProperties.Name="Stop generation">
                 <SymbolIcon Symbol="Stop" />
             </Button>

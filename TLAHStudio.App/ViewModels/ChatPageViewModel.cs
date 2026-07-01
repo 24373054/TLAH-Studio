@@ -25,6 +25,7 @@ public partial class ChatPageViewModel : ObservableObject
     private AssistantStreamState? _activeStream;
     private string? _activeAgentRequest;
     private const string AgentActivityPanelStorageKey = "tlah-agent-activity-panel-open";
+    private const string AgentPermissionModeStorageKey = "tlah-agent-permission-mode";
 
     /// <summary>
     /// M2.8.0: Typed content blocks for virtualized rendering.
@@ -58,6 +59,16 @@ public partial class ChatPageViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isAgentModeEnabled;
+
+    [ObservableProperty]
+    private string _selectedAgentPermissionMode =
+        AgentPermissionModes.Normalize(LocalStore.Get(AgentPermissionModeStorageKey));
+
+    [ObservableProperty]
+    private string _contextUsageText = "Context --";
+
+    [ObservableProperty]
+    private string _contextUsageToolTip = "Context usage is calculated after a chat is selected.";
 
     [ObservableProperty]
     private bool _isAgentStatusVisible;
@@ -110,6 +121,12 @@ public partial class ChatPageViewModel : ObservableObject
         LocalStore.Set(AgentActivityPanelStorageKey, value ? "true" : "false");
     }
 
+    partial void OnSelectedAgentPermissionModeChanged(string value)
+    {
+        SelectedAgentPermissionMode = AgentPermissionModes.Normalize(value);
+        LocalStore.Set(AgentPermissionModeStorageKey, SelectedAgentPermissionMode);
+    }
+
     private async void OnChatSelected(object? sender, Guid chatId)
     {
         await LoadChatAsync(chatId);
@@ -122,6 +139,8 @@ public partial class ChatPageViewModel : ObservableObject
         ChatMessageBlocks.Clear();
         ClearAgentProgress();
         ClearAgentActivity();
+        ContextUsageText = "Context --";
+        ContextUsageToolTip = "Context usage is calculated after a chat is selected.";
         UpdateAgentStatus(null);
     }
 
@@ -149,6 +168,7 @@ public partial class ChatPageViewModel : ObservableObject
                     ChatMessageBlocks.Add(block);
             }
             await LoadAgentActivityAsync(chatId);
+            await UpdateContextUsageAsync(chatId);
             UpdateAgentStatus(await _llmService.GetLatestAgentRunAsync(chatId));
         }
         catch (Exception e)
@@ -192,7 +212,7 @@ public partial class ChatPageViewModel : ObservableObject
                     _appState.CurrentChatId.Value,
                     content,
                     role,
-                    new AgentRunOptions(OutputStream: stream.Progress, Progress: agentProgress),
+                    CreateAgentOptions(stream.Progress, agentProgress),
                     _sendCts.Token)
                 : await _llmService.SendMessageAsync(
                     _appState.CurrentChatId.Value,
@@ -261,7 +281,7 @@ public partial class ChatPageViewModel : ObservableObject
             AgentStatusText = "Resuming saved agent run...";
             var result = await _llmService.ResumeAgentTaskAsync(
                 CurrentAgentRunId.Value,
-                new AgentRunOptions(OutputStream: stream.Progress, Progress: agentProgress),
+                CreateAgentOptions(stream.Progress, agentProgress),
                 _sendCts.Token);
             result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
             await stream.WaitForFinalDrainAsync(_sendCts.Token);
@@ -495,7 +515,7 @@ public partial class ChatPageViewModel : ObservableObject
                 : "Tool approved. Continuing the agent run...";
             result = await _llmService.ResumeAgentTaskAsync(
                 request.AgentRunId,
-                new AgentRunOptions(OutputStream: _activeStream?.Progress, Progress: _activeAgentProgress),
+                CreateAgentOptions(_activeStream?.Progress, _activeAgentProgress),
                 ct);
             UpdateAgentStatus(result.AgentRun);
         }
@@ -756,6 +776,47 @@ public partial class ChatPageViewModel : ObservableObject
             AgentActivityRuns.Add(run);
         }
         RefreshAgentActivityState();
+    }
+
+    private AgentRunOptions CreateAgentOptions(
+        IProgress<LlmStreamUpdate>? outputStream,
+        IProgress<AgentProgressUpdate>? progress) =>
+        new(
+            OutputStream: outputStream,
+            Progress: progress,
+            PermissionMode: AgentPermissionModes.Normalize(SelectedAgentPermissionMode));
+
+    private async Task UpdateContextUsageAsync(Guid chatId)
+    {
+        try
+        {
+            var usage = await _llmService.GetContextUsageAsync(chatId);
+            ContextUsageText =
+                $"Context {FormatTokenCount(usage.TotalTokens)} / {FormatTokenCount(usage.AvailableTokens)} ({usage.PercentUsed:F1}%)";
+            ContextUsageToolTip =
+                $"Provider: {usage.Provider} / {usage.Model}\n" +
+                $"Conversation: {FormatTokenCount(usage.ConversationTokens)}\n" +
+                $"Tools: {FormatTokenCount(usage.ToolsTokens)}\n" +
+                $"MCP: {FormatTokenCount(usage.McpTokens)}\n" +
+                $"Execution results: {FormatTokenCount(usage.ExecutionResultTokens)}\n" +
+                $"Files and memory: {FormatTokenCount(usage.FilesTokens)}\n" +
+                $"Total: {FormatTokenCount(usage.TotalTokens)} of {FormatTokenCount(usage.AvailableTokens)} tokens";
+        }
+        catch
+        {
+            ContextUsageText = "Context unavailable";
+            ContextUsageToolTip = "Context usage could not be calculated for this chat.";
+        }
+    }
+
+    private static string FormatTokenCount(int value)
+    {
+        var abs = Math.Abs(value);
+        return abs >= 1_000_000
+            ? $"{value / 1_000_000d:F1}M"
+            : abs >= 1_000
+                ? $"{value / 1_000d:F1}k"
+                : value.ToString();
     }
 
     private void ClearAgentActivity()

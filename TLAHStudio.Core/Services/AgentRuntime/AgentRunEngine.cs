@@ -124,7 +124,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         try
         {
             // Build system prompt with memory
-            var systemPrompt = await BuildSystemPromptAsync(state.ChatId, ct);
+            var systemPrompt = await BuildSystemPromptAsync(state.ChatId, options.PermissionMode, ct);
             var effective = await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct);
             var provider = LlmProviderFactory.Create(
                 _httpClientFactory.CreateClient("LLM"),
@@ -434,14 +434,16 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         var policy = await _toolPlatform.EvaluatePolicyAsync(
                             state.ChatId, item.ToolCall.Name, item.ToolCall.ArgumentsJson, item.Safety, ct);
 
-                        if (policy.IsDenied || item.Safety.IsBlocked)
+                        var bypassPermissions = AgentPermissionModes.IsBypass(options.PermissionMode);
+                        if (!bypassPermissions && (policy.IsDenied || item.Safety.IsBlocked))
                         {
                             await HandleDeniedInvocationAsync(state, item, step, policy.IsDenied ? "denied_by_policy" : "blocked_by_safety", options, events, ct);
                             continue;
                         }
 
-                        var needsApproval = (item.Tool.Metadata.RequiresApproval && !options.AutoApproveTools && !policy.IsAllowed) ||
-                                           (item.Safety.RequiresExplicitApproval && !policy.IsAllowed);
+                        var needsApproval = !options.AutoApproveTools &&
+                            ((item.Tool.Metadata.RequiresApproval && !policy.IsAllowed) ||
+                             (item.Safety.RequiresExplicitApproval && !policy.IsAllowed));
 
                         if (needsApproval)
                         {
@@ -589,6 +591,29 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             ? TokenBudgetState.CompactNow
             : _tokenBudget.CheckBudget(state.Messages, budget, options.AutoCompactTriggerTokens);
 
+        var before = _tokenBudget.EstimateTokens(state.Messages);
+        if (!forceCompact && tokenState < TokenBudgetState.CompactSoon)
+        {
+            return new AgentContextPreparationResult(
+                state.Messages.ToList(),
+                false,
+                before,
+                before,
+                "Context is within the active model budget.");
+        }
+
+        if (!forceCompact &&
+            tokenState == TokenBudgetState.CompactSoon &&
+            state.CurrentStep - state.LastCompactedStep < 4)
+        {
+            return new AgentContextPreparationResult(
+                state.Messages.ToList(),
+                false,
+                before,
+                before,
+                "Context compaction is in cooldown.");
+        }
+
         if (forceCompact || tokenState >= TokenBudgetState.CompactSoon)
         {
             var strategy = tokenState switch
@@ -599,8 +624,16 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             };
             var compacted = await _reactiveCompactor.CompactAsync(
                 state.Messages, tokenState, strategy, _tokenBudget, ct);
-            if (compacted.WasCompacted && compacted.EstimatedTokensAfter < compacted.EstimatedTokensBefore)
+            var saved = compacted.EstimatedTokensBefore - compacted.EstimatedTokensAfter;
+            var minimumUsefulSavings = tokenState == TokenBudgetState.CompactSoon
+                ? Math.Max(1_024, compacted.EstimatedTokensBefore / 20)
+                : 1;
+            if (compacted.WasCompacted &&
+                saved >= minimumUsefulSavings &&
+                compacted.EstimatedTokensAfter < compacted.EstimatedTokensBefore)
             {
+                state.LastCompactedStep = state.CurrentStep;
+                state.LastCompactedTokenEstimate = compacted.EstimatedTokensAfter;
                 return new AgentContextPreparationResult(
                     compacted.Messages,
                     true,
@@ -610,7 +643,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             }
         }
 
-        return _contextManager.Prepare(state.Messages, options, forceCompact);
+        return forceCompact
+            ? _contextManager.Prepare(state.Messages, options, forceCompact)
+            : new AgentContextPreparationResult(
+                state.Messages.ToList(),
+                false,
+                before,
+                before,
+                "No useful compaction was needed.");
     }
 
     private async Task<List<MessagePayload>> BuildModelMessagesWithRuntimeContextAsync(
@@ -739,7 +779,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         }
     }
 
-    private async Task<string> BuildSystemPromptAsync(Guid chatId, CancellationToken ct)
+    private async Task<string> BuildSystemPromptAsync(Guid chatId, string permissionMode, CancellationToken ct)
     {
         var prompt = await SystemPromptBuilder.BuildAsync(
             _db.Set<Chat>(), _db.Set<GlobalSettings>(), _db.Set<AgentFile>(),
@@ -753,25 +793,35 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         prompt += $"\n\n[current tracked tasks]\n{taskSummary}";
         prompt += BuildAgentInstructions(
             _sandboxCommandService.GetSandboxRoot(chatId),
-            _agentTools.Definitions.Select(t => t.Name));
+            _agentTools.Definitions.Select(t => t.Name),
+            permissionMode);
         return prompt;
     }
 
-    private static string BuildAgentInstructions(string sandboxRoot, IEnumerable<string> toolNames)
+    private static string BuildAgentInstructions(string sandboxRoot, IEnumerable<string> toolNames, string permissionMode)
     {
         var tools = string.Join(", ", toolNames.OrderBy(t => t, StringComparer.OrdinalIgnoreCase));
+        var normalizedMode = AgentPermissionModes.Normalize(permissionMode);
+        var hostAccessLine = AgentPermissionModes.IsBypass(normalizedMode)
+            ? "Permission mode: Full access. terminal_exec may run unrestricted local PowerShell and can access host files, programs, and the internet when needed. Use it deliberately and state the reason."
+            : normalizedMode == AgentPermissionModes.AutoApprove
+                ? "Permission mode: Auto approve. The app approves detected tool directions automatically, but safety and policy blocks still apply."
+                : "Permission mode: Ask approval. High-risk or policy-relevant tool calls must wait for explicit user approval.";
         return $"""
 
         TLAH Agent Mode is enabled.
         Registered tools: {tools}
         Sandbox working directory: {sandboxRoot}
-        Work only inside the sandbox directory. Do not read host user files or run destructive, privileged, registry, service, shutdown, or system-configuration operations.
+        {hostAccessLine}
+        In sandboxed modes, work only inside the sandbox directory. Do not read host user files or run destructive, privileged, registry, service, shutdown, or system-configuration operations.
         Prefer typed memory, file, code, Git, HTTP, search, browser, terminal, and MCP tools over ad-hoc shell commands.
+        Tool map: code_read/code_grep/code_glob/code_symbols inspect code; code_edit/code_multi_edit/code_apply_patch change code; file_* manages sandbox artifacts; web_search/browser_read/http_request handle web and APIs; mcp_* discovers and calls configured MCP servers; todo_* and task_* keep durable plans; terminal_exec is the escape hatch for commands and host-level work in Full access mode.
         For development work, prefer code_read, code_grep, code_glob, code_diff, code_edit, code_multi_edit, code_apply_patch, code_rollback, and code_diagnostics.
         For file work, prefer file_list, file_read, file_write, file_search, and file_send. When you create a file the user should see, preview, download, or use outside the sandbox, call file_send before the final answer.
         For multi-step work, maintain a persistent task plan with todo_write, task_create, task_update, and task_list. Keep one current task in_progress when possible and mark completed tasks promptly.
         When a tool output is persisted under .tlah_context/tool-results, use read_persisted_output to recover details instead of asking the user to rerun work.
         Use tool_search when you need to discover less-common tools, MCP capabilities, task tools, or persisted-output tools.
+        Do not assume a capability is unavailable before checking tool_search or mcp_list_tools when the user's request suggests external tools, repositories, browsers, files, or integrations.
         Use task_create with background=true only for independent local background work; use task_output, task_stop, and task_send_message to inspect or control it.
         Use mcp_list_tools before mcp_call, and mcp_list_resources before mcp_read_resource. Keep credentials referenced only by broker entry name; never print, store, or ask for secrets.
         Request one tool call at a time unless multiple read-only calls are clearly independent. Include a short reason in arguments when the schema supports it.
@@ -1036,7 +1086,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
         var scheduled = await _toolExecutionScheduler.ExecuteAsync(
             new ToolExecutionRequest(CreateRunShell(state), item.Invocation,
-                options.CommandTimeoutSeconds, options.MaxCommandOutputChars), ct);
+                options.CommandTimeoutSeconds,
+                options.MaxCommandOutputChars,
+                AgentPermissionModes.Normalize(options.PermissionMode)), ct);
 
         item.Invocation.SafetyLevel = scheduled.Safety.Level;
         item.Invocation.SafetySummary = scheduled.Safety.Summary;

@@ -25,10 +25,16 @@ public sealed partial class ChatHeaderControl : UserControl
 
         if (App.MainWindow is not MainWindow w) return;
         UpdateTitle(w.ChatVM.CurrentChat?.Title);
+        UpdateContextUsage(w.ChatVM.ContextUsageText, w.ChatVM.ContextUsageToolTip);
         w.ChatVM.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ChatPageViewModel.CurrentChat))
                 DispatcherQueue.TryEnqueue(() => UpdateTitle(w.ChatVM.CurrentChat?.Title));
+            if (args.PropertyName is nameof(ChatPageViewModel.ContextUsageText)
+                or nameof(ChatPageViewModel.ContextUsageToolTip))
+                DispatcherQueue.TryEnqueue(() => UpdateContextUsage(
+                    w.ChatVM.ContextUsageText,
+                    w.ChatVM.ContextUsageToolTip));
             if (args.PropertyName == nameof(ChatPageViewModel.IsAgentActivityPanelOpen))
                 DispatcherQueue.TryEnqueue(UpdateActivityButton);
         };
@@ -38,6 +44,12 @@ public sealed partial class ChatHeaderControl : UserControl
     private void UpdateTitle(string? title)
     {
         TitleBlock.Text = string.IsNullOrWhiteSpace(title) ? "Select a chat" : title;
+    }
+
+    private void UpdateContextUsage(string text, string tooltip)
+    {
+        ContextUsageBlock.Text = string.IsNullOrWhiteSpace(text) ? "Context --" : text;
+        ToolTipService.SetToolTip(ContextUsageBlock, string.IsNullOrWhiteSpace(tooltip) ? ContextUsageBlock.Text : tooltip);
     }
 
     private async void Title_Tapped(object sender, TappedRoutedEventArgs e)

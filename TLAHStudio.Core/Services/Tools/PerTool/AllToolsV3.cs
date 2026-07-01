@@ -116,7 +116,14 @@ public class TerminalExecToolV3 : AgentToolV3Base
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var command = doc.RootElement.GetProperty("command").GetString() ?? "";
-        var result = await _router.ExecuteAsync(new ExecutionRequest(context.ChatId, command, context.TimeoutSeconds, context.MaxOutputChars), ct: ct);
+        var result = await _router.ExecuteAsync(
+            new ExecutionRequest(
+                context.ChatId,
+                command,
+                context.TimeoutSeconds,
+                context.MaxOutputChars,
+                context.PermissionMode),
+            ct: ct);
         var isFailure = CommandSemantics.IsExitCodeFailure(command, result.ExitCode);
         if (result.BlockedReason != null)
             return new AgentToolResult(false, result.StandardOutput, result.BlockedReason);
@@ -195,7 +202,11 @@ public class HttpRequestToolV3 : AgentToolV3Base
         var doc = JsonDocument.Parse(argumentsJson);
         var url = doc.RootElement.GetProperty("url").GetString() ?? "";
         var settings = await _platform.GetSettingsAsync(ct);
-        var uri = await _network.ValidateAsync(url, settings, ct);
+        var uri = await _network.ValidateAsync(
+            url,
+            settings,
+            ct,
+            bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
         using var client = _httpClientFactory.CreateClient("Tools");
         var response = await client.GetAsync(uri, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
@@ -230,7 +241,11 @@ public class WebSearchToolV3 : AgentToolV3Base
         var query = doc.RootElement.GetProperty("query").GetString() ?? "";
         var settings = await _platform.GetSettingsAsync(ct);
         var url = $"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}";
-        var uri = await _network.ValidateAsync(url, settings, ct);
+        var uri = await _network.ValidateAsync(
+            url,
+            settings,
+            ct,
+            bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
         using var client = _httpClientFactory.CreateClient("Tools");
         var response = await client.GetStringAsync(uri, ct);
         return new AgentToolResult(true, response[..Math.Min(response.Length, 6000)]);
@@ -258,7 +273,11 @@ public class BrowserReadToolV3 : AgentToolV3Base
         var doc = JsonDocument.Parse(argumentsJson);
         var url = doc.RootElement.GetProperty("url").GetString() ?? "";
         var settings = await _platform.GetSettingsAsync(ct);
-        var uri = await _network.ValidateAsync(url, settings, ct);
+        var uri = await _network.ValidateAsync(
+            url,
+            settings,
+            ct,
+            bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
         using var client = _httpClientFactory.CreateClient("Tools");
         var html = await client.GetStringAsync(uri, ct);
         var text = StripHtml(html);

@@ -709,7 +709,7 @@ public sealed class ToolPlatformService : IToolPlatformService
     }
 
     private static bool IsBackend(string value) =>
-        value is ToolExecutionBackends.RestrictedLocal or ToolExecutionBackends.Wsl
+        value is ToolExecutionBackends.RestrictedLocal or ToolExecutionBackends.UnrestrictedLocal or ToolExecutionBackends.Wsl
             or ToolExecutionBackends.Docker or ToolExecutionBackends.Remote;
 
     private static string RequireName(string value, string kind)

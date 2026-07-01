@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using System.ComponentModel;
+using TLAHStudio.Core.Services;
 using TLAHStudio.App.ViewModels;
 
 namespace TLAHStudio.App.Views;
@@ -19,10 +20,19 @@ public sealed partial class MessageInputControl : UserControl
         App.Log("MessageInputControl XAML initialized.");
         RoleCombo.Items.Add("user");
         RoleCombo.Items.Add("system");
+        PermissionModeCombo.Items.Add(new PermissionModeItem(AgentPermissionModes.BypassPermissions, "Full access", "Unrestricted local terminal access; approvals are bypassed."));
+        PermissionModeCombo.Items.Add(new PermissionModeItem(AgentPermissionModes.AutoApprove, "Auto approve", "Approves detected tool directions automatically while keeping safety blocks."));
+        PermissionModeCombo.Items.Add(new PermissionModeItem(AgentPermissionModes.RequestApproval, "Ask", "Requests approval for risky tools and scoped permission rules."));
         RoleCombo.SelectionChanged += (_, _) =>
         {
             if (_vm != null)
                 _vm.SelectedRole = RoleCombo.SelectedItem?.ToString() ?? "user";
+        };
+        PermissionModeCombo.SelectionChanged += (_, _) =>
+        {
+            if (_vm != null && PermissionModeCombo.SelectedItem is PermissionModeItem item)
+                _vm.SelectedAgentPermissionMode = item.Mode;
+            UpdatePermissionModeToolTip();
         };
         AgentModeToggle.Checked += (_, _) =>
         {
@@ -58,9 +68,11 @@ public sealed partial class MessageInputControl : UserControl
             _vm.PropertyChanged += OnViewModelPropertyChanged;
             _suppressSound = true;
             AgentModeToggle.IsChecked = _vm.IsAgentModeEnabled;
+            SelectPermissionMode(_vm.SelectedAgentPermissionMode);
             _suppressSound = false;
             UpdateSendingState();
             UpdateAgentModeVisualState();
+            UpdatePermissionModeToolTip();
         }
     }
 
@@ -84,6 +96,10 @@ public sealed partial class MessageInputControl : UserControl
             : new Thickness(0, 0, 12, 0);
         AgentModeToggle.MinWidth = compact ? 70 : 82;
         AgentModeToggle.Margin = compact
+            ? new Thickness(0, 0, 8, 0)
+            : new Thickness(0, 0, 12, 0);
+        PermissionModeCombo.Width = compact ? 92 : 132;
+        PermissionModeCombo.Margin = compact
             ? new Thickness(0, 0, 8, 0)
             : new Thickness(0, 0, 12, 0);
         ActionGrid.Margin = compact
@@ -174,6 +190,8 @@ public sealed partial class MessageInputControl : UserControl
                 _suppressSound = false;
                 UpdateAgentModeVisualState();
             });
+        if (e.PropertyName == nameof(ChatPageViewModel.SelectedAgentPermissionMode))
+            DispatcherQueue.TryEnqueue(() => SelectPermissionMode(_vm?.SelectedAgentPermissionMode));
     }
 
     private void UpdateSendingState()
@@ -184,6 +202,7 @@ public sealed partial class MessageInputControl : UserControl
         SendingRing.Visibility = sending ? Visibility.Visible : Visibility.Collapsed;
         SendBtn.IsEnabled = !sending;
         AgentModeToggle.IsEnabled = !sending;
+        PermissionModeCombo.IsEnabled = !sending;
     }
 
     private void UpdateAgentModeVisualState()
@@ -201,5 +220,34 @@ public sealed partial class MessageInputControl : UserControl
     {
         if (!_suppressSound && App.MainWindow is MainWindow w)
             w.SoundService.Play(sound);
+    }
+
+    private void SelectPermissionMode(string? mode)
+    {
+        var normalized = AgentPermissionModes.Normalize(mode);
+        for (var i = 0; i < PermissionModeCombo.Items.Count; i++)
+        {
+            if (PermissionModeCombo.Items[i] is PermissionModeItem item &&
+                string.Equals(item.Mode, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                PermissionModeCombo.SelectedIndex = i;
+                UpdatePermissionModeToolTip();
+                return;
+            }
+        }
+
+        PermissionModeCombo.SelectedIndex = 0;
+        UpdatePermissionModeToolTip();
+    }
+
+    private void UpdatePermissionModeToolTip()
+    {
+        if (PermissionModeCombo.SelectedItem is PermissionModeItem item)
+            ToolTipService.SetToolTip(PermissionModeCombo, item.Description);
+    }
+
+    private sealed record PermissionModeItem(string Mode, string Label, string Description)
+    {
+        public override string ToString() => Label;
     }
 }

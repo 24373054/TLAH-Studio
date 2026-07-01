@@ -46,6 +46,10 @@ public interface ILlmService
         Guid chatId,
         CancellationToken ct = default);
 
+    Task<ContextUsageSnapshot> GetContextUsageAsync(
+        Guid chatId,
+        CancellationToken ct = default);
+
     Task SetAgentToolApprovalAsync(
         Guid invocationId,
         bool approved,
@@ -107,7 +111,20 @@ public sealed record AgentRunOptions(
     IProgress<AgentProgressUpdate>? Progress = null,
     int ContextBudgetTokens = 32_000,
     int AutoCompactTriggerTokens = 24_000,
-    int MaxToolResultCharsInContext = 6_000);
+    int MaxToolResultCharsInContext = 6_000,
+    string PermissionMode = AgentPermissionModes.BypassPermissions);
+
+public sealed record ContextUsageSnapshot(
+    int TotalTokens,
+    int AvailableTokens,
+    double PercentUsed,
+    int ConversationTokens,
+    int ToolsTokens,
+    int McpTokens,
+    int ExecutionResultTokens,
+    int FilesTokens,
+    string Provider,
+    string Model);
 
 public sealed record AgentProgressUpdate(
     Guid AgentRunId,

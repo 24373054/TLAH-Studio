@@ -46,6 +46,16 @@ public class TokenBudgetServiceTests
     }
 
     [Fact]
+    public void CheckBudget_LowTriggerDoesNotCompactBeforeModelWindowPressure()
+    {
+        var msg = new MessagePayload("user", new string('x', 110_000));
+        var budget = new TokenBudget(128_000, 16_384, 111_616);
+        var state = _svc.CheckBudget([msg], budget, 24_000);
+
+        Assert.Equal(TokenBudgetState.Safe, state);
+    }
+
+    [Fact]
     public void EstimateTokens_ReturnsReasonableValue()
     {
         var msgs = new List<MessagePayload> { new("user", "Hello, how are you?") };

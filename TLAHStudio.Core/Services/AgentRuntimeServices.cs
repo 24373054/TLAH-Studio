@@ -279,7 +279,8 @@ public sealed record ToolExecutionRequest(
     AgentRun Run,
     ToolInvocation Invocation,
     int TimeoutSeconds,
-    int MaxOutputChars);
+    int MaxOutputChars,
+    string PermissionMode = AgentPermissionModes.RequestApproval);
 
 public sealed record ToolExecutionOutcome
 {

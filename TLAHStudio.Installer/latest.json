@@ -1,14 +1,14 @@
 {
-  "version": "4.1.1",
+  "version": "4.2.1",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.1.1.exe",
-  "sha256": "a17a2e25f6662299604eecc35e3801b8d2cd4046f9ade5a75456497b9145c1b0",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.2.1.exe",
+  "sha256": "eb7de78adec328c3b75f26cbd59d7d53a40ce13f3abfdee7f3fa7200a428fcbf",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.1.1 improves built-in tool capability and reliability: file info/mkdir/move/delete tools, stronger file search, code symbol discovery, resilient web search parsing, improved tool catalog discovery, and regression coverage.",
+  "releaseNotes": "4.2.1 adds Claude Code-style agent permission modes, a context usage breakdown in each chat, stronger tool/MCP guidance, Full access terminal/network routing, and throttled context compaction for long runs.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.1.1",
+  "minSupportedVersion": "4.2.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96997628
+  "installerSizeBytes": 97003918
 }

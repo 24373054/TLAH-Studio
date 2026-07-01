@@ -52,16 +52,21 @@ public class TokenBudgetService : ITokenBudgetService
     public TokenBudgetState CheckBudget(IReadOnlyList<MessagePayload> messages, TokenBudget budget, int triggerTokens)
     {
         var estimated = EstimateTokens(messages);
-        var ratio = (double)estimated / budget.AvailableForContext;
+        var available = Math.Max(1, budget.AvailableForContext);
+        var configuredTrigger = triggerTokens > 0 ? triggerTokens : (int)(available * 0.75);
+        var compactSoonAt = Math.Min(available, Math.Max(configuredTrigger, (int)(available * 0.75)));
+        var compactNowAt = Math.Min(available, Math.Max((int)(compactSoonAt * 1.15), (int)(available * 0.90)));
+        var warningAt = Math.Min(compactSoonAt, Math.Max((int)(available * 0.50), compactSoonAt / 2));
 
-        return ratio switch
-        {
-            >= 1.0 => TokenBudgetState.Blocking,
-            >= 0.9 => TokenBudgetState.CompactNow,
-            >= 0.75 => TokenBudgetState.CompactSoon,
-            >= 0.5 => TokenBudgetState.Warning,
-            _ => TokenBudgetState.Safe
-        };
+        if (estimated >= available)
+            return TokenBudgetState.Blocking;
+        if (estimated >= compactNowAt)
+            return TokenBudgetState.CompactNow;
+        if (estimated >= compactSoonAt)
+            return TokenBudgetState.CompactSoon;
+        if (estimated >= warningAt)
+            return TokenBudgetState.Warning;
+        return TokenBudgetState.Safe;
     }
 
     public int EstimateTokens(IReadOnlyList<MessagePayload> messages)

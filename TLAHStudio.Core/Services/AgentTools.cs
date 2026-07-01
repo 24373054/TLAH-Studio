@@ -61,7 +61,8 @@ public sealed record AgentToolExecutionContext(
     Guid AgentRunId,
     Guid InvocationId,
     int TimeoutSeconds,
-    int MaxOutputChars);
+    int MaxOutputChars,
+    string PermissionMode = AgentPermissionModes.RequestApproval);
 
 public sealed record AgentToolArtifact(
     string RelativePath,

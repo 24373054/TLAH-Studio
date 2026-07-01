@@ -12,18 +12,28 @@
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
-        <TextBlock
-            x:Name="TitleBlock"
+        <StackPanel
             Grid.Column="0"
-            Text="Select a chat"
-            FontSize="18"
-            FontWeight="SemiBold"
-            Foreground="{ThemeResource TextPrimaryBrush}"
             VerticalAlignment="Center"
-            TextTrimming="CharacterEllipsis"
-            Tapped="Title_Tapped"
-            ToolTipService.ToolTip="Edit title"
-            AutomationProperties.Name="Chat title" />
+            Spacing="2">
+            <TextBlock
+                x:Name="TitleBlock"
+                Text="Select a chat"
+                FontSize="18"
+                FontWeight="SemiBold"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                TextTrimming="CharacterEllipsis"
+                Tapped="Title_Tapped"
+                ToolTipService.ToolTip="Edit title"
+                AutomationProperties.Name="Chat title" />
+            <TextBlock
+                x:Name="ContextUsageBlock"
+                Text="Context --"
+                FontSize="12"
+                Foreground="{ThemeResource TextMutedBrush}"
+                TextTrimming="CharacterEllipsis"
+                AutomationProperties.Name="Context usage" />
+        </StackPanel>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
             <Button

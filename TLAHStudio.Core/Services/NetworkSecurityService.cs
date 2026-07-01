@@ -9,7 +9,8 @@ public interface INetworkSecurityService
     Task<Uri> ValidateAsync(
         string url,
         ToolPlatformSettings settings,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        bool bypassRestrictions = false);
 }
 
 public sealed class NetworkSecurityService : INetworkSecurityService
@@ -17,18 +18,19 @@ public sealed class NetworkSecurityService : INetworkSecurityService
     public async Task<Uri> ValidateAsync(
         string url,
         ToolPlatformSettings settings,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool bypassRestrictions = false)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             throw new InvalidOperationException("A valid absolute URL is required.");
-        if (uri.Scheme != Uri.UriSchemeHttps)
+        if (!bypassRestrictions && uri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("Tool network requests require HTTPS.");
-        if (!ToolPlatformService.MatchesDomainList(settings.NetworkAllowlist, uri.IdnHost))
+        if (!bypassRestrictions && !ToolPlatformService.MatchesDomainList(settings.NetworkAllowlist, uri.IdnHost))
             throw new InvalidOperationException($"Domain is not in the tool allowlist: {uri.IdnHost}");
 
         if (IPAddress.TryParse(uri.IdnHost, out var literal))
         {
-            if (IsPrivateOrLocal(literal))
+            if (!bypassRestrictions && IsPrivateOrLocal(literal))
                 throw new InvalidOperationException("Private, loopback, and link-local network targets are blocked.");
             return uri;
         }
@@ -43,7 +45,7 @@ public sealed class NetworkSecurityService : INetworkSecurityService
             throw new InvalidOperationException($"Unable to resolve {uri.IdnHost}: {ex.Message}", ex);
         }
 
-        if (addresses.Length == 0 || addresses.Any(IsPrivateOrLocal))
+        if (!bypassRestrictions && (addresses.Length == 0 || addresses.Any(IsPrivateOrLocal)))
             throw new InvalidOperationException("The domain resolves to a private, loopback, or link-local address.");
         return uri;
     }

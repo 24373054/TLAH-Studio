@@ -5,6 +5,7 @@ namespace TLAHStudio.Core.Models;
 public static class ToolExecutionBackends
 {
     public const string RestrictedLocal = "restricted_local";
+    public const string UnrestrictedLocal = "unrestricted_local";
     public const string Wsl = "wsl";
     public const string Docker = "docker";
     public const string Remote = "remote";

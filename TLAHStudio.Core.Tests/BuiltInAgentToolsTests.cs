@@ -66,6 +66,33 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public async Task TerminalExec_BypassPermissionModeUsesUnrestrictedLocalBackend()
+    {
+        await using var db = TestDb.Create();
+        var root = Path.Combine(Path.GetTempPath(), "TLAHStudio.Unrestricted.Tests", Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var platform = new ToolPlatformService(db);
+        var router = new ExecutionBackendRouter(
+            sandbox,
+            platform,
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(new MapHttpMessageHandler(_ =>
+                MapHttpMessageHandler.Json(HttpStatusCode.OK, "{}")))));
+
+        var result = await router.ExecuteAsync(
+            new ExecutionRequest(
+                Guid.NewGuid(),
+                "Write-Output ok",
+                10,
+                2000,
+                AgentPermissionModes.BypassPermissions));
+
+        Assert.Equal(ToolExecutionBackends.UnrestrictedLocal, result.Backend);
+        Assert.True(result.Success, result.BlockedReason ?? result.StandardError);
+        Assert.Contains("ok", result.StandardOutput);
+    }
+
+    [Fact]
     public async Task FileManagementToolsInspectCreateMoveCopyAndDelete()
     {
         await using var db = TestDb.Create();
@@ -972,7 +999,8 @@ public class BuiltInAgentToolsTests
         public Task<Uri> ValidateAsync(
             string url,
             TLAHStudio.Core.Models.ToolPlatformSettings settings,
-            CancellationToken ct = default) =>
+            CancellationToken ct = default,
+            bool bypassRestrictions = false) =>
             Task.FromResult(new Uri(url));
     }
 }

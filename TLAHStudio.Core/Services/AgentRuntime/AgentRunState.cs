@@ -23,6 +23,8 @@ public sealed record AgentRunState
     public int TokenBudgetUsed { get; set; }
     public Guid? PendingToolInvocationId { get; set; }
     public int ContextErrorCount { get; set; }
+    public int LastCompactedStep { get; set; } = -100;
+    public int LastCompactedTokenEstimate { get; set; }
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 
     /// <summary>
@@ -116,4 +118,5 @@ public sealed record AgentEngineOptions(
     int AutoCompactTriggerTokens = 24_000,
     int MaxToolResultCharsInContext = 6_000,
     IProgress<LlmStreamUpdate>? OutputStream = null,
-    IProgress<AgentProgressUpdate>? Progress = null);
+    IProgress<AgentProgressUpdate>? Progress = null,
+    string PermissionMode = AgentPermissionModes.BypassPermissions);

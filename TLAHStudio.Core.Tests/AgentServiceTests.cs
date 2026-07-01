@@ -160,7 +160,10 @@ public class AgentServiceTests
         var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
         var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
 
-        var pending = await service.RunAgentTaskAsync(chat.Id, "Create an approved file.");
+        var pending = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Create an approved file.",
+            options: new AgentRunOptions(PermissionMode: AgentPermissionModes.RequestApproval));
 
         Assert.Equal(AgentRunStatuses.AwaitingApproval, pending.AgentRun!.Status);
         Assert.NotNull(pending.AgentRun.PendingApproval);
@@ -365,7 +368,7 @@ public class AgentServiceTests
     }
 
     [Fact]
-    public async Task RunAgentTaskAsync_RequiresManualApprovalForHighRiskToolsEvenWhenAutoApproveIsEnabled()
+    public async Task RunAgentTaskAsync_RequestApprovalModeRequiresManualApprovalForHighRiskTools()
     {
         await using var db = TestDb.Create();
         var chatService = new ChatService(db);
@@ -400,7 +403,9 @@ public class AgentServiceTests
         var result = await service.RunAgentTaskAsync(
             chat.Id,
             "Reset the repo.",
-            options: new AgentRunOptions(MaxSteps: 3, AutoApproveTools: true));
+            options: new AgentRunOptions(
+                MaxSteps: 3,
+                PermissionMode: AgentPermissionModes.RequestApproval));
 
         Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
         Assert.NotNull(result.AgentRun.PendingApproval);
