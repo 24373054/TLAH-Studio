@@ -66,6 +66,71 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public async Task FileManagementToolsInspectCreateMoveCopyAndDelete()
+    {
+        await using var db = TestDb.Create();
+        var root = Path.Combine(Path.GetTempPath(), "TLAHStudio.FileManagement.Tests", Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var platform = new ToolPlatformService(db);
+        var context = new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+        var mkdir = new FileMkdirAgentTool(sandbox);
+        var write = new FileWriteAgentTool(sandbox, platform);
+        var info = new FileInfoAgentTool(sandbox);
+        var move = new FileMoveAgentTool(sandbox);
+        var delete = new FileDeleteAgentTool(sandbox);
+
+        var created = await mkdir.ExecuteAsync(context, """{"path":"notes/archive"}""");
+        Assert.True(created.Success, created.Error);
+        var written = await write.ExecuteAsync(context, """{"path":"notes/a.txt","content":"alpha\nbeta"}""");
+        Assert.True(written.Success, written.Error);
+
+        var inspected = await info.ExecuteAsync(context, """{"path":"notes/a.txt"}""");
+        Assert.True(inspected.Success, inspected.Error);
+        Assert.Contains("SHA256:", inspected.Output);
+        Assert.Contains("Lines: 2", inspected.Output);
+
+        var copied = await move.ExecuteAsync(context, """{"from_path":"notes/a.txt","to_path":"notes/archive/b.txt","mode":"copy"}""");
+        Assert.True(copied.Success, copied.Error);
+        Assert.True(File.Exists(Path.Combine(sandbox.GetSandboxRoot(context.ChatId), "notes", "archive", "b.txt")));
+
+        var moved = await move.ExecuteAsync(context, """{"from_path":"notes/archive/b.txt","to_path":"notes/c.txt","mode":"move"}""");
+        Assert.True(moved.Success, moved.Error);
+        Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(context.ChatId), "notes", "archive", "b.txt")));
+        Assert.True(File.Exists(Path.Combine(sandbox.GetSandboxRoot(context.ChatId), "notes", "c.txt")));
+
+        var deleted = await delete.ExecuteAsync(context, """{"path":"notes/archive","recursive":true}""");
+        Assert.True(deleted.Success, deleted.Error);
+        Assert.False(Directory.Exists(Path.Combine(sandbox.GetSandboxRoot(context.ChatId), "notes", "archive")));
+
+        var rootDelete = await delete.ExecuteAsync(context, """{"path":"."}""");
+        Assert.False(rootDelete.Success);
+        Assert.Contains("root", rootDelete.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FileSearchSupportsRegexCaseAndBinarySkipping()
+    {
+        await using var db = TestDb.Create();
+        var root = Path.Combine(Path.GetTempPath(), "TLAHStudio.FileSearch.Tests", Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var platform = new ToolPlatformService(db);
+        var context = new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+        var workspace = sandbox.GetSandboxRoot(context.ChatId);
+        Directory.CreateDirectory(Path.Combine(workspace, "src"));
+        await File.WriteAllTextAsync(Path.Combine(workspace, "src", "App.cs"), "public class AlphaService {}\npublic void RunBeta() {}\n");
+        await File.WriteAllBytesAsync(Path.Combine(workspace, "src", "image.png"), Encoding.UTF8.GetBytes("RunBeta"));
+        var search = new FileSearchAgentTool(sandbox, platform);
+
+        var result = await search.ExecuteAsync(
+            context,
+            """{"query":"Run[A-Z][a-z]+","path":"src","glob":"*","regex":true,"case_sensitive":true,"max_results":10}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("App.cs:2", result.Output);
+        Assert.DoesNotContain("image.png", result.Output);
+    }
+
+    [Fact]
     public void RegistryPublishesOnlyProviderSafeNames()
     {
         var sandbox = new SandboxCommandService(
@@ -137,6 +202,13 @@ public class BuiltInAgentToolsTests
         Assert.Contains(AgentToolNames.TaskOutput, result.Output);
         Assert.Contains(AgentToolNames.ReadPersistedOutput, result.Output);
 
+        var fileResult = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000),
+            """{"query":"delete folder symbol outline"}""");
+        Assert.True(fileResult.Success, fileResult.Error);
+        Assert.Contains(AgentToolNames.FileDelete, fileResult.Output);
+        Assert.Contains(AgentToolNames.CodeSymbols, fileResult.Output);
+
         var mcpResult = await tool.ExecuteAsync(
             new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000),
             """{"query":"mcp resource"}""");
@@ -188,7 +260,7 @@ public class BuiltInAgentToolsTests
         var html = """
             <html><body>
             <div class="result">
-              <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2Fmodelcontextprotocol%2Fservers">MCP Servers</a>
+              <a class="result__a" href="/l/?uddg=https%3A%2F%2Fgithub.com%2Fmodelcontextprotocol%2Fservers">MCP Servers</a>
               <a class="result__snippet">Reference servers for the Model Context Protocol.</a>
             </div>
             </body></html>
@@ -213,6 +285,37 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public async Task WebSearchParsesGenericAnchorFallback()
+    {
+        await using var db = TestDb.Create();
+        var platform = new ToolPlatformService(db);
+        var html = """
+            <html><body>
+              <main>
+                <a href="https://example.com/tools">Example Tool Catalog</a>
+                <p>Useful tools for agent workflows.</p>
+              </main>
+            </body></html>
+            """;
+        var handler = new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(html, Encoding.UTF8, "text/html")
+        });
+        var tool = new WebSearchAgentTool(
+            platform,
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(handler)));
+
+        var result = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 2000),
+            """{"query":"agent tools","reason":"test","max_results":3}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("Example Tool Catalog", result.Output);
+        Assert.Contains("https://example.com/tools", result.Output);
+    }
+
+    [Fact]
     public void ToolPlatformV2MetadataClassifiesReadAndWriteTools()
     {
         var sandbox = new SandboxCommandService(
@@ -224,6 +327,8 @@ public class BuiltInAgentToolsTests
             new FileListAgentTool(sandbox),
             new FileReadAgentTool(sandbox, platform),
             new FileWriteAgentTool(sandbox, platform),
+            new FileDeleteAgentTool(sandbox),
+            new CodeSymbolsAgentTool(sandbox),
             new SandboxExecAgentTool(sandbox)
         ]);
 
@@ -236,6 +341,14 @@ public class BuiltInAgentToolsTests
         Assert.False(write.Metadata.IsReadOnly);
         Assert.False(write.Metadata.IsConcurrencySafe);
         Assert.Equal(AgentToolResultPersistenceModes.Artifact, write.Metadata.ResultPersistence);
+
+        Assert.True(registry.TryGet(AgentToolNames.CodeSymbols, out var symbols));
+        Assert.True(symbols.Metadata.IsReadOnly);
+        Assert.True(symbols.Metadata.IsConcurrencySafe);
+
+        Assert.True(registry.TryGet(AgentToolNames.FileDelete, out var delete));
+        Assert.False(delete.Metadata.IsReadOnly);
+        Assert.True(delete.Metadata.IsDestructive);
 
         Assert.True(registry.TryGet(AgentToolNames.SandboxExec, out var shell));
         Assert.True(shell.Metadata.IsDestructive);
@@ -382,6 +495,29 @@ public class BuiltInAgentToolsTests
             JsonSerializer.Serialize(new { path = "src/hello.cs", backup_id = backupId, reason = "Undo test edit." }));
         Assert.True(rollbackResult.Success, rollbackResult.Error);
         Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(context.ChatId), "src", "hello.cs")));
+    }
+
+    [Fact]
+    public async Task CodeSymbolsListsDefinitionsAcrossLanguages()
+    {
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.CodeSymbols.Tests", Guid.NewGuid().ToString("N")));
+        var context = new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 12000);
+        var root = sandbox.GetSandboxRoot(context.ChatId);
+        Directory.CreateDirectory(Path.Combine(root, "src"));
+        await File.WriteAllTextAsync(Path.Combine(root, "src", "Alpha.cs"), "public class AlphaService\n{\n    public void Run() {}\n}\n");
+        await File.WriteAllTextAsync(Path.Combine(root, "src", "app.ts"), "export function renderApp() {}\nconst saveDraft = () => true;\n");
+        await File.WriteAllTextAsync(Path.Combine(root, "src", "worker.py"), "class Worker:\n    def run_job(self):\n        pass\n");
+        await File.WriteAllTextAsync(Path.Combine(root, "README.md"), "# Project\n## Usage\n");
+        var symbols = new CodeSymbolsAgentTool(sandbox);
+
+        var result = await symbols.ExecuteAsync(context, """{"path":".","max_results":20}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("Alpha.cs:1: class AlphaService", result.Output);
+        Assert.Contains("app.ts:1: function renderApp", result.Output);
+        Assert.Contains("worker.py:1: class Worker", result.Output);
+        Assert.Contains("README.md:1: heading1 Project", result.Output);
     }
 
     [Fact]
@@ -589,6 +725,14 @@ public class BuiltInAgentToolsTests
             """{"path":"../outside.txt","content":"bad"}""");
         Assert.True(blocked.IsBlocked);
         Assert.Equal(ToolSafetyLevels.Blocked, blocked.Level);
+
+        var delete = ToolSafetyKernel.Assess(
+            sandbox,
+            chatId,
+            AgentToolNames.FileDelete,
+            """{"path":"notes.txt"}""");
+        Assert.Equal(ToolSafetyLevels.High, delete.Level);
+        Assert.True(delete.IsWriteOperation);
     }
 
     [Fact]

@@ -14,7 +14,9 @@ public sealed partial class MessageInputControl : UserControl
 
     public MessageInputControl()
     {
+        App.Log("MessageInputControl ctor entered.");
         InitializeComponent();
+        App.Log("MessageInputControl XAML initialized.");
         RoleCombo.Items.Add("user");
         RoleCombo.Items.Add("system");
         RoleCombo.SelectionChanged += (_, _) =>

@@ -16,6 +16,10 @@ public static class AgentToolNames
     public const string FileWrite = "file_write";
     public const string FileSend = "file_send";
     public const string FileSearch = "file_search";
+    public const string FileInfo = "file_info";
+    public const string FileMkdir = "file_mkdir";
+    public const string FileMove = "file_move";
+    public const string FileDelete = "file_delete";
     public const string Git = "git";
     public const string HttpRequest = "http_request";
     public const string WebSearch = "web_search";
@@ -44,6 +48,7 @@ public static class AgentToolNames
     public const string CodeApplyPatch = "apply_patch";
     public const string CodeRollback = "rollback";
     public const string CodeDiagnostics = "lsp_diagnostics";
+    public const string CodeSymbols = "symbols";
 
     public static string Normalize(string name) =>
         string.Equals(name, LegacySandboxExec, StringComparison.OrdinalIgnoreCase)
@@ -129,6 +134,7 @@ public sealed record AgentToolMetadata(
             AgentToolNames.FileList or
             AgentToolNames.FileRead or
             AgentToolNames.FileSearch or
+            AgentToolNames.FileInfo or
             AgentToolNames.MemoryRead or
             AgentToolNames.CodeRead or
             AgentToolNames.CodeGrep or
@@ -138,7 +144,8 @@ public sealed record AgentToolMetadata(
             AgentToolNames.TaskOutput or
             AgentToolNames.ReadPersistedOutput or
             AgentToolNames.CodeDiff or
-            AgentToolNames.CodeDiagnostics => new(
+            AgentToolNames.CodeDiagnostics or
+            AgentToolNames.CodeSymbols => new(
                 normalized,
                 requiresApproval,
                 IsReadOnly: true,
@@ -194,6 +201,8 @@ public sealed record AgentToolMetadata(
                 AgentToolResultPersistenceModes.Artifact),
 
             AgentToolNames.FileWrite or
+            AgentToolNames.FileMkdir or
+            AgentToolNames.FileMove or
             AgentToolNames.MemoryWrite or
             AgentToolNames.TodoWrite or
             AgentToolNames.TaskCreate or
@@ -211,6 +220,16 @@ public sealed record AgentToolMetadata(
                 AgentToolRenderHints.File,
                 18_000,
                 AgentToolResultPersistenceModes.Artifact),
+
+            AgentToolNames.FileDelete => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: false,
+                IsConcurrencySafe: false,
+                IsDestructive: true,
+                AgentToolRenderHints.File,
+                12_000,
+                AgentToolResultPersistenceModes.Inline),
 
             AgentToolNames.Git => new(
                 normalized,
@@ -293,6 +312,10 @@ public static class AgentToolUx
             AgentToolNames.FileWrite => "Write file",
             AgentToolNames.FileSend => "Send file",
             AgentToolNames.FileSearch => "Search files",
+            AgentToolNames.FileInfo => "Inspect file",
+            AgentToolNames.FileMkdir => "Create folder",
+            AgentToolNames.FileMove => "Move file",
+            AgentToolNames.FileDelete => "Delete file",
             AgentToolNames.Git => "Git operation",
             AgentToolNames.HttpRequest => "HTTP request",
             AgentToolNames.WebSearch => "Web search",
@@ -321,6 +344,7 @@ public static class AgentToolUx
             AgentToolNames.CodeApplyPatch => "Apply patch",
             AgentToolNames.CodeRollback => "Rollback edit",
             AgentToolNames.CodeDiagnostics => "Run diagnostics",
+            AgentToolNames.CodeSymbols => "Find symbols",
             _ => normalized
         };
     }
@@ -336,10 +360,15 @@ public static class AgentToolUx
             AgentToolNames.FileWrite or AgentToolNames.CodeEdit or AgentToolNames.CodeMultiEdit => "Writing file",
             AgentToolNames.FileSend => "Preparing attachment",
             AgentToolNames.FileSearch or AgentToolNames.CodeGrep => "Searching text",
+            AgentToolNames.FileInfo => "Inspecting file metadata",
+            AgentToolNames.FileMkdir => "Creating folder",
+            AgentToolNames.FileMove => "Moving workspace path",
+            AgentToolNames.FileDelete => "Deleting workspace path",
             AgentToolNames.CodeDiff => "Building diff preview",
             AgentToolNames.CodeApplyPatch => "Applying patch",
             AgentToolNames.CodeRollback => "Restoring backup",
             AgentToolNames.CodeDiagnostics => "Checking diagnostics",
+            AgentToolNames.CodeSymbols => "Indexing code symbols",
             AgentToolNames.Git => "Running Git",
             AgentToolNames.HttpRequest => "Calling HTTP endpoint",
             AgentToolNames.WebSearch => "Searching the web",

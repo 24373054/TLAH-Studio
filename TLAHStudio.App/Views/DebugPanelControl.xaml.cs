@@ -21,7 +21,9 @@ public sealed partial class DebugPanelControl : UserControl
 
     public DebugPanelControl()
     {
+        App.Log("DebugPanelControl ctor entered.");
         InitializeComponent();
+        App.Log("DebugPanelControl XAML initialized.");
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         ActualThemeChanged += (_, _) =>

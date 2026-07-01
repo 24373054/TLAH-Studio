@@ -187,10 +187,89 @@ try {
         }
     }
 
-    Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.App" -Arguments @("build", $appProject, "-c", "Release", "-p:Platform=x64", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
-    Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.Updater" -Arguments @("build", $updaterProject, "-c", "Release", "-p:Platform=x64", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
+    function Test-AppPublishXamlResources {
+        param([Parameter(Mandatory = $true)][string]$PublishDir)
+
+        foreach ($requiredFile in @(
+            "App.xbf",
+            "MainWindow.xbf",
+            "TLAHStudio.App.pri",
+            "Views\SidebarPage.xbf",
+            "Views\ChatPage.xbf",
+            "Views\MessageInputControl.xbf"
+        )) {
+            $path = Join-Path $PublishDir $requiredFile
+            if (-not (Test-Path -LiteralPath $path)) {
+                throw "Published app is missing required WinUI XAML resource: $path"
+            }
+        }
+    }
+
+    function Invoke-AppPublishStartupSmoke {
+        param([Parameter(Mandatory = $true)][string]$PublishDir)
+
+        $exe = Join-Path $PublishDir "TLAHStudio.App.exe"
+        if (-not (Test-Path -LiteralPath $exe)) {
+            throw "Published app executable was not found: $exe"
+        }
+
+        $logDir = Join-Path $env:LOCALAPPDATA "TLAH Studio\logs"
+        $logPath = Join-Path $logDir "startup.log"
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+        if (Test-Path -LiteralPath $logPath) {
+            Remove-Item -LiteralPath $logPath -Force
+        }
+
+        $process = Start-Process -FilePath $exe -WorkingDirectory $PublishDir -WindowStyle Hidden -PassThru
+        try {
+            $deadline = (Get-Date).AddSeconds(15)
+            while ((Get-Date) -lt $deadline) {
+                $logText = if (Test-Path -LiteralPath $logPath) {
+                    Get-Content -LiteralPath $logPath -Raw -ErrorAction SilentlyContinue
+                }
+                else {
+                    ""
+                }
+
+                if ($logText -match "Window activated\.") {
+                    Write-Host "Published app startup smoke passed."
+                    return
+                }
+
+                if ($logText -match "FATAL:" -or $logText -match "UNHANDLED XAML") {
+                    throw "Published app startup smoke failed before activation.`n$logText"
+                }
+
+                if ($process.HasExited) {
+                    throw "Published app exited before activation with code $($process.ExitCode).`n$logText"
+                }
+
+                Start-Sleep -Milliseconds 500
+            }
+
+            $lastLog = if (Test-Path -LiteralPath $logPath) {
+                Get-Content -LiteralPath $logPath -Raw -ErrorAction SilentlyContinue
+            }
+            else {
+                ""
+            }
+            throw "Published app did not activate within 15 seconds.`n$lastLog"
+        }
+        finally {
+            if (-not $process.HasExited) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.App" -Arguments @("publish", $appProject, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-p:Platform=x64", "-p:WindowsAppSDKSelfContained=true", "-p:PublishSingleFile=false", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
     Invoke-DotnetWithRetry -ProjectDir ".\TLAHStudio.Updater" -Arguments @("publish", $updaterProject, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-p:Platform=x64", "-p:PublishSingleFile=true", "-p:IncludeNativeLibrariesForSelfExtract=true", "-p:EnableCompressionInSingleFile=true", "-p:UseSharedCompilation=false", "-p:BuildInParallel=false", "-m:1", "-nr:false")
+
+    $appPublishDir = ".\TLAHStudio.App\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\publish"
+    Test-AppPublishXamlResources -PublishDir $appPublishDir
+    if (-not $SkipSmokeTest) {
+        Invoke-AppPublishStartupSmoke -PublishDir $appPublishDir
+    }
 
     $hasCertificate = $CertificatePath -or $CertificateThumbprint
     if ($hasCertificate) {

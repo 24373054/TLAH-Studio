@@ -21,7 +21,9 @@ public sealed partial class AgentActivityPanelControl : UserControl
 
     public AgentActivityPanelControl()
     {
+        App.Log("AgentActivityPanelControl ctor entered.");
         InitializeComponent();
+        App.Log("AgentActivityPanelControl XAML initialized.");
         ActualThemeChanged += (_, _) => RequestRender(immediate: true);
     }
 

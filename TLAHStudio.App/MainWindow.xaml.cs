@@ -74,7 +74,9 @@ public sealed partial class MainWindow : Window
         UpdateNotificationVM = uv; ThemeService = ts; BackgroundService = bg;
         UiDensityService = density; SoundService = sound; AppReleaseService = release; SandboxCommandService = sandbox;
 
+        App.Log("MainWindow ctor entered.");
         this.InitializeComponent();
+        App.Log("MainWindow XAML initialized.");
 
         DebugPanelView.Bind(DebugVM);
         ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService, SandboxCommandService, SoundService);

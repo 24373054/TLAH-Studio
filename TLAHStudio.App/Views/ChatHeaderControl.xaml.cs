@@ -12,7 +12,9 @@ public sealed partial class ChatHeaderControl : UserControl
 
     public ChatHeaderControl()
     {
+        App.Log("ChatHeaderControl ctor entered.");
         InitializeComponent();
+        App.Log("ChatHeaderControl XAML initialized.");
         Loaded += OnLoaded;
     }
 

@@ -96,6 +96,10 @@ public class LlmService : ILlmService
                 new FileWriteAgentTool(_sandboxCommandService, _toolPlatform),
                 new FileSendAgentTool(_sandboxCommandService),
                 new FileSearchAgentTool(_sandboxCommandService, _toolPlatform),
+                new FileInfoAgentTool(_sandboxCommandService),
+                new FileMkdirAgentTool(_sandboxCommandService),
+                new FileMoveAgentTool(_sandboxCommandService),
+                new FileDeleteAgentTool(_sandboxCommandService),
                 new GitAgentTool(_sandboxCommandService),
                 new HttpRequestAgentTool(_toolPlatform, network, httpClientFactory),
                 new WebSearchAgentTool(_toolPlatform, network, httpClientFactory),
@@ -114,7 +118,8 @@ public class LlmService : ILlmService
                 new CodeDiffAgentTool(_sandboxCommandService),
                 new CodeApplyPatchAgentTool(_sandboxCommandService),
                 new CodeRollbackAgentTool(_sandboxCommandService),
-                new CodeDiagnosticsAgentTool(_sandboxCommandService)
+                new CodeDiagnosticsAgentTool(_sandboxCommandService),
+                new CodeSymbolsAgentTool(_sandboxCommandService)
             ]);
         }
         _agentEventStream = agentEventStream ?? new AgentEventStream(db);
@@ -2467,9 +2472,9 @@ public class LlmService : ILlmService
         builder.AppendLine($"Sandbox working directory: {sandboxRoot}");
         builder.AppendLine("Work only inside the sandbox directory. Never read host user files or attempt destructive, privileged, registry, service, shutdown, or system-configuration operations.");
         builder.AppendLine($"Use {AgentToolNames.MemoryRead} and {AgentToolNames.MemoryWrite} for stable project facts, preferences, and recurring instructions. Write memory only for information that should persist.");
-        builder.AppendLine($"For development work, prefer {AgentToolNames.CodeRead}, {AgentToolNames.CodeGrep}, {AgentToolNames.CodeGlob}, {AgentToolNames.CodeDiff}, {AgentToolNames.CodeEdit}, {AgentToolNames.CodeMultiEdit}, {AgentToolNames.CodeApplyPatch}, {AgentToolNames.CodeRollback}, and {AgentToolNames.CodeDiagnostics} before terminal commands.");
+        builder.AppendLine($"For development work, prefer {AgentToolNames.CodeRead}, {AgentToolNames.CodeGrep}, {AgentToolNames.CodeGlob}, {AgentToolNames.CodeSymbols}, {AgentToolNames.CodeDiff}, {AgentToolNames.CodeEdit}, {AgentToolNames.CodeMultiEdit}, {AgentToolNames.CodeApplyPatch}, {AgentToolNames.CodeRollback}, and {AgentToolNames.CodeDiagnostics} before terminal commands.");
         builder.AppendLine("Use diff or diagnostics before risky code changes, and mention rollback backup ids when an edit returns them.");
-        builder.AppendLine($"Prefer {AgentToolNames.FileList}, {AgentToolNames.FileRead}, {AgentToolNames.FileWrite}, {AgentToolNames.FileSend}, and {AgentToolNames.FileSearch} over terminal commands for file work.");
+        builder.AppendLine($"Prefer {AgentToolNames.FileList}, {AgentToolNames.FileInfo}, {AgentToolNames.FileRead}, {AgentToolNames.FileSearch}, {AgentToolNames.FileWrite}, {AgentToolNames.FileMkdir}, {AgentToolNames.FileMove}, {AgentToolNames.FileDelete}, and {AgentToolNames.FileSend} over terminal commands for file work.");
         builder.AppendLine($"When you create a file the user should see, preview, download, or use outside the sandbox, call {AgentToolNames.FileSend} with the relative sandbox path before giving the final answer.");
         builder.AppendLine($"Use {AgentToolNames.TerminalExec} only when a typed tool cannot complete the task. Use {AgentToolNames.McpListTools} before {AgentToolNames.McpCall}, and {AgentToolNames.McpListResources} before {AgentToolNames.McpReadResource}.");
         builder.AppendLine("Network requests are limited to configured public-domain allowlists. Credentials can only be referenced by broker entry name and must never be requested, printed, or stored.");

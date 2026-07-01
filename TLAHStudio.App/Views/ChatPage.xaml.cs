@@ -38,7 +38,9 @@ public sealed partial class ChatPage : UserControl
 
     public ChatPage()
     {
+        App.Log("ChatPage ctor entered.");
         InitializeComponent();
+        App.Log("ChatPage XAML initialized.");
         ActualThemeChanged += (_, _) =>
         {
             InvalidateMessageCache();

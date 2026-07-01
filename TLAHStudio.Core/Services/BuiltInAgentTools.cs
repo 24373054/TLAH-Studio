@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
+using TLAHStudio.Core.Models;
 
 namespace TLAHStudio.Core.Services;
 
@@ -423,6 +424,353 @@ public sealed class FileSendAgentTool : IAgentTool
     }
 }
 
+public sealed class FileInfoAgentTool : IAgentTool
+{
+    private readonly ISandboxCommandService _sandbox;
+
+    public FileInfoAgentTool(ISandboxCommandService sandbox)
+    {
+        _sandbox = sandbox;
+    }
+
+    public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
+        AgentToolNames.FileInfo,
+        "Inspect a sandbox file or directory: existence, kind, size, content type, SHA256, text encoding, newline style, and child counts.",
+        new Dictionary<string, object>
+        {
+            ["path"] = AgentToolSupport.StringProperty("Relative file or directory path inside the current chat sandbox.")
+        },
+        ["path"]);
+
+    public bool RequiresApproval => true;
+
+    public async Task<AgentToolResult> ExecuteAsync(
+        AgentToolExecutionContext context,
+        string argumentsJson,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+                return new AgentToolResult(false, string.Empty, error);
+
+            var fullPath = AgentToolSupport.ResolveSandboxPath(
+                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+            var sandboxRoot = _sandbox.GetSandboxRoot(context.ChatId);
+            var relative = Path.GetRelativePath(sandboxRoot, fullPath);
+            if (File.Exists(fullPath))
+            {
+                var info = new FileInfo(fullPath);
+                await using var stream = File.OpenRead(fullPath);
+                var sha = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+                var textInfo = string.Empty;
+                if (IsLikelyTextFile(fullPath) && info.Length <= 512 * 1024)
+                {
+                    var snapshot = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(fullPath, ct);
+                    textInfo = $"""
+                        Encoding: {snapshot.Encoding.WebName}{(snapshot.HasBom ? " with BOM" : string.Empty)}
+                        Newline: {WorkspaceCodeToolSupport.DisplayNewLine(snapshot.NewLine)}
+                        Lines: {WorkspaceCodeToolSupport.SplitLines(snapshot.Content).Length}
+                        """;
+                }
+
+                var output = $"""
+                    Path: {relative}
+                    Exists: True
+                    Kind: file
+                    Size bytes: {info.Length}
+                    Content type: {AgentToolSupport.ContentType(fullPath)}
+                    SHA256: {sha}
+                    Last write UTC: {info.LastWriteTimeUtc:O}
+                    {textInfo}
+                    """;
+                return new AgentToolResult(true, AgentToolSupport.Limit(output.TrimEnd(), context.MaxOutputChars));
+            }
+
+            if (Directory.Exists(fullPath))
+            {
+                var directory = new DirectoryInfo(fullPath);
+                var childFiles = 0;
+                var childDirs = 0;
+                foreach (var entry in Directory.EnumerateFileSystemEntries(fullPath, "*", SearchOption.TopDirectoryOnly))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (Directory.Exists(entry))
+                        childDirs++;
+                    else
+                        childFiles++;
+                }
+
+                var output = $"""
+                    Path: {relative}
+                    Exists: True
+                    Kind: directory
+                    Child files: {childFiles}
+                    Child directories: {childDirs}
+                    Last write UTC: {directory.LastWriteTimeUtc:O}
+                    """;
+                return new AgentToolResult(true, AgentToolSupport.Limit(output.TrimEnd(), context.MaxOutputChars));
+            }
+
+            return new AgentToolResult(
+                true,
+                $"Path: {relative}{Environment.NewLine}Exists: False");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AgentToolResult(false, string.Empty, ex.Message);
+        }
+    }
+
+    private static bool IsLikelyTextFile(string path)
+    {
+        var contentType = AgentToolSupport.ContentType(path);
+        if (contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) ||
+            contentType is "application/json" or "image/svg+xml")
+        {
+            return true;
+        }
+
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        return extension is ".csproj" or ".sln" or ".props" or ".targets" or ".config" or ".yaml" or ".yml" or ".toml";
+    }
+}
+
+public sealed class FileMkdirAgentTool : IAgentTool
+{
+    private readonly ISandboxCommandService _sandbox;
+
+    public FileMkdirAgentTool(ISandboxCommandService sandbox)
+    {
+        _sandbox = sandbox;
+    }
+
+    public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
+        AgentToolNames.FileMkdir,
+        "Create a directory inside the current chat sandbox. Parent directories are created automatically.",
+        new Dictionary<string, object>
+        {
+            ["path"] = AgentToolSupport.StringProperty("Relative directory path inside the sandbox.")
+        },
+        ["path"]);
+
+    public bool RequiresApproval => true;
+
+    public Task<AgentToolResult> ExecuteAsync(
+        AgentToolExecutionContext context,
+        string argumentsJson,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+                return Task.FromResult(new AgentToolResult(false, string.Empty, error));
+            var path = AgentToolSupport.ResolveSandboxPath(
+                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+            Directory.CreateDirectory(path);
+            var relative = Path.GetRelativePath(_sandbox.GetSandboxRoot(context.ChatId), path);
+            return Task.FromResult(new AgentToolResult(true, $"Created directory {relative}."));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Task.FromResult(new AgentToolResult(false, string.Empty, ex.Message));
+        }
+    }
+}
+
+public sealed class FileMoveAgentTool : IAgentTool
+{
+    private readonly ISandboxCommandService _sandbox;
+
+    public FileMoveAgentTool(ISandboxCommandService sandbox)
+    {
+        _sandbox = sandbox;
+    }
+
+    public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
+        AgentToolNames.FileMove,
+        "Move or copy a file or directory inside the current chat sandbox without shell commands.",
+        new Dictionary<string, object>
+        {
+            ["from_path"] = AgentToolSupport.StringProperty("Relative source path inside the sandbox."),
+            ["to_path"] = AgentToolSupport.StringProperty("Relative destination path inside the sandbox."),
+            ["mode"] = new Dictionary<string, object>
+            {
+                ["type"] = "string",
+                ["enum"] = new[] { "move", "copy" },
+                ["description"] = "Use move to rename/relocate, or copy to duplicate."
+            },
+            ["overwrite"] = AgentToolSupport.BooleanProperty("Overwrite an existing destination file. Directory copy may merge and overwrite files.")
+        },
+        ["from_path", "to_path"]);
+
+    public async Task<AgentToolResult> ExecuteAsync(
+        AgentToolExecutionContext context,
+        string argumentsJson,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+                return new AgentToolResult(false, string.Empty, error);
+            var source = AgentToolSupport.ResolveSandboxPath(
+                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "from_path"));
+            var destination = AgentToolSupport.ResolveSandboxPath(
+                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "to_path"));
+            var mode = AgentToolSupport.GetString(root, "mode", "move").Trim().ToLowerInvariant();
+            var overwrite = root.TryGetProperty("overwrite", out var overwriteValue) &&
+                            overwriteValue.ValueKind == JsonValueKind.True;
+            if (mode is not ("move" or "copy"))
+                return new AgentToolResult(false, string.Empty, "mode must be move or copy.");
+            if (!File.Exists(source) && !Directory.Exists(source))
+                return new AgentToolResult(false, string.Empty, "Source path was not found.");
+            if (source.Equals(destination, StringComparison.OrdinalIgnoreCase))
+                return new AgentToolResult(false, string.Empty, "Source and destination are the same path.");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            var sourceIsDirectory = Directory.Exists(source);
+            if (!sourceIsDirectory)
+            {
+                if (mode == "copy")
+                    File.Copy(source, destination, overwrite);
+                else
+                    File.Move(source, destination, overwrite);
+            }
+            else if (mode == "move")
+            {
+                if (File.Exists(destination) || Directory.Exists(destination))
+                    return new AgentToolResult(false, string.Empty, "Directory move cannot overwrite an existing destination.");
+                Directory.Move(source, destination);
+            }
+            else
+            {
+                if (Directory.Exists(destination) && !overwrite)
+                    return new AgentToolResult(false, string.Empty, "Directory copy destination already exists. Set overwrite to true to merge and overwrite files.");
+                await CopyDirectoryAsync(source, destination, overwrite, ct);
+            }
+
+            var sandboxRoot = _sandbox.GetSandboxRoot(context.ChatId);
+            var artifacts = new List<AgentToolArtifact>();
+            if (File.Exists(destination))
+                artifacts.Add(await AgentToolSupport.ArtifactAsync(sandboxRoot, destination, ct));
+            var verb = mode == "copy" ? "Copied" : "Moved";
+            var output = $"{verb} {Path.GetRelativePath(sandboxRoot, source)} to {Path.GetRelativePath(sandboxRoot, destination)}.";
+            return new AgentToolResult(true, output, Artifacts: artifacts);
+        }
+        catch (IOException ex)
+        {
+            return new AgentToolResult(false, string.Empty, ex.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AgentToolResult(false, string.Empty, ex.Message);
+        }
+    }
+
+    public bool RequiresApproval => true;
+
+    private static async Task CopyDirectoryAsync(string source, string destination, bool overwrite, CancellationToken ct)
+    {
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            ct.ThrowIfCancellationRequested();
+            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
+        }
+
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            ct.ThrowIfCancellationRequested();
+            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            await using var sourceStream = File.OpenRead(file);
+            await using var targetStream = overwrite
+                ? File.Create(target)
+                : new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            await sourceStream.CopyToAsync(targetStream, ct);
+        }
+    }
+}
+
+public sealed class FileDeleteAgentTool : IAgentTool
+{
+    private readonly ISandboxCommandService _sandbox;
+
+    public FileDeleteAgentTool(ISandboxCommandService sandbox)
+    {
+        _sandbox = sandbox;
+    }
+
+    public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
+        AgentToolNames.FileDelete,
+        "Delete a file or directory inside the current chat sandbox. Recursive directory deletion must be requested explicitly.",
+        new Dictionary<string, object>
+        {
+            ["path"] = AgentToolSupport.StringProperty("Relative file or directory path inside the sandbox."),
+            ["recursive"] = AgentToolSupport.BooleanProperty("Delete directory contents recursively.")
+        },
+        ["path"]);
+
+    public bool RequiresApproval => true;
+
+    public Task<AgentToolResult> ExecuteAsync(
+        AgentToolExecutionContext context,
+        string argumentsJson,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+                return Task.FromResult(new AgentToolResult(false, string.Empty, error));
+            var path = AgentToolSupport.ResolveSandboxPath(
+                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+            var sandboxRoot = Path.GetFullPath(_sandbox.GetSandboxRoot(context.ChatId))
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var normalizedPath = Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (normalizedPath.Equals(sandboxRoot, StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new AgentToolResult(false, string.Empty, "Deleting the sandbox root is blocked."));
+
+            var relative = Path.GetRelativePath(sandboxRoot, path);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                return Task.FromResult(new AgentToolResult(true, $"Deleted file {relative}."));
+            }
+
+            if (!Directory.Exists(path))
+                return Task.FromResult(new AgentToolResult(true, $"Path {relative} did not exist."));
+
+            var recursive = root.TryGetProperty("recursive", out var recursiveValue) &&
+                            recursiveValue.ValueKind == JsonValueKind.True;
+            var counts = CountDirectory(path);
+            Directory.Delete(path, recursive);
+            return Task.FromResult(new AgentToolResult(
+                true,
+                $"Deleted directory {relative}. Files: {counts.Files}. Directories: {counts.Directories}. Recursive: {recursive}."));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Task.FromResult(new AgentToolResult(false, string.Empty, ex.Message));
+        }
+    }
+
+    private static (int Files, int Directories) CountDirectory(string path)
+    {
+        var files = 0;
+        var directories = 0;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*", SearchOption.AllDirectories))
+        {
+            if (Directory.Exists(entry))
+                directories++;
+            else
+                files++;
+        }
+
+        return (files, directories);
+    }
+}
+
 public sealed class FileSearchAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
@@ -436,12 +784,16 @@ public sealed class FileSearchAgentTool : IAgentTool
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
         AgentToolNames.FileSearch,
-        "Search filenames and UTF-8 text content inside the current chat sandbox.",
+        "Search filenames and UTF-8 text content inside the current chat sandbox using literal text or regex.",
         new Dictionary<string, object>
         {
-            ["query"] = AgentToolSupport.StringProperty("Case-insensitive search text."),
-            ["path"] = AgentToolSupport.StringProperty("Relative directory path. Defaults to the sandbox root."),
-            ["glob"] = AgentToolSupport.StringProperty("Optional filename pattern such as *.cs.")
+            ["query"] = AgentToolSupport.StringProperty("Text or regex to search for."),
+            ["path"] = AgentToolSupport.StringProperty("Relative file or directory path. Defaults to the sandbox root."),
+            ["glob"] = AgentToolSupport.StringProperty("Optional filename pattern such as *.cs."),
+            ["regex"] = AgentToolSupport.BooleanProperty("Treat query as a .NET regular expression."),
+            ["case_sensitive"] = AgentToolSupport.BooleanProperty("Use case-sensitive matching."),
+            ["max_results"] = new Dictionary<string, object> { ["type"] = "integer", ["description"] = "Maximum matches to return." },
+            ["include_binary"] = AgentToolSupport.BooleanProperty("Attempt to search binary-looking files. Defaults to false.")
         },
         ["query"]);
 
@@ -459,17 +811,48 @@ public sealed class FileSearchAgentTool : IAgentTool
             var query = AgentToolSupport.GetString(root, "query");
             if (string.IsNullOrWhiteSpace(query))
                 return new AgentToolResult(false, string.Empty, "The query argument is required.");
-            var directory = AgentToolSupport.ResolveSandboxPath(
+            var start = AgentToolSupport.ResolveSandboxPath(
                 _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path", "."));
             var glob = AgentToolSupport.GetString(root, "glob", "*");
+            var useRegex = root.TryGetProperty("regex", out var regexValue) &&
+                           regexValue.ValueKind == JsonValueKind.True;
+            var caseSensitive = root.TryGetProperty("case_sensitive", out var caseValue) &&
+                                caseValue.ValueKind == JsonValueKind.True;
+            var includeBinary = root.TryGetProperty("include_binary", out var binaryValue) &&
+                                binaryValue.ValueKind == JsonValueKind.True;
+            var maxResults = Math.Clamp(ReadInt(root, "max_results", 200), 1, 2000);
+            Regex? regex = null;
+            if (useRegex)
+            {
+                try
+                {
+                    regex = new Regex(
+                        query,
+                        RegexOptions.CultureInvariant | (caseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase),
+                        TimeSpan.FromSeconds(2));
+                }
+                catch (ArgumentException ex)
+                {
+                    return new AgentToolResult(false, string.Empty, $"Invalid regex: {ex.Message}");
+                }
+            }
+
             var settings = await _platform.GetSettingsAsync(ct);
             var sandboxRoot = _sandbox.GetSandboxRoot(context.ChatId);
+            var files = EnumerateSearchFiles(start, glob, ct).Take(10_000);
             var matches = new List<string>();
-            foreach (var file in Directory.EnumerateFiles(directory, glob, SearchOption.AllDirectories).Take(500))
+            var comparison = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+            foreach (var file in files)
             {
                 ct.ThrowIfCancellationRequested();
+                if (WorkspaceCodeToolSupport.ShouldSkipPath(file))
+                    continue;
+                if (!includeBinary && IsProbablyBinary(file))
+                    continue;
+
                 var relative = Path.GetRelativePath(sandboxRoot, file);
-                if (relative.Contains(query, StringComparison.OrdinalIgnoreCase))
+                var normalizedRelative = relative.Replace('\\', '/');
+                if (Matches(normalizedRelative, query, regex, comparison))
                     matches.Add($"{relative}: filename match");
                 var info = new FileInfo(file);
                 if (info.Length == 0 || info.Length > settings.MaxFileBytes)
@@ -477,13 +860,13 @@ public sealed class FileSearchAgentTool : IAgentTool
                 string content;
                 try { content = await File.ReadAllTextAsync(file, ct); }
                 catch { continue; }
-                var lines = content.Split('\n');
-                for (var i = 0; i < lines.Length && matches.Count < 200; i++)
+                var lines = WorkspaceCodeToolSupport.SplitLines(content);
+                for (var i = 0; i < lines.Length && matches.Count < maxResults; i++)
                 {
-                    if (lines[i].Contains(query, StringComparison.OrdinalIgnoreCase))
+                    if (Matches(lines[i], query, regex, comparison))
                         matches.Add($"{relative}:{i + 1}: {lines[i].Trim()}");
                 }
-                if (matches.Count >= 200)
+                if (matches.Count >= maxResults)
                     break;
             }
             return new AgentToolResult(
@@ -497,6 +880,49 @@ public sealed class FileSearchAgentTool : IAgentTool
             return new AgentToolResult(false, string.Empty, ex.Message);
         }
     }
+
+    private static bool Matches(string value, string query, Regex? regex, StringComparison comparison) =>
+        regex?.IsMatch(value) ?? value.Contains(query, comparison);
+
+    private static IEnumerable<string> EnumerateSearchFiles(string start, string glob, CancellationToken ct)
+    {
+        if (File.Exists(start))
+            return [start];
+        if (!Directory.Exists(start))
+            return [];
+
+        return EnumerateDirectory(start, glob, ct);
+    }
+
+    private static IEnumerable<string> EnumerateDirectory(string directory, string glob, CancellationToken ct)
+    {
+        foreach (var file in Directory.EnumerateFiles(directory, glob, SearchOption.TopDirectoryOnly))
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return file;
+        }
+
+        foreach (var child in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (WorkspaceCodeToolSupport.ShouldSkipPath(child))
+                continue;
+            foreach (var file in EnumerateDirectory(child, glob, ct))
+                yield return file;
+        }
+    }
+
+    private static bool IsProbablyBinary(string path)
+    {
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        return extension is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".ico" or
+            ".zip" or ".7z" or ".rar" or ".dll" or ".exe" or ".pdb" or ".mp3" or ".mp4" or ".pdf";
+    }
+
+    private static int ReadInt(JsonElement root, string name, int fallback) =>
+        root.TryGetProperty(name, out var value) && value.TryGetInt32(out var number)
+            ? number
+            : fallback;
 }
 
 public sealed class GitAgentTool : IAgentTool
@@ -735,7 +1161,8 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         new Dictionary<string, object>
         {
             ["query"] = AgentToolSupport.StringProperty("Search query."),
-            ["reason"] = AgentToolSupport.StringProperty("Why web search is needed.")
+            ["reason"] = AgentToolSupport.StringProperty("Why web search is needed."),
+            ["max_results"] = new Dictionary<string, object> { ["type"] = "integer", ["description"] = "Maximum search results to return." }
         },
         ["query"]);
 
@@ -755,29 +1182,36 @@ public sealed partial class WebSearchAgentTool : IAgentTool
                 return new AgentToolResult(false, string.Empty, "The query argument is required.");
             var settings = await _platform.GetSettingsAsync(ct);
             var client = _httpClientFactory.CreateClient("Tools");
-            var output = string.Empty;
             var lastStatus = HttpStatusCode.OK;
+            var lastUri = string.Empty;
+            var diagnostics = new List<string>();
+            var maxResults = Math.Clamp(ReadInt(root, "max_results", 8), 1, 20);
 
             foreach (var searchUrl in BuildSearchUrls(query))
             {
                 var uri = await _network.ValidateAsync(searchUrl, settings, ct);
-                using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 TLAHStudio/1.4");
-                request.Headers.Accept.ParseAdd("text/html");
-                using var response = await client.SendAsync(request, ct);
-                lastStatus = response.StatusCode;
-                var html = await response.Content.ReadAsStringAsync(ct);
-                output = FormatResults(ParseResults(html), context.MaxOutputChars);
-                if (response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(output))
+                var fetched = await FetchSearchPageAsync(client, uri, settings, ct);
+                lastStatus = fetched.StatusCode;
+                lastUri = fetched.FinalUri.ToString();
+                diagnostics.Add($"{(int)fetched.StatusCode} {fetched.FinalUri}");
+                var output = FormatResults(ParseResults(fetched.Html, maxResults), context.MaxOutputChars);
+                if (fetched.IsSuccess && !string.IsNullOrWhiteSpace(output))
                     return new AgentToolResult(true, output);
+            }
+
+            if (lastStatus is >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices)
+            {
+                return new AgentToolResult(
+                    true,
+                    AgentToolSupport.Limit(
+                        $"No search results were parsed for \"{query}\".\nFetched: {lastUri}\nAttempts:\n- {string.Join("\n- ", diagnostics)}",
+                        context.MaxOutputChars));
             }
 
             return new AgentToolResult(
                 false,
                 string.Empty,
-                lastStatus is >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices
-                    ? "No search results were parsed."
-                    : $"Search returned HTTP {(int)lastStatus}.");
+                $"Search returned HTTP {(int)lastStatus}. Attempts: {string.Join("; ", diagnostics)}");
         }
         catch (Exception ex)
         {
@@ -792,7 +1226,43 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         yield return $"https://lite.duckduckgo.com/lite/?q={escaped}";
     }
 
-    private static IReadOnlyList<SearchResult> ParseResults(string html)
+    private async Task<SearchFetchResult> FetchSearchPageAsync(
+        HttpClient client,
+        Uri uri,
+        ToolPlatformSettings settings,
+        CancellationToken ct)
+    {
+        var current = uri;
+        for (var redirect = 0; redirect < 4; redirect++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, current);
+            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (compatible; TLAHStudio/4.1; +https://matrixlabs.cn)");
+            request.Headers.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (IsRedirect(response.StatusCode) && response.Headers.Location != null)
+            {
+                var next = response.Headers.Location.IsAbsoluteUri
+                    ? response.Headers.Location
+                    : new Uri(current, response.Headers.Location);
+                current = await _network.ValidateAsync(next.ToString(), settings, ct);
+                continue;
+            }
+
+            var html = await response.Content.ReadAsStringAsync(ct);
+            return new SearchFetchResult(response.StatusCode, current, response.IsSuccessStatusCode, html);
+        }
+
+        return new SearchFetchResult(HttpStatusCode.TooManyRequests, current, false, string.Empty);
+    }
+
+    private static bool IsRedirect(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.Moved or
+            HttpStatusCode.Redirect or
+            HttpStatusCode.RedirectMethod or
+            HttpStatusCode.TemporaryRedirect or
+            HttpStatusCode.PermanentRedirect;
+
+    private static IReadOnlyList<SearchResult> ParseResults(string html, int maxResults)
     {
         var results = new List<SearchResult>();
         var matches = ResultRegex().Matches(html).Cast<Match>().ToArray();
@@ -804,14 +1274,25 @@ public sealed partial class WebSearchAgentTool : IAgentTool
             var segment = html.Substring(segmentStart, Math.Max(0, segmentEnd - segmentStart));
             var snippet = SnippetRegex().Match(segment).Groups["snippet"].Value;
             AddResult(results, match.Groups["title"].Value, match.Groups["url"].Value, snippet);
-            if (results.Count >= 8)
+            if (results.Count >= maxResults)
                 return results;
         }
 
         foreach (Match match in LiteResultRegex().Matches(html).Cast<Match>())
         {
             AddResult(results, match.Groups["title"].Value, match.Groups["url"].Value, string.Empty);
-            if (results.Count >= 8)
+            if (results.Count >= maxResults)
+                return results;
+        }
+
+        foreach (Match match in AnchorRegex().Matches(html).Cast<Match>())
+        {
+            var href = match.Groups["url"].Value;
+            var normalizedUrl = NormalizeResultUrl(href);
+            if (!IsUsefulSearchResultUrl(normalizedUrl))
+                continue;
+            AddResult(results, match.Groups["title"].Value, href, FindNearbySnippet(html, match.Index + match.Length));
+            if (results.Count >= maxResults)
                 return results;
         }
 
@@ -846,6 +1327,9 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         var decoded = WebUtility.HtmlDecode(value).Trim();
         if (decoded.StartsWith("//", StringComparison.Ordinal))
             decoded = "https:" + decoded;
+        if (decoded.StartsWith("/l/", StringComparison.OrdinalIgnoreCase) ||
+            decoded.StartsWith("/html/", StringComparison.OrdinalIgnoreCase))
+            decoded = "https://duckduckgo.com" + decoded;
         if (Uri.TryCreate(decoded, UriKind.Absolute, out var uri))
         {
             var uddg = ReadQueryValue(uri.Query, "uddg");
@@ -854,6 +1338,30 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         }
 
         return decoded;
+    }
+
+    private static bool IsUsefulSearchResultUrl(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            return false;
+        if (uri.Scheme is not ("http" or "https"))
+            return false;
+        var host = uri.Host.ToLowerInvariant();
+        if (host.EndsWith("duckduckgo.com", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return !value.Contains("/y.js?", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FindNearbySnippet(string html, int start)
+    {
+        var length = Math.Min(800, Math.Max(0, html.Length - start));
+        if (length == 0)
+            return string.Empty;
+        var segment = html.Substring(start, length);
+        var snippet = SnippetRegex().Match(segment).Groups["snippet"].Value;
+        if (!string.IsNullOrWhiteSpace(snippet))
+            return snippet;
+        return CleanHtml(segment);
     }
 
     private static string? ReadQueryValue(string query, string name)
@@ -874,6 +1382,8 @@ public sealed partial class WebSearchAgentTool : IAgentTool
 
     private sealed record SearchResult(string Title, string Url, string Snippet);
 
+    private sealed record SearchFetchResult(HttpStatusCode StatusCode, Uri FinalUri, bool IsSuccess, string Html);
+
     [GeneratedRegex("""<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="(?<url>[^"]+)"[^>]*>(?<title>.*?)</a>""",
         RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex ResultRegex();
@@ -886,11 +1396,20 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex LiteResultRegex();
 
+    [GeneratedRegex("""<a[^>]+href=(?:"(?<url>[^"]+)"|'(?<url>[^']+)'|(?<url>[^\s>]+))[^>]*>(?<title>.*?)</a>""",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex AnchorRegex();
+
     [GeneratedRegex("<[^>]+>", RegexOptions.Singleline)]
     private static partial Regex TagRegex();
 
     [GeneratedRegex(@"\s+", RegexOptions.Singleline)]
     private static partial Regex WhitespaceRegex();
+
+    private static int ReadInt(JsonElement root, string name, int fallback) =>
+        root.TryGetProperty(name, out var value) && value.TryGetInt32(out var number)
+            ? number
+            : fallback;
 }
 
 public sealed partial class BrowserReadAgentTool : IAgentTool

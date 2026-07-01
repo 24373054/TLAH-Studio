@@ -24,6 +24,34 @@ function Invoke-Native {
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repo
 try {
+    function Clear-ProjectArtifacts {
+        param([Parameter(Mandatory = $true)][string]$ProjectDir)
+
+        foreach ($name in @("obj", "bin")) {
+            $path = Join-Path $ProjectDir $name
+            if (-not (Test-Path -LiteralPath $path)) {
+                continue
+            }
+            $resolved = (Resolve-Path -LiteralPath $path).Path
+            if (-not $resolved.StartsWith($repo.Path, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to delete outside repo: $resolved"
+            }
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+                try {
+                    Remove-Item -LiteralPath $resolved -Recurse -Force
+                    break
+                }
+                catch {
+                    if ($attempt -eq 3) {
+                        throw
+                    }
+                    & dotnet build-server shutdown | Out-Null
+                    Start-Sleep -Seconds $attempt
+                }
+            }
+        }
+    }
+
     if (-not $SkipRestore) {
         Invoke-Native dotnet @("restore", ".\TLAHStudio.sln")
     }
@@ -42,6 +70,7 @@ try {
 
     if (-not $SkipBuild) {
         & dotnet build-server shutdown
+        Clear-ProjectArtifacts -ProjectDir ".\TLAHStudio.App"
         Invoke-Native dotnet @(
             "build",
             ".\TLAHStudio.App\TLAHStudio.App.csproj",
@@ -51,9 +80,10 @@ try {
             "-p:UseSharedCompilation=false",
             "-p:BuildInParallel=false",
             "-m:1",
-            "-nr:false",
-            "--no-restore"
+            "-nr:false"
         )
+        & dotnet build-server shutdown
+        Clear-ProjectArtifacts -ProjectDir ".\TLAHStudio.Updater"
         Invoke-Native dotnet @(
             "build",
             ".\TLAHStudio.Updater\TLAHStudio.Updater.csproj",
@@ -63,8 +93,7 @@ try {
             "-p:UseSharedCompilation=false",
             "-p:BuildInParallel=false",
             "-m:1",
-            "-nr:false",
-            "--no-restore"
+            "-nr:false"
         )
     }
 

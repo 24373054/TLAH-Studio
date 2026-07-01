@@ -109,6 +109,10 @@ public partial class App : Application
             services.AddScoped<IAgentTool, FileWriteAgentTool>();
             services.AddScoped<IAgentTool, FileSendAgentTool>();
             services.AddScoped<IAgentTool, FileSearchAgentTool>();
+            services.AddScoped<IAgentTool, FileInfoAgentTool>();
+            services.AddScoped<IAgentTool, FileMkdirAgentTool>();
+            services.AddScoped<IAgentTool, FileMoveAgentTool>();
+            services.AddScoped<IAgentTool, FileDeleteAgentTool>();
             services.AddScoped<IAgentTool, GitAgentTool>();
             services.AddScoped<IAgentTool, HttpRequestAgentTool>();
             services.AddScoped<IAgentTool, WebSearchAgentTool>();
@@ -128,6 +132,7 @@ public partial class App : Application
             services.AddScoped<IAgentTool, CodeApplyPatchAgentTool>();
             services.AddScoped<IAgentTool, CodeRollbackAgentTool>();
             services.AddScoped<IAgentTool, CodeDiagnosticsAgentTool>();
+            services.AddScoped<IAgentTool, CodeSymbolsAgentTool>();
             services.AddScoped<IAgentToolRegistry, AgentToolRegistry>();
             services.AddScoped<IToolHookRegistry>(_ =>
             {
@@ -214,11 +219,15 @@ public partial class App : Application
     {
         try
         {
+            Log("OnLaunched entered.");
             using var scope = _host.Services.CreateScope();
+            Log("Initializing DB...");
             scope.ServiceProvider.GetRequiredService<TlahDbContext>().Initialize();
             Log("DB initialized.");
 
+            Log("Resolving MainWindow...");
             MainWindow = _host.Services.GetRequiredService<MainWindow>();
+            Log("MainWindow resolved.");
             MainWindow.Activate();
             Log("Window activated.");
 

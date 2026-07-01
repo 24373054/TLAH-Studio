@@ -1,14 +1,14 @@
 {
-  "version": "4.0.0",
+  "version": "4.1.1",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.0.0.exe",
-  "sha256": "764f4584f25cb285007b8d8b86e7900490efa7abbda1c64aaf58c1accd5ea450",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.1.1.exe",
+  "sha256": "a17a2e25f6662299604eecc35e3801b8d2cd4046f9ade5a75456497b9145c1b0",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "TLAH Studio 4.0.0 agent platform release.\n\nHighlights:\n- Promotes todos and tasks to first-class persisted agent objects with todo_write, task_create, task_update, and task_list.\n- Reworks the activity panel data contract into run summary, task list, and tool timeline, with task/background events persisted for replay.\n- Injects open task summaries, project memory, compacted context, changed files, recent commands, failures, questions, next actions, and persisted output references into each agent turn.\n- Adds read_persisted_output for large tool outputs stored under .tlah_context/tool-results.\n- Adds local background task foundations with task_output, task_stop, and task_send_message.\n- Adds tool_search plus expanded skill frontmatter for when_to_use, allowed_tools, model, paths, and hooks.\n- Adds MCP resource list/read support and local SDK run status/event JSONL endpoints.\n\nValidation:\n- Core regression tests cover task persistence, runtime task injection, persisted output reads, background task output/control, tool search, and MCP resources.",
+  "releaseNotes": "4.1.1 improves built-in tool capability and reliability: file info/mkdir/move/delete tools, stronger file search, code symbol discovery, resilient web search parsing, improved tool catalog discovery, and regression coverage.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.0.0",
+  "minSupportedVersion": "4.1.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 96969004
+  "installerSizeBytes": 96997628
 }

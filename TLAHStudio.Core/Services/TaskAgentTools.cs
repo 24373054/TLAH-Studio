@@ -317,29 +317,31 @@ public sealed class ToolSearchAgentTool : IAgentTool
 
         var query = TaskToolSchemas.GetString(root, "query").Trim();
         var limit = Math.Clamp(TaskToolSchemas.GetInt(root, "limit", 12), 1, 40);
-        var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var matches = ToolNames()
-            .Select(name => new
+        var terms = query.Split([' ', ',', ';', '/', '\\', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var matches = Catalog()
+            .Select(entry => new
             {
-                name,
-                display = AgentToolUx.UserFacingName(name),
-                activity = AgentToolUx.ActivityDescription(name),
-                meta = AgentToolMetadata.For(name, requiresApproval: false)
+                entry,
+                display = AgentToolUx.UserFacingName(entry.Name),
+                activity = AgentToolUx.ActivityDescription(entry.Name),
+                meta = AgentToolMetadata.For(entry.Name, requiresApproval: false)
             })
             .Select(item => new
             {
                 item,
-                score = Score(item.name, item.display, item.activity, terms)
+                score = Score(item.entry.Name, item.display, item.activity, item.entry.Category, item.entry.Aliases, terms)
             })
             .Where(x => x.score > 0 || string.IsNullOrWhiteSpace(query))
             .OrderByDescending(x => x.score)
-            .ThenBy(x => x.item.name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.item.entry.Name, StringComparer.OrdinalIgnoreCase)
             .Take(limit)
             .Select(x => new
             {
-                x.item.name,
+                name = x.item.entry.Name,
                 x.item.display,
                 x.item.activity,
+                category = x.item.entry.Category,
+                aliases = x.item.entry.Aliases,
                 readOnly = x.item.meta.IsReadOnly,
                 x.item.meta.IsOpenWorld
             })
@@ -348,52 +350,66 @@ public sealed class ToolSearchAgentTool : IAgentTool
         return Task.FromResult(new AgentToolResult(true, JsonSerializer.Serialize(matches, new JsonSerializerOptions { WriteIndented = true })));
     }
 
-    private static int Score(string name, string display, string activity, string[] terms)
+    private static int Score(string name, string display, string activity, string category, string aliases, string[] terms)
     {
         if (terms.Length == 0)
             return 1;
-        var haystack = $"{name} {display} {activity}".ToLowerInvariant();
-        return terms.Sum(t => haystack.Contains(t.ToLowerInvariant()) ? 2 : 0) +
-               (terms.Any(t => name.Contains(t, StringComparison.OrdinalIgnoreCase)) ? 3 : 0);
+        var haystack = $"{name} {display} {activity} {category} {aliases}".ToLowerInvariant();
+        return terms.Sum(t =>
+        {
+            var term = t.ToLowerInvariant();
+            if (string.Equals(name, term, StringComparison.OrdinalIgnoreCase))
+                return 12;
+            if (name.Contains(term, StringComparison.OrdinalIgnoreCase))
+                return 6;
+            return haystack.Contains(term, StringComparison.Ordinal) ? 3 : 0;
+        });
     }
 
-    private static IReadOnlyList<string> ToolNames() =>
+    private static IReadOnlyList<ToolCatalogEntry> Catalog() =>
     [
-        AgentToolNames.ToolSearch,
-        AgentToolNames.TodoWrite,
-        AgentToolNames.TaskCreate,
-        AgentToolNames.TaskUpdate,
-        AgentToolNames.TaskList,
-        AgentToolNames.TaskOutput,
-        AgentToolNames.TaskStop,
-        AgentToolNames.TaskSendMessage,
-        AgentToolNames.ReadPersistedOutput,
-        AgentToolNames.FileList,
-        AgentToolNames.FileRead,
-        AgentToolNames.FileWrite,
-        AgentToolNames.FileSend,
-        AgentToolNames.FileSearch,
-        AgentToolNames.CodeRead,
-        AgentToolNames.CodeGrep,
-        AgentToolNames.CodeGlob,
-        AgentToolNames.CodeEdit,
-        AgentToolNames.CodeMultiEdit,
-        AgentToolNames.CodeDiff,
-        AgentToolNames.CodeApplyPatch,
-        AgentToolNames.CodeRollback,
-        AgentToolNames.CodeDiagnostics,
-        AgentToolNames.WebSearch,
-        AgentToolNames.BrowserRead,
-        AgentToolNames.HttpRequest,
-        AgentToolNames.McpListTools,
-        AgentToolNames.McpListResources,
-        AgentToolNames.McpReadResource,
-        AgentToolNames.McpCall,
-        AgentToolNames.MemoryRead,
-        AgentToolNames.MemoryWrite,
-        AgentToolNames.TerminalExec,
-        AgentToolNames.Git
+        new(AgentToolNames.ToolSearch, "catalog", "discover find available tools capability"),
+        new(AgentToolNames.TodoWrite, "planning", "todo checklist plan task status"),
+        new(AgentToolNames.TaskCreate, "background task", "subtask async worker long running"),
+        new(AgentToolNames.TaskUpdate, "background task", "task status title priority"),
+        new(AgentToolNames.TaskList, "background task", "list todos tasks"),
+        new(AgentToolNames.TaskOutput, "background task", "read background output logs"),
+        new(AgentToolNames.TaskStop, "background task", "cancel stop background"),
+        new(AgentToolNames.TaskSendMessage, "background task", "message ask background"),
+        new(AgentToolNames.ReadPersistedOutput, "context", "large output artifact persisted read"),
+        new(AgentToolNames.FileList, "file", "ls dir directory folder list"),
+        new(AgentToolNames.FileRead, "file", "cat open load text"),
+        new(AgentToolNames.FileWrite, "file", "create replace append save"),
+        new(AgentToolNames.FileSend, "file", "attach download preview deliver"),
+        new(AgentToolNames.FileSearch, "file", "search find grep regex content filename"),
+        new(AgentToolNames.FileInfo, "file", "stat metadata sha256 size encoding inspect"),
+        new(AgentToolNames.FileMkdir, "file", "mkdir create folder directory"),
+        new(AgentToolNames.FileMove, "file", "move copy rename relocate duplicate"),
+        new(AgentToolNames.FileDelete, "file", "delete remove rm erase cleanup"),
+        new(AgentToolNames.CodeRead, "code", "read source lines inspect"),
+        new(AgentToolNames.CodeGrep, "code", "grep search regex references"),
+        new(AgentToolNames.CodeGlob, "code", "glob find files paths"),
+        new(AgentToolNames.CodeSymbols, "code", "symbols outline class method function definitions"),
+        new(AgentToolNames.CodeEdit, "code", "edit replace exact change"),
+        new(AgentToolNames.CodeMultiEdit, "code", "multiple edits replacements"),
+        new(AgentToolNames.CodeDiff, "code", "diff preview compare"),
+        new(AgentToolNames.CodeApplyPatch, "code", "patch apply diff"),
+        new(AgentToolNames.CodeRollback, "code", "rollback restore backup undo"),
+        new(AgentToolNames.CodeDiagnostics, "code", "diagnostics lint build validate"),
+        new(AgentToolNames.WebSearch, "network", "internet search web google duckduckgo"),
+        new(AgentToolNames.BrowserRead, "network", "fetch page read url browser"),
+        new(AgentToolNames.HttpRequest, "network", "api rest http request"),
+        new(AgentToolNames.McpListTools, "mcp", "discover mcp tools"),
+        new(AgentToolNames.McpListResources, "mcp", "discover mcp resources"),
+        new(AgentToolNames.McpReadResource, "mcp", "read mcp resource"),
+        new(AgentToolNames.McpCall, "mcp", "call mcp server tool"),
+        new(AgentToolNames.MemoryRead, "memory", "project memory read"),
+        new(AgentToolNames.MemoryWrite, "memory", "project memory write save"),
+        new(AgentToolNames.TerminalExec, "command", "shell powershell command terminal"),
+        new(AgentToolNames.Git, "git", "status diff log commit branch")
     ];
+
+    private sealed record ToolCatalogEntry(string Name, string Category, string Aliases);
 }
 
 public sealed class TaskOutputAgentTool : IAgentTool

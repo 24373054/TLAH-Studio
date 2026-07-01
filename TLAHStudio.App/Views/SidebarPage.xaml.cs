@@ -20,11 +20,13 @@ public sealed partial class SidebarPage : UserControl
 
     public SidebarPage()
     {
+        App.Log("SidebarPage ctor entered.");
         _isCollapsed = string.Equals(
             LocalStore.Get(SidebarStateKey),
             "collapsed",
             StringComparison.OrdinalIgnoreCase);
         InitializeComponent();
+        App.Log("SidebarPage XAML initialized.");
         Loaded += OnLoaded;
     }
 

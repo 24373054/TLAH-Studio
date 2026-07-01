@@ -102,7 +102,11 @@ public static partial class ToolSafetyKernel
             AgentToolNames.FileList => AssessPathRead(sandbox, chatId, root, "file list"),
             AgentToolNames.FileRead => AssessPathRead(sandbox, chatId, root, "file read"),
             AgentToolNames.FileSearch => AssessPathRead(sandbox, chatId, root, "file search"),
+            AgentToolNames.FileInfo => AssessPathRead(sandbox, chatId, root, "file info"),
             AgentToolNames.FileWrite => AssessFileWrite(sandbox, chatId, root),
+            AgentToolNames.FileMkdir => AssessFileMkdir(sandbox, chatId, root),
+            AgentToolNames.FileMove => AssessFileMove(sandbox, chatId, root),
+            AgentToolNames.FileDelete => AssessFileDelete(sandbox, chatId, root),
             AgentToolNames.FileSend => AssessFileSend(sandbox, chatId, root),
             AgentToolNames.Git => AssessGit(root),
             AgentToolNames.HttpRequest => AssessHttp(root),
@@ -118,7 +122,8 @@ public static partial class ToolSafetyKernel
             AgentToolNames.CodeGrep or
             AgentToolNames.CodeGlob or
             AgentToolNames.CodeDiff or
-            AgentToolNames.CodeDiagnostics => AssessPathRead(sandbox, chatId, root, normalizedTool),
+            AgentToolNames.CodeDiagnostics or
+            AgentToolNames.CodeSymbols => AssessPathRead(sandbox, chatId, root, normalizedTool),
             AgentToolNames.CodeEdit or
             AgentToolNames.CodeMultiEdit => AssessCodeWrite(sandbox, chatId, root, normalizedTool),
             AgentToolNames.CodeApplyPatch => AssessCodePatch(sandbox, chatId, root),
@@ -290,6 +295,98 @@ public static partial class ToolSafetyKernel
                 exists,
                 sizeBytes,
                 caption
+            });
+    }
+
+    private static ToolSafetyAssessment AssessFileMkdir(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root)
+    {
+        var rawPath = ReadString(root, "path");
+        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        if (resolved.Error != null)
+            return ToolSafetyAssessment.Blocked("path", "Directory creation path escapes the chat sandbox.", resolved.Error);
+
+        return ToolSafetyAssessment.Medium(
+            "file_write",
+            isReadOnly: false,
+            isWrite: true,
+            $"Create sandbox directory {resolved.RelativePath}.",
+            new
+            {
+                path = resolved.RelativePath,
+                exists = Directory.Exists(resolved.FullPath)
+            });
+    }
+
+    private static ToolSafetyAssessment AssessFileMove(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root)
+    {
+        var from = ResolvePath(sandbox, chatId, ReadString(root, "from_path"));
+        if (from.Error != null)
+            return ToolSafetyAssessment.Blocked("path", "Source path escapes the chat sandbox.", from.Error);
+
+        var to = ResolvePath(sandbox, chatId, ReadString(root, "to_path"));
+        if (to.Error != null)
+            return ToolSafetyAssessment.Blocked("path", "Destination path escapes the chat sandbox.", to.Error);
+
+        var mode = ReadString(root, "mode", "move");
+        var overwrite = ReadBool(root, "overwrite");
+        return ToolSafetyAssessment.Medium(
+            "file_write",
+            isReadOnly: false,
+            isWrite: true,
+            $"{mode} sandbox path {from.RelativePath} to {to.RelativePath}.",
+            new
+            {
+                mode,
+                from = from.RelativePath,
+                to = to.RelativePath,
+                overwrite,
+                sourceExists = File.Exists(from.FullPath) || Directory.Exists(from.FullPath),
+                destinationExists = File.Exists(to.FullPath) || Directory.Exists(to.FullPath)
+            });
+    }
+
+    private static ToolSafetyAssessment AssessFileDelete(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root)
+    {
+        var rawPath = ReadString(root, "path");
+        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        if (resolved.Error != null)
+            return ToolSafetyAssessment.Blocked("path", "Delete path escapes the chat sandbox.", resolved.Error);
+
+        if (resolved.RelativePath is "." or "")
+        {
+            return ToolSafetyAssessment.Blocked(
+                "path",
+                "Deleting the sandbox root is blocked.",
+                "Choose a specific file or subdirectory.");
+        }
+
+        var recursive = ReadBool(root, "recursive");
+        var exists = File.Exists(resolved.FullPath) || Directory.Exists(resolved.FullPath);
+        var isDirectory = Directory.Exists(resolved.FullPath);
+        return ToolSafetyAssessment.High(
+            "file_delete",
+            isWrite: true,
+            exists
+                ? $"Delete sandbox {(isDirectory ? "directory" : "file")} {resolved.RelativePath}."
+                : $"Requested delete target {resolved.RelativePath} does not exist.",
+            recursive
+                ? "Recursive deletion can remove many files. Review the target carefully."
+                : "Deletion is irreversible unless another backup exists.",
+            new
+            {
+                path = resolved.RelativePath,
+                exists,
+                isDirectory,
+                recursive
             });
     }
 

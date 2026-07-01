@@ -167,10 +167,12 @@ public interface IProjectMemoryService
 public sealed class ProjectMemoryService : IProjectMemoryService
 {
     private readonly DbContext _db;
+    private readonly string _appDataRoot;
 
-    public ProjectMemoryService(DbContext db)
+    public ProjectMemoryService(DbContext db, string? appDataRoot = null)
     {
         _db = db;
+        _appDataRoot = ResolveAppDataRoot(appDataRoot);
     }
 
     public async Task<string> GetMemoryPathAsync(Guid chatId, CancellationToken ct = default)
@@ -178,8 +180,7 @@ public sealed class ProjectMemoryService : IProjectMemoryService
         var chat = await _db.Set<Chat>().FirstOrDefaultAsync(c => c.Id == chatId, ct);
         var projectId = chat?.ProjectSpaceId ?? Guid.Empty;
         var root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio",
+            _appDataRoot,
             "memory",
             projectId == Guid.Empty ? "personal" : projectId.ToString("D"));
         Directory.CreateDirectory(root);
@@ -198,7 +199,7 @@ public sealed class ProjectMemoryService : IProjectMemoryService
                 ct);
         }
 
-        return await File.ReadAllTextAsync(path, ct);
+        return await ReadAllTextSharedAsync(path, ct);
     }
 
     public async Task WriteAsync(
@@ -222,6 +223,33 @@ public sealed class ProjectMemoryService : IProjectMemoryService
         {
             await File.WriteAllTextAsync(path, content + Environment.NewLine, new UTF8Encoding(false), ct);
         }
+    }
+
+    private static string ResolveAppDataRoot(string? appDataRoot)
+    {
+        if (!string.IsNullOrWhiteSpace(appDataRoot))
+            return appDataRoot;
+
+        var overrideRoot = Environment.GetEnvironmentVariable("TLAH_STUDIO_APPDATA_ROOT");
+        if (!string.IsNullOrWhiteSpace(overrideRoot))
+            return overrideRoot;
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TLAH Studio");
+    }
+
+    private static async Task<string> ReadAllTextSharedAsync(string path, CancellationToken ct)
+    {
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 4096,
+            FileOptions.Asynchronous);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return await reader.ReadToEndAsync(ct);
     }
 }
 

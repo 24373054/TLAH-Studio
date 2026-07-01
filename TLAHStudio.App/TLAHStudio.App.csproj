@@ -21,10 +21,10 @@
     <Description>TLAH Studio native Windows client</Description>
     <Company>Beijing Ke Entropy Technology Co., Ltd.</Company>
     <Copyright>Copyright (C) 2026 Beijing Ke Entropy Technology Co., Ltd.</Copyright>
-    <Version>4.0.0</Version>
-    <FileVersion>4.0.0.0</FileVersion>
-    <AssemblyVersion>4.0.0.0</AssemblyVersion>
-    <InformationalVersion>4.0.0</InformationalVersion>
+    <Version>4.1.1</Version>
+    <FileVersion>4.1.1.0</FileVersion>
+    <AssemblyVersion>4.1.1.0</AssemblyVersion>
+    <InformationalVersion>4.1.1</InformationalVersion>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>
@@ -43,14 +43,17 @@
   <ItemGroup>
     <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
-  <!--    Extra guard for self-contained publish: copy generated XAML binaries if    the SDK leaves them in the intermediate output instead of PublishDir.  -->
-  <Target Name="CopyXamlResources" AfterTargets="Publish">
+  <Target Name="CopyAppXamlResourcesToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
     <ItemGroup>
-      <XamlFiles Include="$(OutputPath)**\*.xbf" Exclude="$(PublishDir)**\*.xbf" />
-      <PriFiles Include="$(OutputPath)**\*.pri" Exclude="$(PublishDir)**\*.pri" />
+      <AppXamlRootArtifacts Include="$(TargetDir)App.xbf" Condition="Exists('$(TargetDir)App.xbf')" />
+      <AppXamlRootArtifacts Include="$(TargetDir)MainWindow.xbf" Condition="Exists('$(TargetDir)MainWindow.xbf')" />
+      <AppXamlRootArtifacts Include="$(TargetDir)TLAHStudio.App.pri" Condition="Exists('$(TargetDir)TLAHStudio.App.pri')" />
+      <AppXamlViewArtifacts Include="$(TargetDir)Views\**\*.xbf" />
     </ItemGroup>
-    <Copy SourceFiles="@(XamlFiles)" DestinationFiles="@(XamlFiles-&gt;'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(PriFiles)" DestinationFiles="@(PriFiles-&gt;'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
-    <Message Importance="high" Text="Copied generated XAML resources to publish output." />
+    <Error Condition="'@(AppXamlRootArtifacts)' == ''" Text="WinUI publish output is missing app XAML root artifacts." />
+    <Error Condition="'@(AppXamlViewArtifacts)' == ''" Text="WinUI publish output is missing view XAML artifacts." />
+    <Copy SourceFiles="@(AppXamlRootArtifacts)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(AppXamlViewArtifacts)" DestinationFiles="@(AppXamlViewArtifacts-&gt;'$(PublishDir)Views\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copied TLAH Studio XAML resources to publish output." />
   </Target>
 </Project>

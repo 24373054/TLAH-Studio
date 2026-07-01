@@ -585,6 +585,206 @@ public sealed class CodeGrepAgentTool : IAgentTool
     }
 }
 
+public sealed class CodeSymbolsAgentTool : IAgentTool
+{
+    private static readonly string[] SupportedExtensions =
+    [
+        ".cs", ".xaml", ".xml", ".ts", ".tsx", ".js", ".jsx", ".py", ".md", ".razor"
+    ];
+
+    private static readonly Regex CSharpTypeRegex = new(
+        @"^\s*(?:\[[^\]]+\]\s*)*(?:public|private|protected|internal|sealed|static|abstract|partial|readonly|record|\s)*\s*(?<kind>class|interface|record|struct|enum)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex CSharpMethodRegex = new(
+        @"^\s*(?:public|private|protected|internal|static|async|virtual|override|sealed|partial|extern|new|\s)+\s+(?<return>[A-Za-z_][A-Za-z0-9_<>,\[\]\.? ]*)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex JsSymbolRegex = new(
+        @"^\s*(?:export\s+)?(?:(?<kind>class|function)\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)|(?:const|let|var)\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex PythonSymbolRegex = new(
+        @"^\s*(?<kind>class|def|async\s+def)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*[\(:]",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex MarkdownHeadingRegex = new(
+        @"^\s*(?<marks>#{1,6})\s+(?<name>.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private readonly ISandboxCommandService _sandbox;
+
+    public CodeSymbolsAgentTool(ISandboxCommandService sandbox)
+    {
+        _sandbox = sandbox;
+    }
+
+    public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
+        AgentToolNames.CodeSymbols,
+        "List lightweight code symbols in a file or directory: classes, interfaces, records, structs, enums, methods, functions, and markdown headings.",
+        new Dictionary<string, object>
+        {
+            ["path"] = AgentToolSupport.StringProperty("Relative file or directory path. Defaults to root."),
+            ["pattern"] = AgentToolSupport.StringProperty("Optional wildcard path filter such as **/*.cs."),
+            ["max_results"] = new Dictionary<string, object> { ["type"] = "integer", ["description"] = "Maximum symbols to return." },
+            ["reason"] = AgentToolSupport.StringProperty("Why symbol discovery is needed.")
+        });
+
+    public bool RequiresApproval => false;
+
+    public async Task<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, string argumentsJson, CancellationToken ct = default)
+    {
+        try
+        {
+            if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+                return new AgentToolResult(false, string.Empty, error);
+            var start = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path", "."));
+            var pattern = WorkspaceCodeToolSupport.ReadString(root, "pattern");
+            var max = Math.Clamp(WorkspaceCodeToolSupport.ReadInt(root, "max_results", 300), 1, 2000);
+            var baseRoot = _sandbox.GetSandboxRoot(context.ChatId);
+            var pathRegex = string.IsNullOrWhiteSpace(pattern)
+                ? null
+                : new Regex(WorkspaceCodeToolSupport.WildcardToRegex(pattern), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+            var output = new StringBuilder();
+            var count = 0;
+            foreach (var file in EnumerateCandidateFiles(start).OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+            {
+                ct.ThrowIfCancellationRequested();
+                var relative = Path.GetRelativePath(baseRoot, file).Replace('\\', '/');
+                if (pathRegex != null && !pathRegex.IsMatch(relative))
+                    continue;
+                foreach (var symbol in await ExtractSymbolsAsync(file, relative, ct))
+                {
+                    output.AppendLine($"{symbol.Path}:{symbol.Line}: {symbol.Kind} {symbol.Name} - {symbol.Preview}");
+                    count++;
+                    if (count >= max)
+                        return new AgentToolResult(true, output.ToString().TrimEnd());
+                }
+            }
+
+            return new AgentToolResult(true, count == 0 ? "No symbols found." : output.ToString().TrimEnd());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AgentToolResult(false, string.Empty, ex.Message);
+        }
+    }
+
+    private static IEnumerable<string> EnumerateCandidateFiles(string start)
+    {
+        if (File.Exists(start))
+        {
+            if (IsSupported(start))
+                yield return start;
+            yield break;
+        }
+
+        if (!Directory.Exists(start))
+            yield break;
+
+        foreach (var file in Directory.EnumerateFiles(start, "*", SearchOption.AllDirectories))
+        {
+            if (WorkspaceCodeToolSupport.ShouldSkipPath(file) || !IsSupported(file))
+                continue;
+            yield return file;
+        }
+    }
+
+    private static bool IsSupported(string path) =>
+        SupportedExtensions.Contains(Path.GetExtension(path).ToLowerInvariant(), StringComparer.OrdinalIgnoreCase);
+
+    private static async Task<IReadOnlyList<SymbolHit>> ExtractSymbolsAsync(string file, string relative, CancellationToken ct)
+    {
+        var extension = Path.GetExtension(file).ToLowerInvariant();
+        var text = await WorkspaceCodeToolSupport.ReadTextAsync(file, ct);
+        var lines = WorkspaceCodeToolSupport.SplitLines(text);
+        var symbols = new List<SymbolHit>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var symbol = extension switch
+            {
+                ".cs" or ".razor" => ExtractCSharpSymbol(line),
+                ".ts" or ".tsx" or ".js" or ".jsx" => ExtractJavaScriptSymbol(line),
+                ".py" => ExtractPythonSymbol(line),
+                ".md" => ExtractMarkdownSymbol(line),
+                ".xaml" or ".xml" => ExtractXmlSymbol(line),
+                _ => null
+            };
+            if (symbol == null)
+                continue;
+            symbols.Add(new SymbolHit(relative, i + 1, symbol.Value.Kind, symbol.Value.Name, TrimPreview(line)));
+        }
+
+        return symbols;
+    }
+
+    private static (string Kind, string Name)? ExtractCSharpSymbol(string line)
+    {
+        var type = CSharpTypeRegex.Match(line);
+        if (type.Success)
+            return (type.Groups["kind"].Value, type.Groups["name"].Value);
+        var method = CSharpMethodRegex.Match(line);
+        if (method.Success)
+        {
+            var name = method.Groups["name"].Value;
+            if (name is "if" or "for" or "foreach" or "while" or "switch" or "catch")
+                return null;
+            return ("method", name);
+        }
+
+        return null;
+    }
+
+    private static (string Kind, string Name)? ExtractJavaScriptSymbol(string line)
+    {
+        var match = JsSymbolRegex.Match(line);
+        if (!match.Success)
+            return null;
+        var kind = match.Groups["kind"].Success && !string.IsNullOrWhiteSpace(match.Groups["kind"].Value)
+            ? match.Groups["kind"].Value
+            : "function";
+        return (kind, match.Groups["name"].Value);
+    }
+
+    private static (string Kind, string Name)? ExtractPythonSymbol(string line)
+    {
+        var match = PythonSymbolRegex.Match(line);
+        if (!match.Success)
+            return null;
+        var kind = match.Groups["kind"].Value.Replace("async ", string.Empty, StringComparison.Ordinal);
+        return (kind == "def" ? "function" : kind, match.Groups["name"].Value);
+    }
+
+    private static (string Kind, string Name)? ExtractMarkdownSymbol(string line)
+    {
+        var match = MarkdownHeadingRegex.Match(line);
+        if (!match.Success)
+            return null;
+        return ($"heading{match.Groups["marks"].Value.Length}", match.Groups["name"].Value.Trim());
+    }
+
+    private static (string Kind, string Name)? ExtractXmlSymbol(string line)
+    {
+        var trimmed = line.TrimStart();
+        if (!trimmed.StartsWith('<') || trimmed.StartsWith("</", StringComparison.Ordinal))
+            return null;
+        var end = trimmed.IndexOfAny([' ', '>', '/']);
+        if (end <= 1)
+            return null;
+        return ("element", trimmed[1..end]);
+    }
+
+    private static string TrimPreview(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.Length <= 180 ? trimmed : trimmed[..180] + "...";
+    }
+
+    private sealed record SymbolHit(string Path, int Line, string Kind, string Name, string Preview);
+}
+
 public sealed class CodeDiffAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
