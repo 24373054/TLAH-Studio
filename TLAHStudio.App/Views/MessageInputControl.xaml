@@ -23,50 +23,67 @@
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
-        <ComboBox
-            x:Name="RoleCombo"
+        <Button
+            x:Name="RoleButton"
             Grid.Column="0"
-            Width="124"
+            Width="46"
+            MinWidth="46"
             MinHeight="46"
             Margin="0,0,12,0"
             Background="{ThemeResource InputBackgroundBrush}"
             Foreground="{ThemeResource TextPrimaryBrush}"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             CornerRadius="8"
-            SelectedIndex="0"
+            Padding="0"
             TabIndex="10"
-            ToolTipService.ToolTip="Message role"
-                AutomationProperties.Name="Message role" />
+            ToolTipService.ToolTip="Role: user"
+            AutomationProperties.Name="Message role">
+            <Button.Flyout>
+                <MenuFlyout>
+                    <MenuFlyoutItem
+                        x:Name="UserRoleItem"
+                        Text="user"
+                        Click="UserRole_Click" />
+                    <MenuFlyoutItem
+                        x:Name="SystemRoleItem"
+                        Text="system"
+                        Click="SystemRole_Click" />
+                </MenuFlyout>
+            </Button.Flyout>
+            <SymbolIcon Symbol="Contact" />
+        </Button>
 
-        <ToggleButton
-            x:Name="AgentModeToggle"
+        <Button
+            x:Name="AgentModeButton"
             Grid.Column="1"
-            MinWidth="82"
+            Width="46"
+            MinWidth="46"
             MinHeight="46"
             Margin="0,0,12,0"
             Background="{ThemeResource InputBackgroundBrush}"
             Foreground="{ThemeResource TextPrimaryBrush}"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             CornerRadius="8"
+            Padding="0"
             TabIndex="11"
+            Click="AgentMode_Click"
             ToolTipService.ToolTip="Agent mode runs approved sandbox commands for multi-step tasks"
             AutomationProperties.Name="Agent mode">
-            <StackPanel Orientation="Horizontal" Spacing="7">
-                <SymbolIcon Symbol="Play" />
-                <TextBlock Text="Agent" />
-            </StackPanel>
-        </ToggleButton>
+            <SymbolIcon Symbol="Play" />
+        </Button>
 
         <Button
             x:Name="WorkspaceButton"
             Grid.Column="2"
-            MinWidth="118"
+            Width="46"
+            MinWidth="46"
             MinHeight="46"
             Margin="0,0,12,0"
             Background="{ThemeResource InputBackgroundBrush}"
             Foreground="{ThemeResource TextPrimaryBrush}"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             CornerRadius="8"
+            Padding="0"
             TabIndex="12"
             ToolTipService.ToolTip="Workspace"
             AutomationProperties.Name="Workspace">
@@ -91,30 +108,42 @@
                         Click="UseSandbox_Click" />
                 </MenuFlyout>
             </Button.Flyout>
-            <StackPanel Orientation="Horizontal" Spacing="7">
-                <SymbolIcon Symbol="Folder" />
-                <TextBlock
-                    x:Name="WorkspaceButtonText"
-                    Text="Sandbox"
-                    TextTrimming="CharacterEllipsis"
-                    MaxWidth="110" />
-            </StackPanel>
+            <SymbolIcon Symbol="Folder" />
         </Button>
 
-        <ComboBox
-            x:Name="PermissionModeCombo"
+        <Button
+            x:Name="PermissionModeButton"
             Grid.Column="3"
-            Width="132"
+            Width="46"
+            MinWidth="46"
             MinHeight="46"
             Margin="0,0,12,0"
             Background="{ThemeResource InputBackgroundBrush}"
             Foreground="{ThemeResource TextPrimaryBrush}"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             CornerRadius="8"
-            SelectedIndex="0"
+            Padding="0"
             TabIndex="13"
             ToolTipService.ToolTip="Agent permission mode"
-            AutomationProperties.Name="Agent permission mode" />
+            AutomationProperties.Name="Agent permission mode">
+            <Button.Flyout>
+                <MenuFlyout>
+                    <MenuFlyoutItem
+                        x:Name="FullAccessItem"
+                        Text="Full access"
+                        Click="FullAccess_Click" />
+                    <MenuFlyoutItem
+                        x:Name="AutoApproveItem"
+                        Text="Auto approve"
+                        Click="AutoApprove_Click" />
+                    <MenuFlyoutItem
+                        x:Name="AskApprovalItem"
+                        Text="Ask"
+                        Click="AskApproval_Click" />
+                </MenuFlyout>
+            </Button.Flyout>
+            <SymbolIcon Symbol="Permissions" />
+        </Button>
 
         <TextBox
             x:Name="InputBox"

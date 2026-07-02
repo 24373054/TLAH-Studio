@@ -1,14 +1,14 @@
 {
-  "version": "4.3.0",
+  "version": "4.3.1",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.3.0.exe",
-  "sha256": "5551ac764451362bbd3ce714426890374e8bba6d121fce6920a155131237a122",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.3.1.exe",
+  "sha256": "7842ffb2a9c84a34320cda3e8d8b6b2480832116c53b03afd61849d779cde324",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.3.0 adds selectable per-chat workspaces, direct text selection in chat messages, persisted stopped-run messages, and smoother streaming updates during agent execution.",
+  "releaseNotes": "4.3.1 tightens the input bar with unified icon-only controls, enables Agent mode by default, signs the release with the self-signed code-signing certificate, and refreshes the README for the current 4.x agent workspace.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.3.0",
+  "minSupportedVersion": "4.3.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97007804
+  "installerSizeBytes": 97028960
 }

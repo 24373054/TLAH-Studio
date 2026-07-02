@@ -61,7 +61,7 @@ public partial class ChatPageViewModel : ObservableObject
     private string _selectedRole = "user";
 
     [ObservableProperty]
-    private bool _isAgentModeEnabled;
+    private bool _isAgentModeEnabled = true;
 
     [ObservableProperty]
     private string _selectedAgentPermissionMode =

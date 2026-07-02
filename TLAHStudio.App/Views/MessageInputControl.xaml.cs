@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using System.ComponentModel;
@@ -21,36 +22,6 @@ public sealed partial class MessageInputControl : UserControl
         App.Log("MessageInputControl ctor entered.");
         InitializeComponent();
         App.Log("MessageInputControl XAML initialized.");
-        RoleCombo.Items.Add("user");
-        RoleCombo.Items.Add("system");
-        PermissionModeCombo.Items.Add(new PermissionModeItem(AgentPermissionModes.BypassPermissions, "Full access", "Unrestricted local terminal access; approvals are bypassed."));
-        PermissionModeCombo.Items.Add(new PermissionModeItem(AgentPermissionModes.AutoApprove, "Auto approve", "Approves detected tool directions automatically while keeping safety blocks."));
-        PermissionModeCombo.Items.Add(new PermissionModeItem(AgentPermissionModes.RequestApproval, "Ask", "Requests approval for risky tools and scoped permission rules."));
-        RoleCombo.SelectionChanged += (_, _) =>
-        {
-            if (_vm != null)
-                _vm.SelectedRole = RoleCombo.SelectedItem?.ToString() ?? "user";
-        };
-        PermissionModeCombo.SelectionChanged += (_, _) =>
-        {
-            if (_vm != null && PermissionModeCombo.SelectedItem is PermissionModeItem item)
-                _vm.SelectedAgentPermissionMode = item.Mode;
-            UpdatePermissionModeToolTip();
-        };
-        AgentModeToggle.Checked += (_, _) =>
-        {
-            if (_vm != null)
-                _vm.IsAgentModeEnabled = true;
-            UpdateAgentModeVisualState();
-            Play(InteractionSound.Toggle);
-        };
-        AgentModeToggle.Unchecked += (_, _) =>
-        {
-            if (_vm != null)
-                _vm.IsAgentModeEnabled = false;
-            UpdateAgentModeVisualState();
-            Play(InteractionSound.Toggle);
-        };
         InputBox.PreviewKeyDown += OnPreviewKeyDown;
         InputBox.KeyDown += OnKeyDown;
         InputRoot.SizeChanged += OnInputRootSizeChanged;
@@ -70,13 +41,13 @@ public sealed partial class MessageInputControl : UserControl
             _vm = w.ChatVM;
             _vm.PropertyChanged += OnViewModelPropertyChanged;
             _suppressSound = true;
-            AgentModeToggle.IsChecked = _vm.IsAgentModeEnabled;
+            UpdateRoleButton();
             SelectPermissionMode(_vm.SelectedAgentPermissionMode);
             UpdateWorkspaceButton();
             _suppressSound = false;
             UpdateSendingState();
             UpdateAgentModeVisualState();
-            UpdatePermissionModeToolTip();
+            UpdatePermissionModeButton();
         }
     }
 
@@ -94,23 +65,11 @@ public sealed partial class MessageInputControl : UserControl
         InputRoot.Padding = compact
             ? new Thickness(12, 10, 12, 10)
             : new Thickness(20, 14, 20, 14);
-        RoleCombo.Width = compact ? 92 : 124;
-        RoleCombo.Margin = compact
-            ? new Thickness(0, 0, 8, 0)
-            : new Thickness(0, 0, 12, 0);
-        AgentModeToggle.MinWidth = compact ? 70 : 82;
-        AgentModeToggle.Margin = compact
-            ? new Thickness(0, 0, 8, 0)
-            : new Thickness(0, 0, 12, 0);
-        WorkspaceButton.MinWidth = compact ? 44 : 118;
-        WorkspaceButton.Margin = compact
-            ? new Thickness(0, 0, 8, 0)
-            : new Thickness(0, 0, 12, 0);
-        WorkspaceButtonText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        PermissionModeCombo.Width = compact ? 92 : 132;
-        PermissionModeCombo.Margin = compact
-            ? new Thickness(0, 0, 8, 0)
-            : new Thickness(0, 0, 12, 0);
+        var controlMargin = compact ? new Thickness(0, 0, 8, 0) : new Thickness(0, 0, 10, 0);
+        RoleButton.Margin = controlMargin;
+        AgentModeButton.Margin = controlMargin;
+        WorkspaceButton.Margin = controlMargin;
+        PermissionModeButton.Margin = controlMargin;
         ActionGrid.Margin = compact
             ? new Thickness(8, 0, 0, 0)
             : new Thickness(12, 0, 0, 0);
@@ -146,6 +105,29 @@ public sealed partial class MessageInputControl : UserControl
         Play(InteractionSound.Toggle);
         _vm?.StopSendingCommand.Execute(null);
     }
+
+    private void UserRole_Click(object sender, RoutedEventArgs e) => SetRole("user");
+
+    private void SystemRole_Click(object sender, RoutedEventArgs e) => SetRole("system");
+
+    private void AgentMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null)
+            return;
+
+        _vm.IsAgentModeEnabled = !_vm.IsAgentModeEnabled;
+        UpdateAgentModeVisualState();
+        Play(InteractionSound.Toggle);
+    }
+
+    private void FullAccess_Click(object sender, RoutedEventArgs e) =>
+        SetPermissionMode(AgentPermissionModes.BypassPermissions);
+
+    private void AutoApprove_Click(object sender, RoutedEventArgs e) =>
+        SetPermissionMode(AgentPermissionModes.AutoApprove);
+
+    private void AskApproval_Click(object sender, RoutedEventArgs e) =>
+        SetPermissionMode(AgentPermissionModes.RequestApproval);
 
     private async void NewWorkspace_Click(object sender, RoutedEventArgs e)
     {
@@ -278,11 +260,10 @@ public sealed partial class MessageInputControl : UserControl
         if (e.PropertyName == nameof(ChatPageViewModel.IsAgentModeEnabled))
             DispatcherQueue.TryEnqueue(() =>
             {
-                _suppressSound = true;
-                AgentModeToggle.IsChecked = _vm?.IsAgentModeEnabled == true;
-                _suppressSound = false;
                 UpdateAgentModeVisualState();
             });
+        if (e.PropertyName == nameof(ChatPageViewModel.SelectedRole))
+            DispatcherQueue.TryEnqueue(UpdateRoleButton);
         if (e.PropertyName == nameof(ChatPageViewModel.SelectedAgentPermissionMode))
             DispatcherQueue.TryEnqueue(() => SelectPermissionMode(_vm?.SelectedAgentPermissionMode));
         if (e.PropertyName is nameof(ChatPageViewModel.WorkspaceDisplayName)
@@ -299,20 +280,26 @@ public sealed partial class MessageInputControl : UserControl
         StopBtn.Visibility = sending ? Visibility.Visible : Visibility.Collapsed;
         SendingRing.Visibility = sending ? Visibility.Visible : Visibility.Collapsed;
         SendBtn.IsEnabled = !sending;
-        AgentModeToggle.IsEnabled = !sending;
+        RoleButton.IsEnabled = !sending;
+        AgentModeButton.IsEnabled = !sending;
         WorkspaceButton.IsEnabled = !sending;
-        PermissionModeCombo.IsEnabled = !sending;
+        PermissionModeButton.IsEnabled = !sending;
     }
 
     private void UpdateAgentModeVisualState()
     {
-        var enabled = AgentModeToggle.IsChecked == true;
-        AgentModeToggle.Background = enabled
+        var enabled = _vm?.IsAgentModeEnabled == true;
+        AgentModeButton.Background = enabled
             ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"]
             : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["InputBackgroundBrush"];
-        AgentModeToggle.Foreground = enabled
+        AgentModeButton.Foreground = enabled
             ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentTextBrush"]
             : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"];
+        ToolTipService.SetToolTip(
+            AgentModeButton,
+            enabled
+                ? "Agent: On. Multi-step tool use is enabled."
+                : "Agent: Off. Send a normal chat message.");
     }
 
     private void Play(InteractionSound sound)
@@ -324,35 +311,77 @@ public sealed partial class MessageInputControl : UserControl
     private void SelectPermissionMode(string? mode)
     {
         var normalized = AgentPermissionModes.Normalize(mode);
-        for (var i = 0; i < PermissionModeCombo.Items.Count; i++)
-        {
-            if (PermissionModeCombo.Items[i] is PermissionModeItem item &&
-                string.Equals(item.Mode, normalized, StringComparison.OrdinalIgnoreCase))
-            {
-                PermissionModeCombo.SelectedIndex = i;
-                UpdatePermissionModeToolTip();
-                return;
-            }
-        }
-
-        PermissionModeCombo.SelectedIndex = 0;
-        UpdatePermissionModeToolTip();
+        if (_vm != null && !string.Equals(_vm.SelectedAgentPermissionMode, normalized, StringComparison.OrdinalIgnoreCase))
+            _vm.SelectedAgentPermissionMode = normalized;
+        UpdatePermissionModeButton();
     }
 
-    private void UpdatePermissionModeToolTip()
+    private void SetRole(string role)
     {
-        if (PermissionModeCombo.SelectedItem is PermissionModeItem item)
-            ToolTipService.SetToolTip(PermissionModeCombo, item.Description);
+        if (_vm == null)
+            return;
+        _vm.SelectedRole = string.Equals(role, "system", StringComparison.OrdinalIgnoreCase)
+            ? "system"
+            : "user";
+        UpdateRoleButton();
+        Play(InteractionSound.Toggle);
+    }
+
+    private void UpdateRoleButton()
+    {
+        var role = string.Equals(_vm?.SelectedRole, "system", StringComparison.OrdinalIgnoreCase)
+            ? "system"
+            : "user";
+        ToolTipService.SetToolTip(RoleButton, $"Role: {role}");
+        AutomationProperties.SetName(RoleButton, $"Message role: {role}");
+    }
+
+    private void SetPermissionMode(string mode)
+    {
+        if (_vm == null)
+            return;
+        _vm.SelectedAgentPermissionMode = AgentPermissionModes.Normalize(mode);
+        UpdatePermissionModeButton();
+        Play(InteractionSound.Toggle);
+    }
+
+    private void UpdatePermissionModeButton()
+    {
+        var item = GetPermissionModeItem(_vm?.SelectedAgentPermissionMode);
+        ToolTipService.SetToolTip(PermissionModeButton, $"Access: {item.Label}. {item.Description}");
+        AutomationProperties.SetName(PermissionModeButton, $"Agent permission mode: {item.Label}");
     }
 
     private void UpdateWorkspaceButton()
     {
-        var label = _vm?.WorkspaceDisplayName;
-        WorkspaceButtonText.Text = string.IsNullOrWhiteSpace(label) ? "Sandbox" : label;
-        ToolTipService.SetToolTip(WorkspaceButton, _vm?.WorkspaceToolTip ?? "Workspace");
+        var label = string.IsNullOrWhiteSpace(_vm?.WorkspaceDisplayName)
+            ? "Sandbox"
+            : _vm.WorkspaceDisplayName;
+        ToolTipService.SetToolTip(WorkspaceButton, $"Workspace: {label}\n{_vm?.WorkspaceToolTip ?? "Using this chat's private sandbox."}");
+        AutomationProperties.SetName(WorkspaceButton, $"Workspace: {label}");
         OpenWorkspaceItem.IsEnabled = !string.IsNullOrWhiteSpace(_vm?.WorkspacePath) &&
             Directory.Exists(_vm.WorkspacePath);
         UseSandboxItem.IsEnabled = _vm?.IsWorkspaceConfigured == true;
+    }
+
+    private static PermissionModeItem GetPermissionModeItem(string? mode)
+    {
+        var normalized = AgentPermissionModes.Normalize(mode);
+        return normalized switch
+        {
+            AgentPermissionModes.AutoApprove => new(
+                AgentPermissionModes.AutoApprove,
+                "Auto approve",
+                "Approves detected tool directions automatically while keeping safety blocks."),
+            AgentPermissionModes.RequestApproval => new(
+                AgentPermissionModes.RequestApproval,
+                "Ask",
+                "Requests approval for risky tools and scoped permission rules."),
+            _ => new(
+                AgentPermissionModes.BypassPermissions,
+                "Full access",
+                "Unrestricted local terminal access; approvals are bypassed.")
+        };
     }
 
     private sealed record PermissionModeItem(string Mode, string Label, string Description)
