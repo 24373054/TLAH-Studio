@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.4.2.exe",
-  "sha256": "",
+  "sha256": "b1031dbc66ad2d38f1bd087985bc26da3075e4293f63718b21a12e0338835370",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.4.2 adds an optional `path` parameter to the Git tool so it can operate on repositories in sandbox subdirectories.",
+  "releaseNotes": "4.4.2 adds an optional path parameter to the Git tool so it can operate on repositories in sandbox subdirectories.",
   "forceUpdate": true,
   "minSupportedVersion": "4.4.2",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97031544
 }
