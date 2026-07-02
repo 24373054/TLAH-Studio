@@ -165,31 +165,79 @@ public class ReactiveCompactor : IReactiveCompactor
             return new CompactionResult(messages.ToList(), false, before, before,
                 "No compactable middle messages — all user messages and head/tail are preserved.");
 
-        // Count role frequencies and extract key content (most recent first)
-        var roleCounts = middle.GroupBy(m => m.Role)
-            .ToDictionary(g => g.Key, g => g.Count());
-        var keyLines = middle
+        // M4.4.3: Structured compaction summary. The old role-counts-only format
+        // lost too much information — models couldn't reconstruct what happened.
+        // Now we preserve: user messages, file paths, tool operations, errors.
+        var userMessages = middle
+            .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(m.Content) && !m.Content.Contains("context summary boundary"))
+            .Select(m => m.Content.Length > 300 ? m.Content[..300] + "..." : m.Content)
+            .ToList();
+        var filePaths = ExtractPaths(middle);
+        var toolOps = middle
+            .Where(m => m.ToolCalls is { Count: > 0 })
+            .SelectMany(m => m.ToolCalls!)
+            .Select(tc => tc.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var errors = middle
+            .Where(m => !string.IsNullOrWhiteSpace(m.Content) &&
+                        (m.Content.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                         m.Content.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                         m.Content.Contains("exception", StringComparison.OrdinalIgnoreCase)))
+            .TakeLast(5)
+            .Select(m => m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content)
+            .ToList();
+        var recentKeyLines = middle
             .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Content.Length > 20)
-            .TakeLast(10)
+            .TakeLast(8)
             .Select(m => m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content)
             .ToList();
 
         var summary = new StringBuilder();
         summary.AppendLine("[context summary boundary — messages compacted]");
-        summary.AppendLine($"Compacted {middle.Count} messages:");
-        foreach (var (role, count) in roleCounts.OrderByDescending(kv => kv.Value))
-            summary.AppendLine($"  {role}: {count}");
-        if (keyLines.Count > 0)
+        summary.AppendLine($"Compacted {middle.Count} older messages to make room for continued execution.");
+        summary.AppendLine();
+        if (userMessages.Count > 0)
         {
-            summary.AppendLine("Key content previews (most recent first):");
-            foreach (var line in keyLines)
-                summary.AppendLine($"  - {line}");
+            summary.AppendLine("## User Messages in Compacted Region");
+            foreach (var msg in userMessages)
+                summary.AppendLine($"- {msg}");
+            summary.AppendLine();
         }
+        if (filePaths.Count > 0)
+        {
+            summary.AppendLine($"## Files Referenced ({filePaths.Count})");
+            summary.AppendLine(string.Join(", ", filePaths.Take(30)));
+            summary.AppendLine();
+        }
+        if (toolOps.Count > 0)
+        {
+            summary.AppendLine($"## Tools Used ({toolOps.Count})");
+            summary.AppendLine(string.Join(", ", toolOps));
+            summary.AppendLine();
+        }
+        if (errors.Count > 0)
+        {
+            summary.AppendLine("## Errors Encountered");
+            foreach (var e in errors)
+                summary.AppendLine($"- {e}");
+            summary.AppendLine();
+        }
+        if (recentKeyLines.Count > 0)
+        {
+            summary.AppendLine("## Recent Key Content");
+            foreach (var line in recentKeyLines)
+                summary.AppendLine($"- {line}");
+            summary.AppendLine();
+        }
+        summary.AppendLine("Continue from the preserved messages below. Re-read any files you need.");
 
         var compacted = new List<MessagePayload>();
         compacted.AddRange(head);
         compacted.Add(new MessagePayload("user", summary.ToString()));
-        compacted.Add(new MessagePayload("assistant", "I understand. The conversation context has been summarized."));
+        compacted.Add(new MessagePayload("assistant", "I understand. The conversation context has been summarized. I will continue from the preserved context and re-read files as needed."));
         compacted.AddRange(tail);
 
         var after = tokenBudget.EstimateTokens(compacted);
@@ -216,6 +264,41 @@ public class ReactiveCompactor : IReactiveCompactor
         var after = tokenBudget.EstimateTokens(compacted);
         return new CompactionResult(compacted, true, before, after,
             $"Emergency truncation — kept only first 2 and last 6 of {messages.Count} messages.");
+    }
+
+    /// <summary>
+    /// M4.4.3: Extract file-system paths from message content for the
+    /// structured compaction summary. Uses simple heuristics to find paths
+    /// without false positives from code snippets or URLs.
+    /// </summary>
+    private static List<string> ExtractPaths(List<MessagePayload> messages)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Common path-like patterns: relative or absolute paths with extensions
+        // or path separators, excluding URLs and code identifiers.
+        foreach (var m in messages)
+        {
+            var content = m.Content ?? string.Empty;
+            foreach (var part in content.Split([' ', '\n', '\r', '\t', '`', '"', '\''],
+                         StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = part.Trim();
+                if (trimmed.Length < 3 || trimmed.Length > 260) continue;
+                // Skip URLs and code identifiers
+                if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                // Heuristic: contains a path separator or a dot-extension
+                if ((trimmed.Contains('/') || trimmed.Contains('\\') ||
+                     (trimmed.LastIndexOf('.') > 0 && trimmed.LastIndexOf('.') < trimmed.Length - 1)) &&
+                    !trimmed.Contains('(') && !trimmed.Contains(')') && !trimmed.Contains('{'))
+                {
+                    paths.Add(trimmed);
+                }
+            }
+        }
+        return paths.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
     }
 }
 

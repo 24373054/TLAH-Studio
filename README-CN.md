@@ -4,7 +4,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue?logo=windows)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-4.4.2-brightgreen)](https://download.matrixlabs.cn/tlah/windows/latest.json)
+[![Version](https://img.shields.io/badge/version-4.4.3-brightgreen)](https://download.matrixlabs.cn/tlah/windows/latest.json)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](./LICENSE)
 
 TLAH Studio 是一款 Windows 原生 AI 智能体（Agent）工作台，使用 C#、WinUI 3 和 Windows App SDK 构建。它将聊天对话、工具执行、MCP 集成、提示词调试和持久化活动时间线融于一个桌面应用中。
@@ -184,7 +184,7 @@ dotnet publish TLAHStudio.App\TLAHStudio.App.csproj `
 | `dotnet publish ... -r win-x64 --self-contained true` | 独立发布 |
 | `.\tools\ci.ps1 -Configuration Release -Platform x64` | CI 质量门 |
 | `cd TLAHStudio.Installer && iscc setup.iss` | 编译安装包 |
-| `.\tools\verify-release.ps1 -Version 4.4.2 -AllowUntrustedAuthenticode` | 验证发布包 |
+| `.\tools\verify-release.ps1 -Version 4.4.3 -AllowUntrustedAuthenticode` | 验证发布包 |
 
 ### 架构概览
 
@@ -251,7 +251,7 @@ TLAH Studio 采用分层架构，核心业务流程如下：
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version 4.4.2 `
+  -Version 4.4.3 `
   -ReleaseNotes "<发布说明>" `
   -CertificateThumbprint F6DC173C746447A05FF83B9F7162121344CC09F0 `
   -AllowUntrustedCertificate `
@@ -273,7 +273,7 @@ TLAH Studio 采用分层架构，核心业务流程如下：
 | `TLAHStudio.Installer/latest.json` | `version` |
 | `TLAHStudio.Installer/setup.iss` | `#define MyAppVersion` |
 
-当前版本：**4.4.2**，语义化版本号 (`Major.Minor.Patch`)。
+当前版本：**4.4.3**，语义化版本号 (`Major.Minor.Patch`)。
 
 ### 更新机制
 
@@ -375,7 +375,7 @@ BackgroundTaskRecord
 
 ### 版本历史
 
-- **v4.4.2** — 当前版本
+- **v4.4.3** — 当前版本
 - **v4.0** — 智能体平台：任务层、上下文恢复、后台智能体、SDK
 - **v3.3** — 稳定性：统一工具生命周期、安全预览、效果规划、钩子系统
 - **v3.0** — 智能体 GA：运行时提取、UI 虚拟化、工具调度器、MCP 集成

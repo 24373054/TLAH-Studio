@@ -933,7 +933,7 @@ public sealed class GitAgentTool : IAgentTool
 {
     private static readonly HashSet<string> AllowedOperations = new(StringComparer.OrdinalIgnoreCase)
     {
-        "status", "diff", "log", "init", "add", "commit", "branch"
+        "status", "diff", "log", "init", "add", "commit", "branch", "checkout", "switch"
     };
     private readonly ISandboxCommandService _sandbox;
 
@@ -1028,6 +1028,7 @@ public sealed class GitAgentTool : IAgentTool
         psi.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
         psi.Environment["GIT_PAGER"] = "cat";
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        psi.Environment["GIT_EXTERNAL_DIFF"] = "";
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
         using var process = new Process { StartInfo = psi };

@@ -120,6 +120,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         var contextOptions = BuildContextOptions(options);
         string? assistantContent = null;
         LlmResponse? lastResponse = null;
+        int consecutiveCompactionFailures = 0;
+        const int maxCompactionFailures = 3;
 
         try
         {
@@ -242,10 +244,29 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 // Context limit retry
                 if (_contextManager.IsContextLimitError(lastResponse))
                 {
+                    // M4.4.3: Circuit breaker — after 3 consecutive compaction
+                    // failures, give up instead of retrying forever.
+                    consecutiveCompactionFailures++;
+                    if (consecutiveCompactionFailures > maxCompactionFailures)
+                    {
+                        await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                            new AgentRun { Id = state.RunId },
+                            AgentEventTypes.Error,
+                            $"Compaction failed {consecutiveCompactionFailures} consecutive times. Aborting the run to prevent infinite retry.",
+                            new { consecutiveCompactionFailures, maxCompactionFailures },
+                            step.Id,
+                            Severity: AgentEventSeverities.Error), events, ct);
+                        assistantContent = lastResponse.AssistantText;
+                        state.Status = AgentRunStatuses.Failed;
+                        state.ErrorMessage = "Compaction retry limit exceeded.";
+                        break;
+                    }
+
                     var forced = await PrepareContextAsync(
                         state, contextOptions, effective.Provider, effective.Model, forceCompact: true, ct);
                     if (forced.WasCompacted)
                     {
+                        consecutiveCompactionFailures = 0; // Reset on success
                         state.Messages = forced.Messages;
                         await SaveCheckpointAsync(state, ct);
                         var metadata = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
@@ -278,6 +299,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                                     Reasoning: BuildReasoningOptions(effective)), ct);
                         }
                     }
+                }
+                else
+                {
+                    consecutiveCompactionFailures = 0;
                 }
 
                 step.OutputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(lastResponse.RawResponse));
@@ -576,7 +601,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         IReadOnlyList<string> OpenQuestions,
         IReadOnlyList<string> NextActions,
         IReadOnlyList<string> PersistedOutputs,
-        IReadOnlyList<string> RecentFailures);
+        IReadOnlyList<string> RecentFailures,
+        IReadOnlyList<string> RecentReads);
 
     private async Task<AgentContextPreparationResult> PrepareContextAsync(
         AgentRunState state,
@@ -691,6 +717,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         sb.AppendLine("## Project Memory Preview");
         sb.AppendLine(TrimForContext(memory, 4_000));
         AppendList(sb, "## Files Changed", metadata.FilesChanged);
+        AppendList(sb, "## Recently Read Files (re-read if needed after compaction)", metadata.RecentReads);
         AppendList(sb, "## Persisted Output References", metadata.PersistedOutputs);
         AppendList(sb, "## Recent Commands", metadata.CommandsRun);
         AppendList(sb, "## Recent Failures", metadata.RecentFailures);
@@ -749,7 +776,20 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             .Select(e => $"{e.EventType}: {e.Summary}")
             .ToListAsync(ct);
 
-        return new RuntimeContextMetadata(filesChanged, commands, openQuestions, nextActions, persistedOutputs, failures);
+        // M4.4.3: Track recently read file paths so the model knows what to
+        // re-read after compaction. We list paths only (not content) — the model
+        // uses the `read` tool to fetch content on demand.
+        var recentReads = invocations
+            .Where(i => i.ToolName is AgentToolNames.FileRead or AgentToolNames.CodeRead)
+            .Select(i => ReadJsonString(i.ArgumentsJson, "file_path") ??
+                         ReadJsonString(i.ArgumentsJson, "path") ??
+                         TrimForContext(i.ArgumentsJson, 120))
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        return new RuntimeContextMetadata(filesChanged, commands, openQuestions, nextActions, persistedOutputs, failures, recentReads);
     }
 
     private static void AppendList(StringBuilder sb, string title, IReadOnlyList<string> items)
