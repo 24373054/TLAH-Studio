@@ -369,7 +369,15 @@ public class LlmService : ILlmService
             options.Progress,
             AgentPermissionModes.Normalize(options.PermissionMode));
 
-        var result = await _agentRunEngineV2.RunAsync(runState, engineOptions, ct: ct);
+        AgentRunResult result;
+        try
+        {
+            result = await _agentRunEngineV2.RunAsync(runState, engineOptions, ct: ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return await BuildCancelledAgentResultAsync(run, turn, sentMessage, runState);
+        }
 
         // Sync state back to DB
         run.CurrentStep = result.FinalState.CurrentStep;
@@ -464,7 +472,15 @@ public class LlmService : ILlmService
             options.Progress,
             AgentPermissionModes.Normalize(options.PermissionMode));
 
-        var result = await _agentRunEngineV2.ResumeAsync(runState, engineOptions, ct: ct);
+        AgentRunResult result;
+        try
+        {
+            result = await _agentRunEngineV2.ResumeAsync(runState, engineOptions, ct: ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return await BuildCancelledAgentResultAsync(run, turn, sentMessage, runState);
+        }
 
         run.CurrentStep = result.FinalState.CurrentStep;
         run.Status = result.FinalState.Status;
@@ -1963,6 +1979,62 @@ public class LlmService : ILlmService
         return new SendMessageResult(turn, sentMessage, assistantMessage, rawRequest, rawResponse, snapshot);
     }
 
+    private async Task<SendMessageResult> BuildCancelledAgentResultAsync(
+        AgentRun run,
+        Turn turn,
+        Message sentMessage,
+        AgentRunState fallbackState)
+    {
+        var ct = CancellationToken.None;
+        var persistedRun = await _db.Set<AgentRun>()
+            .FirstOrDefaultAsync(r => r.Id == run.Id, ct) ?? run;
+
+        var latestStep = await _db.Set<AgentStep>()
+            .Where(s => s.AgentRunId == persistedRun.Id)
+            .Select(s => (int?)s.StepNumber)
+            .MaxAsync(ct) ?? persistedRun.CurrentStep;
+
+        persistedRun.CurrentStep = Math.Max(persistedRun.CurrentStep, latestStep);
+        persistedRun.Status = AgentRunStatuses.Cancelled;
+        persistedRun.ErrorMessage = "Stopped by the user.";
+        persistedRun.UpdatedAt = DateTime.UtcNow;
+        persistedRun.CompletedAt = DateTime.UtcNow;
+
+        var content = persistedRun.CurrentStep > 0
+            ? $"Agent stopped by the user at step {persistedRun.CurrentStep}/{persistedRun.MaxSteps}. Progress is saved; use Resume to continue."
+            : "Agent stopped by the user before the first step completed.";
+        var assistantMessage = new Message
+        {
+            ChatId = persistedRun.ChatId,
+            Role = "assistant",
+            Content = content,
+            TurnId = turn.Id,
+            SequenceNum = await _chatService.GetNextSequenceAsync(persistedRun.ChatId, ct),
+            CreatedAt = DateTime.UtcNow
+        };
+        _db.Set<Message>().Add(assistantMessage);
+
+        var chatEntity = await _db.Set<Chat>().FirstAsync(c => c.Id == persistedRun.ChatId, ct);
+        chatEntity.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        var finalState = fallbackState.DeepClone();
+        finalState.Status = AgentRunStatuses.Cancelled;
+        finalState.ErrorMessage = persistedRun.ErrorMessage;
+        finalState.CurrentStep = persistedRun.CurrentStep;
+        finalState.MaxSteps = persistedRun.MaxSteps;
+        finalState.SequenceNum = assistantMessage.SequenceNum + 1;
+
+        var result = new AgentRunResult(finalState, content, null, []);
+        return await BuildAgentResultFromEngineAsync(
+            persistedRun,
+            turn,
+            sentMessage,
+            assistantMessage,
+            result,
+            ct);
+    }
+
     private async Task SaveCheckpointAsync(
         AgentRun run,
         AgentExecutionState state,
@@ -2571,18 +2643,18 @@ public class LlmService : ILlmService
         builder.AppendLine();
         builder.AppendLine("TLAH Agent Mode is enabled.");
         builder.AppendLine("You may complete multi-step tasks with typed memory, code, file, Git, HTTP, search, browser, terminal, and MCP tools.");
-        builder.AppendLine($"Sandbox working directory: {sandboxRoot}");
-        builder.AppendLine("Work only inside the sandbox directory. Never read host user files or attempt destructive, privileged, registry, service, shutdown, or system-configuration operations.");
+        builder.AppendLine($"Workspace root: {sandboxRoot}");
+        builder.AppendLine("Use the workspace root as the default working directory. In sandboxed modes, work only inside that root. Never read unrelated host user files or attempt destructive, privileged, registry, service, shutdown, or system-configuration operations.");
         builder.AppendLine($"Use {AgentToolNames.MemoryRead} and {AgentToolNames.MemoryWrite} for stable project facts, preferences, and recurring instructions. Write memory only for information that should persist.");
         builder.AppendLine($"For development work, prefer {AgentToolNames.CodeRead}, {AgentToolNames.CodeGrep}, {AgentToolNames.CodeGlob}, {AgentToolNames.CodeSymbols}, {AgentToolNames.CodeDiff}, {AgentToolNames.CodeEdit}, {AgentToolNames.CodeMultiEdit}, {AgentToolNames.CodeApplyPatch}, {AgentToolNames.CodeRollback}, and {AgentToolNames.CodeDiagnostics} before terminal commands.");
         builder.AppendLine("Use diff or diagnostics before risky code changes, and mention rollback backup ids when an edit returns them.");
         builder.AppendLine($"Prefer {AgentToolNames.FileList}, {AgentToolNames.FileInfo}, {AgentToolNames.FileRead}, {AgentToolNames.FileSearch}, {AgentToolNames.FileWrite}, {AgentToolNames.FileMkdir}, {AgentToolNames.FileMove}, {AgentToolNames.FileDelete}, and {AgentToolNames.FileSend} over terminal commands for file work.");
-        builder.AppendLine($"When you create a file the user should see, preview, download, or use outside the sandbox, call {AgentToolNames.FileSend} with the relative sandbox path before giving the final answer.");
+        builder.AppendLine($"When you create a file the user should see, preview, download, or use outside the workspace, call {AgentToolNames.FileSend} with the relative workspace path before giving the final answer.");
         builder.AppendLine($"Use {AgentToolNames.TerminalExec} only when a typed tool cannot complete the task. Use {AgentToolNames.McpListTools} before {AgentToolNames.McpCall}, and {AgentToolNames.McpListResources} before {AgentToolNames.McpReadResource}.");
         builder.AppendLine("Network requests are limited to configured public-domain allowlists. Credentials can only be referenced by broker entry name and must never be requested, printed, or stored.");
         builder.AppendLine("Request one tool call at a time and provide a short reason argument.");
         builder.AppendLine("If the provider does not expose native tools, the compatibility fallback is this exact JSON object with no surrounding prose:");
-        builder.AppendLine("""{"tlah_tool":"sandbox.exec","command":"Get-ChildItem","reason":"List files in the sandbox"}""");
+        builder.AppendLine("""{"tlah_tool":"sandbox.exec","command":"Get-ChildItem","reason":"List files in the workspace"}""");
         builder.AppendLine("After a tool result is returned, either request the next action or provide the final answer.");
         builder.AppendLine("Never include API keys, tokens, or secrets in commands or final output.");
         return builder.ToString();

@@ -18,6 +18,7 @@
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
@@ -56,9 +57,53 @@
             </StackPanel>
         </ToggleButton>
 
+        <Button
+            x:Name="WorkspaceButton"
+            Grid.Column="2"
+            MinWidth="118"
+            MinHeight="46"
+            Margin="0,0,12,0"
+            Background="{ThemeResource InputBackgroundBrush}"
+            Foreground="{ThemeResource TextPrimaryBrush}"
+            BorderBrush="{ThemeResource BorderSubtleBrush}"
+            CornerRadius="8"
+            TabIndex="12"
+            ToolTipService.ToolTip="Workspace"
+            AutomationProperties.Name="Workspace">
+            <Button.Flyout>
+                <MenuFlyout>
+                    <MenuFlyoutItem
+                        x:Name="NewWorkspaceItem"
+                        Text="New workspace"
+                        Click="NewWorkspace_Click" />
+                    <MenuFlyoutItem
+                        x:Name="ChooseWorkspaceItem"
+                        Text="Choose folder"
+                        Click="ChooseWorkspace_Click" />
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem
+                        x:Name="OpenWorkspaceItem"
+                        Text="Open folder"
+                        Click="OpenWorkspace_Click" />
+                    <MenuFlyoutItem
+                        x:Name="UseSandboxItem"
+                        Text="Use sandbox"
+                        Click="UseSandbox_Click" />
+                </MenuFlyout>
+            </Button.Flyout>
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <SymbolIcon Symbol="Folder" />
+                <TextBlock
+                    x:Name="WorkspaceButtonText"
+                    Text="Sandbox"
+                    TextTrimming="CharacterEllipsis"
+                    MaxWidth="110" />
+            </StackPanel>
+        </Button>
+
         <ComboBox
             x:Name="PermissionModeCombo"
-            Grid.Column="2"
+            Grid.Column="3"
             Width="132"
             MinHeight="46"
             Margin="0,0,12,0"
@@ -67,13 +112,13 @@
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             CornerRadius="8"
             SelectedIndex="0"
-            TabIndex="12"
+            TabIndex="13"
             ToolTipService.ToolTip="Agent permission mode"
             AutomationProperties.Name="Agent permission mode" />
 
         <TextBox
             x:Name="InputBox"
-            Grid.Column="3"
+            Grid.Column="4"
             MinHeight="46"
             MaxHeight="160"
             AcceptsReturn="True"
@@ -86,10 +131,10 @@
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             CornerRadius="8"
             Padding="14,10"
-            TabIndex="13"
+            TabIndex="14"
             AutomationProperties.Name="Message input" />
 
-        <Grid x:Name="ActionGrid" Grid.Column="4" Margin="12,0,0,0">
+        <Grid x:Name="ActionGrid" Grid.Column="5" Margin="12,0,0,0">
             <Button
                 x:Name="SendBtn"
                 Click="Send_Click"
@@ -99,7 +144,7 @@
                 MinWidth="54"
                 MinHeight="46"
                 Padding="14,8"
-                TabIndex="14"
+                TabIndex="15"
                 ToolTipService.ToolTip="Send"
                 AutomationProperties.Name="Send message">
                 <SymbolIcon Symbol="Send" />
@@ -123,7 +168,7 @@
                 MinHeight="46"
                 Padding="14,8"
                 ToolTipService.ToolTip="Stop"
-                TabIndex="14"
+                TabIndex="15"
                 AutomationProperties.Name="Stop generation">
                 <SymbolIcon Symbol="Stop" />
             </Button>

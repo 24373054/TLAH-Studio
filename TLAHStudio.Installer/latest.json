@@ -1,14 +1,14 @@
 {
-  "version": "4.2.1",
+  "version": "4.3.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.2.1.exe",
-  "sha256": "eb7de78adec328c3b75f26cbd59d7d53a40ce13f3abfdee7f3fa7200a428fcbf",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.3.0.exe",
+  "sha256": "5551ac764451362bbd3ce714426890374e8bba6d121fce6920a155131237a122",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.2.1 adds Claude Code-style agent permission modes, a context usage breakdown in each chat, stronger tool/MCP guidance, Full access terminal/network routing, and throttled context compaction for long runs.",
+  "releaseNotes": "4.3.0 adds selectable per-chat workspaces, direct text selection in chat messages, persisted stopped-run messages, and smoother streaming updates during agent execution.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.2.1",
+  "minSupportedVersion": "4.3.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97003918
+  "installerSizeBytes": 97007804
 }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services.Tools.Models;
+using TLAHStudio.Core.Services.Workspace;
 
 namespace TLAHStudio.Core.Services.Tools.PerTool;
 
@@ -63,8 +64,7 @@ public class CodeReadToolV3 : AgentToolV3Base
 
     private static string ResolvePath(Guid chatId, string path)
     {
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", chatId.ToString("N"));
+        var root = WorkspaceRootStore.GetRoot(chatId, out _);
         var normalized = path.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar);
         return Path.GetFullPath(Path.Combine(root, normalized));
     }
@@ -149,8 +149,7 @@ public class CodeEditToolV3 : AgentToolV3Base
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.All;
     private static string ResolvePath(Guid chatId, string path)
     {
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", chatId.ToString("N"));
+        var root = WorkspaceRootStore.GetRoot(chatId, out _);
         return Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar)));
     }
 }
@@ -204,8 +203,7 @@ public class CodeGlobToolV3 : AgentToolV3Base
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
     private static string ResolvePath(Guid chatId, string path) =>
         Path.GetFullPath(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", chatId.ToString("N"),
+            WorkspaceRootStore.GetRoot(chatId, out _),
             path.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar)));
 }
 
@@ -313,8 +311,7 @@ public class CodeGrepToolV3 : AgentToolV3Base
     private static string EscapeArg(string arg) => $"\"{arg.Replace("\"", "\\\"")}\"";
     private static string ResolvePath(Guid chatId, string path) =>
         Path.GetFullPath(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", chatId.ToString("N"),
+            WorkspaceRootStore.GetRoot(chatId, out _),
             (path ?? ".").Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar)));
 }
 
@@ -340,8 +337,7 @@ public class CodeDiffToolV3 : AgentToolV3Base
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var path = doc.RootElement.GetProperty("path").GetString() ?? "";
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", context.ChatId.ToString("N"));
+        var root = WorkspaceRootStore.GetRoot(context.ChatId, out _);
         var fullPath = Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar)));
 
         // Try git diff

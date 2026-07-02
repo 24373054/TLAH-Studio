@@ -7,11 +7,39 @@ using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
 using TLAHStudio.Core.Services.Background;
+using TLAHStudio.Core.Services.Workspace;
 
 namespace TLAHStudio.Core.Tests;
 
 public class BuiltInAgentToolsTests
 {
+    [Fact]
+    public async Task SandboxCommandService_UsesConfiguredWorkspaceRoot()
+    {
+        var chatId = Guid.NewGuid();
+        var workspace = Path.Combine(Path.GetTempPath(), "TLAHStudio.Workspace.Tests", Guid.NewGuid().ToString("N"));
+        var sandboxBase = Path.Combine(Path.GetTempPath(), "TLAHStudio.Sandbox.Tests", Guid.NewGuid().ToString("N"));
+        var roots = new WorkspaceRootService();
+        try
+        {
+            await roots.SetRootAsync(chatId, workspace);
+            var sandbox = new SandboxCommandService(sandboxBase);
+
+            Assert.Equal(Path.GetFullPath(workspace), sandbox.GetSandboxRoot(chatId));
+
+            var result = await sandbox.ExecuteAsync(chatId, "'workspace-ok' | Set-Content note.txt; Get-Content note.txt");
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains("workspace-ok", result.StandardOutput);
+            Assert.True(File.Exists(Path.Combine(workspace, "note.txt")));
+            Assert.False(File.Exists(Path.Combine(sandboxBase, chatId.ToString("N"), "note.txt")));
+        }
+        finally
+        {
+            await roots.ClearRootAsync(chatId);
+        }
+    }
+
     [Fact]
     public async Task FileToolsWriteReadSearchAndBlockTraversal()
     {

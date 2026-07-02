@@ -6,6 +6,7 @@ public interface IWorkspaceRootService
 {
     Task<WorkspaceRoot> GetRootAsync(Guid chatId, CancellationToken ct = default);
     Task SetRootAsync(Guid chatId, string rootPath, CancellationToken ct = default);
+    Task ClearRootAsync(Guid chatId, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetAllowedRootsAsync(CancellationToken ct = default);
     Task AddAllowedRootAsync(string path, CancellationToken ct = default);
     bool ShouldIgnore(string relativePath, Guid? chatId = null);
@@ -22,22 +23,37 @@ public class WorkspaceRootService : IWorkspaceRootService
 
     public Task<WorkspaceRoot> GetRootAsync(Guid chatId, CancellationToken ct = default)
     {
-        var sandboxRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", chatId.ToString("N"));
-        return Task.FromResult(new WorkspaceRoot(sandboxRoot, Directory.Exists(sandboxRoot), [], [.. DefaultIgnorePatterns]));
+        var root = WorkspaceRootStore.GetRoot(chatId, out var isConfigured);
+        return Task.FromResult(new WorkspaceRoot(root, isConfigured, WorkspaceRootStore.GetRecentRoots(), [.. DefaultIgnorePatterns]));
     }
 
     public Task SetRootAsync(Guid chatId, string rootPath, CancellationToken ct = default)
     {
-        Directory.CreateDirectory(rootPath);
+        WorkspaceRootStore.SetRoot(chatId, rootPath);
+        return Task.CompletedTask;
+    }
+
+    public Task ClearRootAsync(Guid chatId, CancellationToken ct = default)
+    {
+        WorkspaceRootStore.ClearRoot(chatId);
         return Task.CompletedTask;
     }
 
     public Task<IReadOnlyList<string>> GetAllowedRootsAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<string>>([Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)]);
+    {
+        var roots = WorkspaceRootStore.GetRecentRoots()
+            .Concat([Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)])
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return Task.FromResult<IReadOnlyList<string>>(roots);
+    }
 
-    public Task AddAllowedRootAsync(string path, CancellationToken ct = default) => Task.CompletedTask;
+    public Task AddAllowedRootAsync(string path, CancellationToken ct = default)
+    {
+        WorkspaceRootStore.AddRecentRoot(path);
+        return Task.CompletedTask;
+    }
 
     public bool ShouldIgnore(string relativePath, Guid? chatId = null)
     {

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using TLAHStudio.Core.Helpers;
+using TLAHStudio.Core.Services.Workspace;
 
 namespace TLAHStudio.Core.Services;
 
@@ -49,10 +50,7 @@ public sealed class SandboxCommandService : ISandboxCommandService
     private readonly string _root;
 
     public SandboxCommandService()
-        : this(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio",
-            "sandboxes"))
+        : this(WorkspaceRootStore.DefaultSandboxBase)
     {
     }
 
@@ -64,7 +62,9 @@ public sealed class SandboxCommandService : ISandboxCommandService
 
     public string GetSandboxRoot(Guid chatId)
     {
-        var path = Path.Combine(_root, chatId.ToString("N"));
+        var path = WorkspaceRootStore.GetRoot(chatId, out var isConfigured);
+        if (!isConfigured)
+            path = Path.Combine(_root, chatId.ToString("N"));
         Directory.CreateDirectory(path);
         return path;
     }
@@ -114,6 +114,7 @@ public sealed class SandboxCommandService : ISandboxCommandService
         psi.Environment["NO_COLOR"] = "1";
         psi.Environment["TLAH_SANDBOX"] = "1";
         psi.Environment["TLAH_SANDBOX_ROOT"] = sandboxRoot;
+        psi.Environment["TLAH_WORKSPACE_ROOT"] = sandboxRoot;
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var sw = Stopwatch.StartNew();

@@ -431,6 +431,7 @@ public sealed partial class ChatPage : UserControl
             Text = isConfigError
                 ? "API key is missing. Open Settings to add a provider key before sending."
                 : $"Request failed: {error}",
+            IsTextSelectionEnabled = true,
             Foreground = TextPrimaryBrush(),
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center
@@ -536,6 +537,7 @@ public sealed partial class ChatPage : UserControl
             Text = string.IsNullOrEmpty(message.Content) && isDraft
                 ? "Waiting for the first token..."
                 : message.Content,
+            IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.Wrap,
             Foreground = isUser
                 ? AccentTextBrush()
@@ -593,6 +595,7 @@ public sealed partial class ChatPage : UserControl
         var thinkingText = new TextBlock
         {
             Text = thinking,
+            IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.Wrap,
             Foreground = TextSecondaryBrush(),
             FontSize = IsCompactDensity() ? 12 : 13,
@@ -609,6 +612,7 @@ public sealed partial class ChatPage : UserControl
         var answerText = new TextBlock
         {
             Text = answer,
+            IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.Wrap,
             Foreground = TextPrimaryBrush(),
             FontSize = IsCompactDensity() ? 13 : 14,
@@ -661,6 +665,7 @@ public sealed partial class ChatPage : UserControl
             panel.Children.Add(new TextBlock
             {
                 Text = body,
+                IsTextSelectionEnabled = true,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = isUser
                     ? AccentTextBrush()
@@ -758,6 +763,7 @@ public sealed partial class ChatPage : UserControl
             stack.Children.Add(new TextBlock
             {
                 Text = "The sandbox file is no longer available on this device.",
+                IsTextSelectionEnabled = true,
                 Foreground = TextSecondaryBrush(),
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap
@@ -800,6 +806,7 @@ public sealed partial class ChatPage : UserControl
                 Child = new TextBlock
                 {
                     Text = preview,
+                    IsTextSelectionEnabled = true,
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = TextSecondaryBrush(),
                     FontFamily = new FontFamily("Cascadia Mono"),
@@ -996,6 +1003,7 @@ public sealed partial class ChatPage : UserControl
         headerText.Children.Add(new TextBlock
         {
             Text = _vm?.AgentLiveSummary ?? "Working...",
+            IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.Wrap,
             Foreground = TextSecondaryBrush(),
             FontSize = IsCompactDensity() ? 12 : 13,
@@ -1044,6 +1052,7 @@ public sealed partial class ChatPage : UserControl
         content.Children.Add(new TextBlock
         {
             Text = line.Text,
+            IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.Wrap,
             Foreground = TextPrimaryBrush(),
             FontSize = IsCompactDensity() ? 12 : 13,
@@ -1088,6 +1097,7 @@ public sealed partial class ChatPage : UserControl
             stack.Children.Add(new TextBlock
             {
                 Text = line.IsTruncated ? $"{line.Preview} [truncated]" : line.Preview,
+                IsTextSelectionEnabled = true,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = TextSecondaryBrush(),
                 FontSize = 12,

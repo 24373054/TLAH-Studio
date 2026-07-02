@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using TLAHStudio.Core.Services.Workspace;
 
 namespace TLAHStudio.Core.Services.Sandbox;
 
@@ -80,9 +81,7 @@ public class FileSyncService : IFileSyncService
 {
     public Task SyncUploadAsync(Guid chatId, IEnumerable<string> localPaths, CancellationToken ct = default)
     {
-        var sandboxRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", chatId.ToString("N"));
+        var sandboxRoot = WorkspaceRootStore.GetRoot(chatId, out _);
         Directory.CreateDirectory(sandboxRoot);
 
         foreach (var localPath in localPaths)
@@ -97,9 +96,7 @@ public class FileSyncService : IFileSyncService
     public Task<IReadOnlyList<AgentToolArtifact>> SyncExportAsync(
         Guid chatId, IEnumerable<string> sandboxPaths, string exportDir, CancellationToken ct = default)
     {
-        var sandboxRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TLAH Studio", "sandbox", chatId.ToString("N"));
+        var sandboxRoot = WorkspaceRootStore.GetRoot(chatId, out _);
         Directory.CreateDirectory(exportDir);
         var artifacts = new List<AgentToolArtifact>();
 

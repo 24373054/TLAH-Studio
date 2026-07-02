@@ -811,13 +811,13 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
         TLAH Agent Mode is enabled.
         Registered tools: {tools}
-        Sandbox working directory: {sandboxRoot}
+        Workspace root: {sandboxRoot}
         {hostAccessLine}
-        In sandboxed modes, work only inside the sandbox directory. Do not read host user files or run destructive, privileged, registry, service, shutdown, or system-configuration operations.
+        Use the workspace root as the default working directory. In sandboxed modes, work only inside that root. Do not read unrelated host user files or run destructive, privileged, registry, service, shutdown, or system-configuration operations.
         Prefer typed memory, file, code, Git, HTTP, search, browser, terminal, and MCP tools over ad-hoc shell commands.
         Tool map: code_read/code_grep/code_glob/code_symbols inspect code; code_edit/code_multi_edit/code_apply_patch change code; file_* manages sandbox artifacts; web_search/browser_read/http_request handle web and APIs; mcp_* discovers and calls configured MCP servers; todo_* and task_* keep durable plans; terminal_exec is the escape hatch for commands and host-level work in Full access mode.
         For development work, prefer code_read, code_grep, code_glob, code_diff, code_edit, code_multi_edit, code_apply_patch, code_rollback, and code_diagnostics.
-        For file work, prefer file_list, file_read, file_write, file_search, and file_send. When you create a file the user should see, preview, download, or use outside the sandbox, call file_send before the final answer.
+        For file work, prefer file_list, file_read, file_write, file_search, and file_send. When you create a file the user should see, preview, download, or use outside the workspace, call file_send before the final answer.
         For multi-step work, maintain a persistent task plan with todo_write, task_create, task_update, and task_list. Keep one current task in_progress when possible and mark completed tasks promptly.
         When a tool output is persisted under .tlah_context/tool-results, use read_persisted_output to recover details instead of asking the user to rerun work.
         Use tool_search when you need to discover less-common tools, MCP capabilities, task tools, or persisted-output tools.

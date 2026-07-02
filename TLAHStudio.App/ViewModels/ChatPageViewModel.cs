@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
+using TLAHStudio.Core.Services.Workspace;
 using TLAHStudio.App.Models;
 
 namespace TLAHStudio.App.ViewModels;
@@ -20,10 +21,12 @@ public partial class ChatPageViewModel : ObservableObject
     private readonly ILlmService _llmService;
     private readonly ISettingsService _settingsService;
     private readonly IAppStateService _appState;
+    private readonly IWorkspaceRootService _workspaceRootService;
     private CancellationTokenSource? _sendCts;
     private IProgress<AgentProgressUpdate>? _activeAgentProgress;
     private AssistantStreamState? _activeStream;
     private string? _activeAgentRequest;
+    private const int StreamDrainDelayMs = 32;
     private const string AgentActivityPanelStorageKey = "tlah-agent-activity-panel-open";
     private const string AgentPermissionModeStorageKey = "tlah-agent-permission-mode";
 
@@ -98,18 +101,32 @@ public partial class ChatPageViewModel : ObservableObject
     [ObservableProperty]
     private string? _currentAgentRunStatus;
 
+    [ObservableProperty]
+    private string _workspaceDisplayName = "Sandbox";
+
+    [ObservableProperty]
+    private string _workspacePath = string.Empty;
+
+    [ObservableProperty]
+    private bool _isWorkspaceConfigured;
+
+    [ObservableProperty]
+    private string _workspaceToolTip = "Using this chat's private sandbox.";
+
     public List<string> AvailableRoles { get; } = new() { "user", "system" };
 
     public ChatPageViewModel(
         IChatService chatService,
         ILlmService llmService,
         ISettingsService settingsService,
-        IAppStateService appState)
+        IAppStateService appState,
+        IWorkspaceRootService workspaceRootService)
     {
         _chatService = chatService;
         _llmService = llmService;
         _settingsService = settingsService;
         _appState = appState;
+        _workspaceRootService = workspaceRootService;
 
         // React to chat selection changes from AppStateService
         _appState.ChatSelected += OnChatSelected;
@@ -141,6 +158,10 @@ public partial class ChatPageViewModel : ObservableObject
         ClearAgentActivity();
         ContextUsageText = "Context --";
         ContextUsageToolTip = "Context usage is calculated after a chat is selected.";
+        WorkspaceDisplayName = "Sandbox";
+        WorkspacePath = string.Empty;
+        IsWorkspaceConfigured = false;
+        WorkspaceToolTip = "Using this chat's private sandbox.";
         UpdateAgentStatus(null);
     }
 
@@ -153,6 +174,7 @@ public partial class ChatPageViewModel : ObservableObject
         {
             var chat = await _chatService.GetChatAsync(chatId);
             CurrentChat = chat;
+            await RefreshWorkspaceAsync(chatId);
             Messages.Clear();
             ChatMessageBlocks.Clear();
             ClearAgentProgress();
@@ -224,7 +246,10 @@ public partial class ChatPageViewModel : ObservableObject
             if (agentMode)
                 result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
 
-            await stream.WaitForFinalDrainAsync(_sendCts.Token);
+            var drainToken = result.AgentRun?.Status == AgentRunStatuses.Cancelled
+                ? CancellationToken.None
+                : _sendCts.Token;
+            await stream.WaitForFinalDrainAsync(drainToken);
             ApplySendResultToLiveMessages(result, optimisticMessage, stream);
             if (agentMode)
                 await ReloadCurrentChatAsync();
@@ -234,9 +259,18 @@ public partial class ChatPageViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            RemoveOptimisticMessage(optimisticMessage);
-            RemoveStreamMessage(stream.Message);
-            ErrorMessage = "Request stopped.";
+            if (agentMode)
+            {
+                RemoveStreamMessage(stream.Message);
+                ErrorMessage = "Agent run stopped.";
+                await ReloadCurrentChatAsync();
+            }
+            else
+            {
+                RemoveOptimisticMessage(optimisticMessage);
+                RemoveStreamMessage(stream.Message);
+                ErrorMessage = "Request stopped.";
+            }
         }
         catch (Exception e)
         {
@@ -284,7 +318,10 @@ public partial class ChatPageViewModel : ObservableObject
                 CreateAgentOptions(stream.Progress, agentProgress),
                 _sendCts.Token);
             result = await CompleteApprovalFlowAsync(result, _sendCts.Token);
-            await stream.WaitForFinalDrainAsync(_sendCts.Token);
+            var drainToken = result.AgentRun?.Status == AgentRunStatuses.Cancelled
+                ? CancellationToken.None
+                : _sendCts.Token;
+            await stream.WaitForFinalDrainAsync(drainToken);
             ApplySendResultToLiveMessages(result, userMessage: null, stream);
             await ReloadCurrentChatAsync();
             TurnCreated?.Invoke(this, result.Turn.Id);
@@ -292,6 +329,7 @@ public partial class ChatPageViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             ErrorMessage = "Agent run stopped.";
+            await ReloadCurrentChatAsync();
         }
         catch (Exception e)
         {
@@ -431,6 +469,86 @@ public partial class ChatPageViewModel : ObservableObject
     {
         if (_appState.CurrentChatId != null)
             await LoadChatAsync(_appState.CurrentChatId.Value);
+    }
+
+    public async Task SetWorkspaceRootAsync(string rootPath)
+    {
+        if (_appState.CurrentChatId == null)
+            return;
+        if (string.IsNullOrWhiteSpace(rootPath))
+            return;
+
+        await _workspaceRootService.SetRootAsync(_appState.CurrentChatId.Value, rootPath);
+        await RefreshWorkspaceAsync(_appState.CurrentChatId.Value);
+    }
+
+    public async Task<string?> CreateWorkspaceRootAsync()
+    {
+        if (_appState.CurrentChatId == null)
+            return null;
+
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "TLAH Studio Workspaces");
+        Directory.CreateDirectory(baseDir);
+
+        var title = CurrentChat?.Title ?? "Workspace";
+        var safeTitle = SafeWorkspaceFolderName(title);
+        if (string.IsNullOrWhiteSpace(safeTitle))
+            safeTitle = "Workspace";
+
+        var path = Path.Combine(baseDir, safeTitle);
+        if (Directory.Exists(path))
+            path = Path.Combine(baseDir, $"{safeTitle}-{DateTime.Now:yyyyMMdd-HHmmss}");
+
+        Directory.CreateDirectory(path);
+        await SetWorkspaceRootAsync(path);
+        return path;
+    }
+
+    public async Task ClearWorkspaceRootAsync()
+    {
+        if (_appState.CurrentChatId == null)
+            return;
+
+        await _workspaceRootService.ClearRootAsync(_appState.CurrentChatId.Value);
+        await RefreshWorkspaceAsync(_appState.CurrentChatId.Value);
+    }
+
+    private async Task RefreshWorkspaceAsync(Guid chatId)
+    {
+        var root = await _workspaceRootService.GetRootAsync(chatId);
+        WorkspacePath = root.RootPath;
+        IsWorkspaceConfigured = root.IsConfigured;
+        WorkspaceDisplayName = root.IsConfigured
+            ? ShortWorkspaceName(root.RootPath)
+            : "Sandbox";
+        WorkspaceToolTip = root.IsConfigured
+            ? $"Workspace: {root.RootPath}"
+            : $"Sandbox: {root.RootPath}";
+    }
+
+    private static string ShortWorkspaceName(string path)
+    {
+        try
+        {
+            var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return string.IsNullOrWhiteSpace(name) ? path : name;
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
+    private static string SafeWorkspaceFolderName(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value.Trim())
+            builder.Append(invalid.Contains(ch) ? '-' : ch);
+        var result = builder.ToString().Trim(' ', '.', '-');
+        return result.Length <= 48 ? result : result[..48].Trim(' ', '.', '-');
     }
 
     private void ApplySendResultToLiveMessages(
@@ -644,10 +762,11 @@ public partial class ChatPageViewModel : ObservableObject
 
                     var batchSize = pending switch
                     {
-                        > 400 => 24,
-                        > 160 => 12,
-                        > 60 => 6,
-                        > 12 => 3,
+                        > 800 => 48,
+                        > 300 => 24,
+                        > 120 => 12,
+                        > 30 => 6,
+                        > 8 => 3,
                         _ => 1
                     };
                     for (var i = 0; i < batchSize; i++)
@@ -672,7 +791,7 @@ public partial class ChatPageViewModel : ObservableObject
                 if (!changed)
                     break;
                 StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
-                await Task.Delay(16);
+                await Task.Delay(StreamDrainDelayMs);
             }
         }
         finally

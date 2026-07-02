@@ -4,6 +4,9 @@ using Microsoft.UI.Xaml.Input;
 using System.ComponentModel;
 using TLAHStudio.Core.Services;
 using TLAHStudio.App.ViewModels;
+using Windows.Storage;
+using Windows.Storage.Pickers;
+using Windows.System;
 
 namespace TLAHStudio.App.Views;
 
@@ -69,6 +72,7 @@ public sealed partial class MessageInputControl : UserControl
             _suppressSound = true;
             AgentModeToggle.IsChecked = _vm.IsAgentModeEnabled;
             SelectPermissionMode(_vm.SelectedAgentPermissionMode);
+            UpdateWorkspaceButton();
             _suppressSound = false;
             UpdateSendingState();
             UpdateAgentModeVisualState();
@@ -98,6 +102,11 @@ public sealed partial class MessageInputControl : UserControl
         AgentModeToggle.Margin = compact
             ? new Thickness(0, 0, 8, 0)
             : new Thickness(0, 0, 12, 0);
+        WorkspaceButton.MinWidth = compact ? 44 : 118;
+        WorkspaceButton.Margin = compact
+            ? new Thickness(0, 0, 8, 0)
+            : new Thickness(0, 0, 12, 0);
+        WorkspaceButtonText.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         PermissionModeCombo.Width = compact ? 92 : 132;
         PermissionModeCombo.Margin = compact
             ? new Thickness(0, 0, 8, 0)
@@ -136,6 +145,90 @@ public sealed partial class MessageInputControl : UserControl
     {
         Play(InteractionSound.Toggle);
         _vm?.StopSendingCommand.Execute(null);
+    }
+
+    private async void NewWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null)
+            return;
+
+        try
+        {
+            await _vm.CreateWorkspaceRootAsync();
+            UpdateWorkspaceButton();
+            Play(InteractionSound.Toggle);
+        }
+        catch (Exception ex)
+        {
+            _vm.ErrorMessage = ex.Message;
+            Play(InteractionSound.Error);
+        }
+    }
+
+    private async void ChooseWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || App.MainWindow == null)
+            return;
+
+        try
+        {
+            var picker = new FolderPicker
+            {
+                SuggestedStartLocation = PickerLocationId.Desktop
+            };
+            picker.FileTypeFilter.Add("*");
+            WinRT.Interop.InitializeWithWindow.Initialize(
+                picker,
+                WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow));
+
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder == null)
+                return;
+
+            await _vm.SetWorkspaceRootAsync(folder.Path);
+            UpdateWorkspaceButton();
+            Play(InteractionSound.Toggle);
+        }
+        catch (Exception ex)
+        {
+            _vm.ErrorMessage = ex.Message;
+            Play(InteractionSound.Error);
+        }
+    }
+
+    private async void OpenWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null || string.IsNullOrWhiteSpace(_vm.WorkspacePath) || !Directory.Exists(_vm.WorkspacePath))
+            return;
+
+        try
+        {
+            var folder = await StorageFolder.GetFolderFromPathAsync(_vm.WorkspacePath);
+            await Launcher.LaunchFolderAsync(folder);
+        }
+        catch (Exception ex)
+        {
+            _vm.ErrorMessage = ex.Message;
+            Play(InteractionSound.Error);
+        }
+    }
+
+    private async void UseSandbox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null)
+            return;
+
+        try
+        {
+            await _vm.ClearWorkspaceRootAsync();
+            UpdateWorkspaceButton();
+            Play(InteractionSound.Toggle);
+        }
+        catch (Exception ex)
+        {
+            _vm.ErrorMessage = ex.Message;
+            Play(InteractionSound.Error);
+        }
     }
 
     private async void Send()
@@ -192,6 +285,11 @@ public sealed partial class MessageInputControl : UserControl
             });
         if (e.PropertyName == nameof(ChatPageViewModel.SelectedAgentPermissionMode))
             DispatcherQueue.TryEnqueue(() => SelectPermissionMode(_vm?.SelectedAgentPermissionMode));
+        if (e.PropertyName is nameof(ChatPageViewModel.WorkspaceDisplayName)
+            or nameof(ChatPageViewModel.WorkspacePath)
+            or nameof(ChatPageViewModel.IsWorkspaceConfigured)
+            or nameof(ChatPageViewModel.WorkspaceToolTip))
+            DispatcherQueue.TryEnqueue(UpdateWorkspaceButton);
     }
 
     private void UpdateSendingState()
@@ -202,6 +300,7 @@ public sealed partial class MessageInputControl : UserControl
         SendingRing.Visibility = sending ? Visibility.Visible : Visibility.Collapsed;
         SendBtn.IsEnabled = !sending;
         AgentModeToggle.IsEnabled = !sending;
+        WorkspaceButton.IsEnabled = !sending;
         PermissionModeCombo.IsEnabled = !sending;
     }
 
@@ -244,6 +343,16 @@ public sealed partial class MessageInputControl : UserControl
     {
         if (PermissionModeCombo.SelectedItem is PermissionModeItem item)
             ToolTipService.SetToolTip(PermissionModeCombo, item.Description);
+    }
+
+    private void UpdateWorkspaceButton()
+    {
+        var label = _vm?.WorkspaceDisplayName;
+        WorkspaceButtonText.Text = string.IsNullOrWhiteSpace(label) ? "Sandbox" : label;
+        ToolTipService.SetToolTip(WorkspaceButton, _vm?.WorkspaceToolTip ?? "Workspace");
+        OpenWorkspaceItem.IsEnabled = !string.IsNullOrWhiteSpace(_vm?.WorkspacePath) &&
+            Directory.Exists(_vm.WorkspacePath);
+        UseSandboxItem.IsEnabled = _vm?.IsWorkspaceConfigured == true;
     }
 
     private sealed record PermissionModeItem(string Mode, string Label, string Description)
