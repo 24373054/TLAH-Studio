@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.4.1.exe",
-  "sha256": "",
+  "sha256": "d6f4248f53e9655fe2f5757cc66a2f3d78303d222c0b94c4bdcd3bbd299b3f9a",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
   "releaseNotes": "4.4.1 fixes false-positive context-limit detection that triggered destructive compaction at every step, and preserves ALL user messages during summarization to prevent catastrophic forgetting of mid-run instructions.",
   "forceUpdate": true,
   "minSupportedVersion": "4.4.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97032000
 }
