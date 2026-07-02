@@ -582,8 +582,14 @@ public partial class ChatPageViewModel : ObservableObject
         StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
     }
 
-    private static void CopyPersistedMessage(Message source, Message target)
+    private void CopyPersistedMessage(Message source, Message target)
     {
+        // M4.4.6: Evict old cache entry before overwriting the Id. Without this,
+        // the per-message element cache accumulates orphaned entries every time
+        // a streaming draft is finalized and gets its persisted Id assigned.
+        if (target.Id != source.Id)
+            MessageIdMutated?.Invoke(target.Id);
+
         target.Id = source.Id;
         target.ChatId = source.ChatId;
         target.Role = source.Role;
@@ -1267,6 +1273,7 @@ public partial class ChatPageViewModel : ObservableObject
     public event EventHandler<Guid>? TurnCreated;
     public event EventHandler<AgentApprovalRequest>? AgentApprovalRequested;
     public event EventHandler? StreamingMessageUpdated;
+    public event Action<Guid>? MessageIdMutated; // M4.4.6: old Id before CopyPersistedMessage overwrites it
     public event EventHandler? AgentActivityChanged;
     protected virtual void OnTurnCreated(Guid turnId) =>
         TurnCreated?.Invoke(this, turnId);

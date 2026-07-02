@@ -1,14 +1,14 @@
 {
-  "version": "4.4.5",
+  "version": "4.4.6",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.4.5.exe",
-  "sha256": "9a4be28f9f199af2f57e54f05a43f1efe30d17e25e5606b2c3f5af10170eb052",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.4.6.exe",
+  "sha256": "",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.4.5: decouple streaming callbacks from UI thread (DirectProgress), SSE delta batching, TryParse caching — eliminates scroll lag and click stutter during agent streaming.",
+  "releaseNotes": "4.4.6: auto-scroll respects manual scroll, thinking expand/collapse preserved during streaming, streaming render fast-path, cache eviction on clear/remove/Id-change.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.4.5",
+  "minSupportedVersion": "4.4.6",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97030568
+  "installerSizeBytes": 0
 }

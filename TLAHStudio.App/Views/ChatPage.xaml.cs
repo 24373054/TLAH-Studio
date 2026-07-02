@@ -35,6 +35,11 @@ public sealed partial class ChatPage : UserControl
     private string _lastLayoutSignature = string.Empty;
     private readonly Dictionary<Guid, CachedMessageElement> _messageElementCache = new();
     private const int RenderThrottleMs = 50;
+    // M4.4.6: Track user scroll to prevent auto-scroll from fighting manual scrolling.
+    private bool _userScrolledUp;
+    // M4.4.6: Generation counter to skip full layout sync during streaming-only renders.
+    private int _renderGeneration;
+    private int _lastRenderGeneration = -1;
 
     public ChatPage()
     {
@@ -80,6 +85,7 @@ public sealed partial class ChatPage : UserControl
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.StreamingMessageUpdated += (_, _) => RequestRender();
+        _vm.MessageIdMutated += oldId => _messageElementCache.Remove(oldId); // M4.4.6: evict stale cache entry
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
@@ -145,6 +151,21 @@ public sealed partial class ChatPage : UserControl
             _sound?.Play(InteractionSound.Receive);
         }
 
+        // M4.4.6: Clean up orphaned per-message cache entries on remove/clear.
+        if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems != null)
+        {
+            foreach (Message msg in e.OldItems)
+                _messageElementCache.Remove(msg.Id);
+        }
+        if (e.Action == NotifyCollectionChangedAction.Reset)
+        {
+            InvalidateMessageCache();
+            _userScrolledUp = false;
+        }
+
+        // M4.4.6: Bump generation on structural changes so RenderMessages
+        // knows to do a full layout recalculation instead of the streaming fast-path.
+        _renderGeneration++;
         RequestRender(immediate: e.Action is NotifyCollectionChangedAction.Reset);
     }
 
@@ -196,6 +217,15 @@ public sealed partial class ChatPage : UserControl
             MessagesScrollViewer.ScrollableHeight);
 
         MessagesScrollViewer.ChangeView(null, target, null, false);
+
+        // M4.4.6: Track manual scroll direction. Scrolling up disables
+        // auto-scroll-to-bottom so the user can read older context without
+        // the render loop fighting them. Scrolling back to bottom re-enables it.
+        if (delta > 0)
+            _userScrolledUp = false; // scrolling toward bottom
+        else if (delta < 0 && target < MessagesScrollViewer.ScrollableHeight - 16)
+            _userScrolledUp = true;  // scrolling away from bottom
+
         e.Handled = true;
     }
 
@@ -204,39 +234,61 @@ public sealed partial class ChatPage : UserControl
         if (_vm == null) return;
         _lastRenderAt = DateTimeOffset.UtcNow;
 
-        var shouldScrollToBottom =
-            _vm.Messages.Count != _lastMessageCount || IsNearBottom();
-        _lastMessageCount = _vm.Messages.Count;
+        // M4.4.6: Streaming-only render — skip full layout recalculation.
+        // When only a streaming draft was updated (no collection change),
+        // UpdateCachedStreamingMessage already mutates the UI in-place.
+        // We can skip the O(n) signature build and SyncMessageChildren.
+        var generation = _renderGeneration;
+        var isStreamingOnly = generation == _lastRenderGeneration &&
+                              !string.IsNullOrEmpty(_lastLayoutSignature) &&
+                              _vm.Messages.Count == _lastMessageCount;
+        _lastRenderGeneration = generation;
 
-        var elements = new List<UIElement>();
-        if (!string.IsNullOrWhiteSpace(_vm.ErrorMessage))
-            elements.Add(BuildErrorState(_vm.ErrorMessage));
-
-        if (_vm.CurrentChat == null)
+        if (isStreamingOnly)
         {
-            SyncMessageChildren(elements.Append(BuildNoChatState()).ToList(), "no-chat");
-            return;
+            // Only refresh streaming drafts in-place — no layout rebuild.
+            foreach (var message in _vm.Messages)
+            {
+                if (IsStreamingDraft(message))
+                    GetCachedMessageElement(message);
+            }
         }
-
-        if (_vm.Messages.Count == 0)
+        else
         {
-            SyncMessageChildren(elements.Append(BuildEmptyState()).ToList(), "empty");
-            return;
-        }
+            var shouldScrollToBottom =
+                !_userScrolledUp && (_vm.Messages.Count != _lastMessageCount || IsNearBottom());
+            _lastMessageCount = _vm.Messages.Count;
 
-        foreach (var message in _vm.Messages)
-            elements.Add(GetCachedMessageElement(message));
+            var elements = new List<UIElement>();
+            if (!string.IsNullOrWhiteSpace(_vm.ErrorMessage))
+                elements.Add(BuildErrorState(_vm.ErrorMessage));
 
-        var signature = string.Join(
-            "|",
-            _vm.Messages.Select(m => $"{m.Id:N}:{m.Role}:{m.Content.Length}:{m.TurnId?.ToString("N") ?? "draft"}"))
-            + $"|err:{_vm.ErrorMessage?.Length ?? 0}";
-        SyncMessageChildren(elements, signature);
+            if (_vm.CurrentChat == null)
+            {
+                SyncMessageChildren(elements.Append(BuildNoChatState()).ToList(), "no-chat");
+                return;
+            }
 
-        if (shouldScrollToBottom)
-        {
-            DispatcherQueue.TryEnqueue(() =>
-                MessagesScrollViewer.ChangeView(null, MessagesScrollViewer.ScrollableHeight, null, true));
+            if (_vm.Messages.Count == 0)
+            {
+                SyncMessageChildren(elements.Append(BuildEmptyState()).ToList(), "empty");
+                return;
+            }
+
+            foreach (var message in _vm.Messages)
+                elements.Add(GetCachedMessageElement(message));
+
+            var signature = string.Join(
+                "|",
+                _vm.Messages.Select(m => $"{m.Id:N}:{m.Role}:{m.Content.Length}:{m.TurnId?.ToString("N") ?? "draft"}"))
+                + $"|err:{_vm.ErrorMessage?.Length ?? 0}";
+            SyncMessageChildren(elements, signature);
+
+            if (shouldScrollToBottom)
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                    MessagesScrollViewer.ChangeView(null, MessagesScrollViewer.ScrollableHeight, null, false));
+            }
         }
     }
 
@@ -642,8 +694,11 @@ public sealed partial class ChatPage : UserControl
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        if (visuals.Expander.IsExpanded != isExpanded)
-            visuals.Expander.IsExpanded = isExpanded;
+        // M4.4.6: Removed IsExpanded override. The Expander's initial state
+        // is set at creation in BuildLiveStreamBody. During streaming, the
+        // user's manual toggle must be preserved — re-applying isExpanded
+        // from TryParse (which always reads collapsed=false from the content
+        // string during streaming) would cancel the user's click every ~50ms.
 
         visuals.ThinkingText.Text = thinking;
         visuals.AnswerText.Text = answer;
