@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.4.0.exe",
-  "sha256": "",
+  "sha256": "21e8b040d1ad92888c925a4911349cca573e019bff9fbb641ac56119c821b11e",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.4.0: CJK-aware token estimation, model-specific UI context percentage, task preservation during compaction, and compaction cooldown for all states — fixes agent amnesia and stability issues during long Chinese-language runs.",
+  "releaseNotes": "4.4.0 CJK-aware token estimation, model-specific UI context percentage, task preservation during compaction, and compaction cooldown for all states — fixes agent amnesia and stability issues during long Chinese-language runs.",
   "forceUpdate": true,
   "minSupportedVersion": "4.4.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97028880
 }
