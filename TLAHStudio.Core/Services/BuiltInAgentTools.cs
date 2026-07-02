@@ -944,7 +944,7 @@ public sealed class GitAgentTool : IAgentTool
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
         AgentToolNames.Git,
-        "Run a constrained Git operation in the current chat sandbox repository.",
+        "Run a constrained Git operation in a sandbox directory.",
         new Dictionary<string, object>
         {
             ["operation"] = new Dictionary<string, object>
@@ -952,6 +952,11 @@ public sealed class GitAgentTool : IAgentTool
                 ["type"] = "string",
                 ["enum"] = AllowedOperations.OrderBy(x => x).ToArray(),
                 ["description"] = "Git operation."
+            },
+            ["path"] = new Dictionary<string, object>
+            {
+                ["type"] = "string",
+                ["description"] = "Relative path to the Git repository root inside the sandbox. Defaults to '.' (sandbox root). Use when .git is in a subdirectory."
             },
             ["arguments"] = new Dictionary<string, object>
             {
@@ -976,6 +981,22 @@ public sealed class GitAgentTool : IAgentTool
         if (!AllowedOperations.Contains(operation))
             return new AgentToolResult(false, string.Empty, $"Git operation is not allowed: {operation}");
 
+        // M4.4.1: Resolve working directory. Default to sandbox root; when `path`
+        // is given, resolve it relative to the sandbox root and validate it stays
+        // within the sandbox (no ../ escape).
+        var sandboxRoot = _sandbox.GetSandboxRoot(context.ChatId);
+        var repoPath = AgentToolSupport.GetString(root, "path");
+        var workingDir = sandboxRoot;
+        if (!string.IsNullOrWhiteSpace(repoPath))
+        {
+            var resolved = Path.GetFullPath(Path.Combine(sandboxRoot, repoPath.Trim()));
+            if (!resolved.StartsWith(sandboxRoot + Path.DirectorySeparatorChar) && resolved != sandboxRoot)
+                return new AgentToolResult(false, string.Empty, "Git path escapes the sandbox.");
+            if (!Directory.Exists(resolved))
+                return new AgentToolResult(false, string.Empty, $"Git path does not exist or is not a directory: {repoPath}");
+            workingDir = resolved;
+        }
+
         var args = new List<string>
         {
             "-c", "core.hooksPath=NUL",
@@ -997,7 +1018,7 @@ public sealed class GitAgentTool : IAgentTool
         var psi = new ProcessStartInfo
         {
             FileName = "git.exe",
-            WorkingDirectory = _sandbox.GetSandboxRoot(context.ChatId),
+            WorkingDirectory = workingDir,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
