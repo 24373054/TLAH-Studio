@@ -1015,6 +1015,28 @@ public sealed class GitAgentTool : IAgentTool
             }
         }
 
+        // M4.4.3: Safety guard for checkout/switch.
+        if (operation is "checkout" or "switch")
+        {
+            var userArgs = args.Skip(7).ToList(); // skip 6 config kv-pairs + operation
+
+            // Block "checkout ." / "checkout -- ." — silently discards ALL
+            // working-tree changes without listing which files are affected.
+            if (userArgs.Count == 0 || userArgs is ["."] or ["--", "."] ||
+                (userArgs.Count >= 2 && userArgs[^1] == "." && userArgs[^2] == "--"))
+                return new AgentToolResult(false, string.Empty,
+                    "git checkout/switch with '.' is blocked — it would discard all working-tree changes. Specify individual files or a branch name instead.");
+
+            // Block force-flag without explicit target — the most dangerous case.
+            // git checkout -f (no target) forces an implicit HEAD checkout, nuking
+            // all local modifications without listing what's lost.
+            var hasForce = userArgs.Any(a => a is "-f" or "--force");
+            var hasTarget = userArgs.Any(a => !a.StartsWith('-'));
+            if (hasForce && !hasTarget)
+                return new AgentToolResult(false, string.Empty,
+                    "git checkout/switch with -f/--force without a branch target is blocked. Specify the branch you want to switch to.");
+        }
+
         var psi = new ProcessStartInfo
         {
             FileName = "git.exe",
