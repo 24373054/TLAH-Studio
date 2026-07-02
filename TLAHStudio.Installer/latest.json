@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.3.2.exe",
-  "sha256": "",
+  "sha256": "d52c362a9ab66785c9f45a3c2c69bc90b856caeb235c3c995a9040940eee41ec",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.3.2 fixes sidebar chat icon clipping by giving SymbolIcon proper container breathing room, and bumps version.",
+  "releaseNotes": "4.3.2 fixes sidebar chat icon clipping by giving SymbolIcon proper container breathing room.",
   "forceUpdate": true,
   "minSupportedVersion": "4.3.2",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97030992
 }
