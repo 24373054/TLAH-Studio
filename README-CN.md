@@ -402,7 +402,7 @@ BackgroundTaskRecord
 
 ## 许可证与版权
 
-版权所有 &copy; 2026 北京科熵科技有限公司（Beijing Ke Entropy Technology Co., Ltd.）。保留所有权利。
+版权所有 &copy; 2026 北京刻熵科技有限公司（Beijing Ke Entropy Technology Co., Ltd.）。保留所有权利。
 
 ---
 
