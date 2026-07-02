@@ -93,13 +93,24 @@ public sealed class AgentContextManager : IAgentContextManager
 
     public bool IsContextLimitError(LlmResponse response)
     {
-        var text = $"{response.Error}\n{response.AssistantText}\n{JsonSerializer.Serialize(response.RawResponse)}";
-        return text.Contains("context", StringComparison.OrdinalIgnoreCase) &&
-               (text.Contains("length", StringComparison.OrdinalIgnoreCase) ||
-                text.Contains("window", StringComparison.OrdinalIgnoreCase) ||
-                text.Contains("token", StringComparison.OrdinalIgnoreCase) ||
-                text.Contains("too long", StringComparison.OrdinalIgnoreCase) ||
-                text.Contains("maximum", StringComparison.OrdinalIgnoreCase));
+        // M4.4.1: Only inspect the provider error field when the HTTP status
+        // indicates a client error. The old code concatenated AssistantText and
+        // the serialized RawResponse, which caused false positives whenever the
+        // agent's natural conversation mentioned "context", "token", or "length".
+        if (response.HttpStatus is >= 200 and < 400)
+            return false;
+        if (string.IsNullOrWhiteSpace(response.Error))
+            return false;
+
+        var error = response.Error;
+        return error.Contains("context", StringComparison.OrdinalIgnoreCase) &&
+               (error.Contains("length", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("window", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("too long", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("maximum", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("reduce", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("exceed", StringComparison.OrdinalIgnoreCase));
     }
 
     private static int EstimateTokens(IEnumerable<MessagePayload> messages) =>

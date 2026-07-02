@@ -107,15 +107,29 @@ public class ReactiveCompactorTests
     [Fact]
     public async Task Compact_SummarizeMiddle_ProducesCompactBoundary()
     {
+        // M4.4.1: User messages are now preserved, so we need enough non-user
+        // messages (> KeepHead+KeepTail+3 = 19) to actually form a compactable
+        // middle and trigger SummarizeMiddle.
         var messages = new List<MessagePayload>();
-        for (int i = 0; i < 30; i++)
-            messages.Add(new("user", $"message number {i} with some content"));
+        for (int i = 0; i < 10; i++)
+        {
+            messages.Add(new("user", $"user instruction {i}"));
+            messages.Add(new("assistant", $"assistant response {i}"));
+            messages.Add(new("tool", $"tool result {i} " + new string('x', 300), $"call_{i}"));
+        }
+        // Total: 30 messages > 19 gate. Head indices [0..3], tail indices [18..29].
+        // All 10 user messages are preserved. Assistant+tool messages at indices
+        // [4..17] that are NOT user messages form the compactable middle.
         var result = await _compactor.CompactAsync(messages, TokenBudgetState.CompactNow,
             CompactionStrategy.SummarizeMiddle, _budget);
         Assert.True(result.WasCompacted);
-        // The summary boundary is in the message list as a user message
+        // The summary boundary user message is in the result
         Assert.Contains(result.Messages, m =>
             m.Role == "user" && m.Content.Contains("context summary boundary"));
+        // All 10 user messages must survive compaction
+        var preservedUserCount = result.Messages.Count(m =>
+            m.Role == "user" && m.Content.Contains("user instruction"));
+        Assert.Equal(10, preservedUserCount);
     }
 
     [Fact]

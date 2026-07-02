@@ -133,16 +133,44 @@ public class ReactiveCompactor : IReactiveCompactor
         if (messages.Count <= KeepHeadMessages + KeepTailMessages + 3)
             return Microcompact(messages, tokenBudget, before);
 
-        var head = messages.Take(KeepHeadMessages).ToList();
-        var tail = messages.TakeLast(KeepTailMessages).ToList();
-        var middle = messages.Skip(KeepHeadMessages).Take(messages.Count - KeepHeadMessages - KeepTailMessages).ToList();
+        // M4.4.1: Build a dynamic preservation set. The old code used a fixed
+        // head-4 + tail-12 split, which caused mid-run user instructions
+        // (corrections, new goals, pivots) to be destroyed when they fell
+        // outside the head window. Now we preserve ALL user messages so the
+        // agent never "forgets" what the user told it to do.
+        var preserved = new HashSet<int>();
+        for (int i = 0; i < Math.Min(KeepHeadMessages, messages.Count); i++)
+            preserved.Add(i);
+        for (int i = Math.Max(0, messages.Count - KeepTailMessages); i < messages.Count; i++)
+            preserved.Add(i);
+        for (int i = 0; i < messages.Count; i++)
+            if (string.Equals(messages[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+                preserved.Add(i);
 
-        // Count role frequencies and extract key content
+        int tailStart = Math.Max(0, messages.Count - KeepTailMessages);
+        var head = new List<MessagePayload>();
+        var tail = new List<MessagePayload>();
+        var middle = new List<MessagePayload>();
+        for (int i = 0; i < messages.Count; i++)
+        {
+            if (!preserved.Contains(i))
+                middle.Add(messages[i]);
+            else if (i >= tailStart)
+                tail.Add(messages[i]);
+            else
+                head.Add(messages[i]);
+        }
+
+        if (middle.Count == 0)
+            return new CompactionResult(messages.ToList(), false, before, before,
+                "No compactable middle messages — all user messages and head/tail are preserved.");
+
+        // Count role frequencies and extract key content (most recent first)
         var roleCounts = middle.GroupBy(m => m.Role)
             .ToDictionary(g => g.Key, g => g.Count());
         var keyLines = middle
             .Where(m => !string.IsNullOrWhiteSpace(m.Content) && m.Content.Length > 20)
-            .Take(10)
+            .TakeLast(10)
             .Select(m => m.Content.Length > 200 ? m.Content[..200] + "..." : m.Content)
             .ToList();
 
@@ -153,7 +181,7 @@ public class ReactiveCompactor : IReactiveCompactor
             summary.AppendLine($"  {role}: {count}");
         if (keyLines.Count > 0)
         {
-            summary.AppendLine("Key content previews:");
+            summary.AppendLine("Key content previews (most recent first):");
             foreach (var line in keyLines)
                 summary.AppendLine($"  - {line}");
         }
@@ -166,7 +194,7 @@ public class ReactiveCompactor : IReactiveCompactor
 
         var after = tokenBudget.EstimateTokens(compacted);
         return new CompactionResult(compacted, true, before, after,
-            $"Summarized {middle.Count} middle messages into a compact boundary ({before}→{after} tokens).");
+            $"Summarized {middle.Count} middle messages into a compact boundary ({before}→{after} tokens). Preserved {preserved.Count} messages (including user instructions).");
     }
 
     private static CompactionResult EmergencyTruncate(
