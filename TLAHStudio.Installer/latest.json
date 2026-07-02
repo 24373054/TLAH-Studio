@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.4.4.exe",
-  "sha256": "",
+  "sha256": "6a3f20ab7d0dd49cd0ab6ec7d7f7e97c9c7813ca0d35ec1bf757f18c8b50490b",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
   "releaseNotes": "4.4.4 hotfix: replace broken GIT_EXTERNAL_DIFF= with --no-ext-diff auto-append for git diff operations.",
   "forceUpdate": true,
   "minSupportedVersion": "4.4.4",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97031224
 }
