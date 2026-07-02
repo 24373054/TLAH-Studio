@@ -1,14 +1,14 @@
 {
-  "version": "4.3.1",
+  "version": "4.3.2",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.3.1.exe",
-  "sha256": "7842ffb2a9c84a34320cda3e8d8b6b2480832116c53b03afd61849d779cde324",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.3.2.exe",
+  "sha256": "",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.3.1 tightens the input bar with unified icon-only controls, enables Agent mode by default, signs the release with the self-signed code-signing certificate, and refreshes the README for the current 4.x agent workspace.",
+  "releaseNotes": "4.3.2 fixes sidebar chat icon clipping by giving SymbolIcon proper container breathing room, and bumps version.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.3.1",
+  "minSupportedVersion": "4.3.2",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97028960
+  "installerSizeBytes": 0
 }

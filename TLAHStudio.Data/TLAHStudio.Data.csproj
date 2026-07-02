@@ -7,10 +7,10 @@
     <Product>TLAH Studio Data</Product>
     <Company>Beijing Ke Entropy Technology Co., Ltd.</Company>
     <Copyright>Copyright (C) 2026 Beijing Ke Entropy Technology Co., Ltd.</Copyright>
-    <Version>4.3.1</Version>
-    <FileVersion>4.3.1.0</FileVersion>
-    <AssemblyVersion>4.3.1.0</AssemblyVersion>
-    <InformationalVersion>4.3.1</InformationalVersion>
+    <Version>4.3.2</Version>
+    <FileVersion>4.3.2.0</FileVersion>
+    <AssemblyVersion>4.3.2.0</AssemblyVersion>
+    <InformationalVersion>4.3.2</InformationalVersion>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>
