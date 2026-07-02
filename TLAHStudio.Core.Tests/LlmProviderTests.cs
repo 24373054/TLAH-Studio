@@ -198,7 +198,9 @@ public class LlmProviderTests
             stream: stream);
 
         Assert.Equal("你好", result.AssistantText);
-        Assert.Equal(["你", "好"], stream.Deltas);
+        // M4.4.5: Deltas are batched (threshold 12 chars); two 1-char SSE
+        // lines combine into a single batched delta.
+        Assert.Equal(["你好"], stream.Deltas);
         Assert.Contains(stream.Updates, u => u.IsFinal);
         Assert.Equal(3, result.TokenUsage!["total_tokens"]);
         var request = Assert.Single(handler.Requests);
@@ -236,8 +238,10 @@ public class LlmProviderTests
 
         Assert.Equal("答案", result.AssistantText);
         Assert.Equal("想一想", result.ReasoningText);
+        // M4.4.5: Thinking deltas are NOT batched (only text deltas are).
         Assert.Equal(["想", "一想"], stream.ThinkingDeltas);
-        Assert.Equal(["答", "案"], stream.TextDeltas);
+        // Text deltas are batched (threshold 12 chars).
+        Assert.Equal(["答案"], stream.TextDeltas);
         Assert.Contains(stream.Updates, u => u.EventType == LlmStreamEventTypes.TextStarted);
     }
 
@@ -300,7 +304,8 @@ public class LlmProviderTests
             stream: stream);
 
         Assert.Equal("第一", result.AssistantText);
-        Assert.Equal(["第", "一"], stream.Deltas);
+        // M4.4.5: Deltas are batched (threshold 12 chars).
+        Assert.Equal(["第一"], stream.Deltas);
         Assert.Contains(stream.Updates, u => u.IsFinal);
         Assert.Equal(2, result.TokenUsage!["output_tokens"]);
         var request = Assert.Single(handler.Requests);
@@ -338,8 +343,10 @@ public class LlmProviderTests
 
         Assert.Equal("回答", result.AssistantText);
         Assert.Equal("先想", result.ReasoningText);
+        // M4.4.5: Thinking deltas are NOT batched.
         Assert.Equal(["先", "想"], stream.ThinkingDeltas);
-        Assert.Equal(["回", "答"], stream.TextDeltas);
+        // Text deltas are batched (threshold 12 chars).
+        Assert.Equal(["回答"], stream.TextDeltas);
         Assert.Contains(stream.Updates, u => u.EventType == LlmStreamEventTypes.TextStarted);
     }
 

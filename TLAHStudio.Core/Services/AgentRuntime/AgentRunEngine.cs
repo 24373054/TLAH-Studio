@@ -1401,11 +1401,30 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         IProgress<LlmStreamUpdate>? output, StreamingMetricsTracker tracker)
     {
         if (output == null) return null;
-        return new Progress<LlmStreamUpdate>(update =>
+        // M4.4.5: Direct IProgress<T> — no SynchronizationContext capture.
+        // Progress<T> captures SynchronizationContext.Current at construction
+        // time and marshals every callback to the UI thread via Post(). In agent
+        // mode this flooded the UI thread with ~60 callbacks/sec, causing
+        // scroll lag and unresponsive thinking-expand clicks. The callback
+        // only does thread-safe data operations (char count, forwarding) so
+        // SynchronizationContext marshaling was unnecessary overhead.
+        return new DirectProgress<LlmStreamUpdate>(update =>
         {
             tracker.Chars += update.Delta?.Length ?? 0;
             output.Report(update);
         });
+    }
+
+    /// <summary>
+    /// M4.4.5: A minimal IProgress&lt;T&gt; that invokes the handler synchronously
+    /// on the caller's thread. Unlike System.Progress&lt;T&gt;, this does NOT capture
+    /// or use SynchronizationContext — it is a pure pass-through.
+    /// </summary>
+    private sealed class DirectProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+        public DirectProgress(Action<T> handler) => _handler = handler;
+        public void Report(T value) => _handler(value);
     }
 
     /// <summary>

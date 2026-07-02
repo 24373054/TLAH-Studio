@@ -37,10 +37,10 @@ dotnet publish TLAHStudio.App/TLAHStudio.App.csproj -c Release -r win-x64 --self
 .\tools\ci.ps1 -Configuration Release -Platform x64
 
 # Release build + sign + verify + upload
-.\tools\build-release.ps1 -Version 4.4.4 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest -Upload
+.\tools\build-release.ps1 -Version 4.4.5 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest -Upload
 
 # Verify an existing release
-.\tools\verify-release.ps1 -Version 4.4.4 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version 4.4.5 -AllowUntrustedAuthenticode
 ```
 
 **Installer packaging:**
@@ -227,7 +227,7 @@ Version is stored in multiple places and must be kept in sync:
 - `TLAHStudio.Installer/version.json` and `TLAHStudio.Installer/latest.json`
 - `setup.iss` → `#define MyAppVersion`
 
-Semantic versioning (`Major.Minor.Patch`). Current: **4.4.4**.
+Semantic versioning (`Major.Minor.Patch`). Current: **4.4.5**.
 
 ## Key Architectural Patterns
 

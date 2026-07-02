@@ -251,6 +251,7 @@ public class AnthropicProvider : ILlmProvider
         var toolBuilders = new Dictionary<int, AnthropicToolCallBuilder>();
         Dictionary<string, int>? tokenUsage = null;
         var textStarted = false;
+        var pendingDelta = new StringBuilder(); // M4.4.5: SSE batching accumulator
 
         await using var streamBody = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         using var reader = new StreamReader(streamBody);
@@ -314,10 +315,16 @@ public class AnthropicProvider : ILlmProvider
                                     LlmStreamEventTypes.TextStarted));
                             }
                             text.Append(part);
-                            stream.Report(new LlmStreamUpdate(
-                                part,
-                                text.ToString(),
-                                LlmStreamEventTypes.TextDelta));
+                            pendingDelta.Append(part);
+                            // M4.4.5: Batch SSE deltas (see OpenAI provider for rationale).
+                            if (pendingDelta.Length >= 12)
+                            {
+                                stream.Report(new LlmStreamUpdate(
+                                    pendingDelta.ToString(),
+                                    text.ToString(),
+                                    LlmStreamEventTypes.TextDelta));
+                                pendingDelta.Clear();
+                            }
                         }
                     }
                     else if (delta.TryGetProperty("type", out deltaType) &&
@@ -363,6 +370,15 @@ public class AnthropicProvider : ILlmProvider
             }
         }
         sw.Stop();
+
+        // M4.4.5: Flush any remaining batched deltas before the final event.
+        if (pendingDelta.Length > 0)
+        {
+            stream.Report(new LlmStreamUpdate(
+                pendingDelta.ToString(),
+                text.ToString(),
+                LlmStreamEventTypes.TextDelta));
+        }
 
         stream.Report(new LlmStreamUpdate(
             string.Empty,

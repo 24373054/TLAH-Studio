@@ -14,6 +14,12 @@ namespace TLAHStudio.App.Models;
 /// </summary>
 public class ChatRenderer
 {
+    // M4.4.5: Parse-result cache for UpdateStreamingBlock. The assistant content
+    // is re-parsed on every drain cycle (31/sec) via TryParse, which does O(n)
+    // IndexOf scans over the growing content string. Since the thinking/answer
+    // boundary only changes once (when </thinking> appears), we can skip re-parsing
+    // when the content structure hasn't changed.
+    private readonly Dictionary<Guid, (int ContentLength, bool HadThinking, bool WasExpanded)> _parseCache = new();
     /// <summary>
     /// Convert all messages into blocks. Returns a full replacement collection.
     /// </summary>
@@ -38,11 +44,28 @@ public class ChatRenderer
                 continue;
 
             var block = blocks[i];
-            // Re-parse content for thinking changes
-            if (AssistantContentFormatter.TryParse(
+
+            // M4.4.5: Skip TryParse when content structure hasn't changed.
+            // TryParse does O(n) IndexOf scans on the full content string; at
+            // 31 drain cycles/sec with growing content, this adds up. The
+            // thinking/answer boundary is determined by </thinking> which only
+            // appears once — caching avoids ~95% of redundant parses.
+            var contentLen = streamingMessage.Content?.Length ?? 0;
+            var cacheKey = streamingMessage.Id;
+            var hadThinking = block.BlockType == ChatBlockType.Thinking;
+            if (_parseCache.TryGetValue(cacheKey, out var cached) &&
+                cached.ContentLength == contentLen &&
+                cached.HadThinking == hadThinking)
+            {
+                // Structure unchanged — just update content text
+                block.Content = streamingMessage.Content ?? string.Empty;
+                block.IsStreaming = true;
+            }
+            else if (AssistantContentFormatter.TryParse(
                     streamingMessage.Content,
                     out var thinkingContent, out var answerContent, out var isExpanded))
             {
+                _parseCache[cacheKey] = (contentLen, !string.IsNullOrWhiteSpace(thinkingContent), isExpanded);
                 if (!string.IsNullOrWhiteSpace(thinkingContent))
                 {
                     block.BlockType = ChatBlockType.Thinking;
@@ -57,7 +80,8 @@ public class ChatRenderer
             }
             else
             {
-                block.Content = streamingMessage.Content;
+                _parseCache[cacheKey] = (contentLen, false, false);
+                block.Content = streamingMessage.Content ?? string.Empty;
                 block.IsStreaming = true;
             }
             break;

@@ -253,6 +253,7 @@ public class OpenAICompatibleProvider : ILlmProvider
         var toolBuilders = new Dictionary<int, OpenAIToolCallBuilder>();
         Dictionary<string, int>? tokenUsage = null;
         var textStarted = false;
+        var pendingDelta = new StringBuilder(); // M4.4.5: SSE batching accumulator
 
         await using var streamBody = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         using var reader = new StreamReader(streamBody);
@@ -300,10 +301,18 @@ public class OpenAICompatibleProvider : ILlmProvider
                                     LlmStreamEventTypes.TextStarted));
                             }
                             text.Append(part);
-                            stream.Report(new LlmStreamUpdate(
-                                part,
-                                text.ToString(),
-                                LlmStreamEventTypes.TextDelta));
+                            pendingDelta.Append(part);
+                            // M4.4.5: Batch SSE deltas to reduce IProgress callbacks.
+                            // Each SSE line is ~1-5 tokens; batching 12+ chars worth
+                            // reduces callbacks ~3-5× without adding perceptible latency.
+                            if (pendingDelta.Length >= 12)
+                            {
+                                stream.Report(new LlmStreamUpdate(
+                                    pendingDelta.ToString(),
+                                    text.ToString(),
+                                    LlmStreamEventTypes.TextDelta));
+                                pendingDelta.Clear();
+                            }
                         }
                     }
 
@@ -355,6 +364,15 @@ public class OpenAICompatibleProvider : ILlmProvider
             }
         }
         sw.Stop();
+
+        // M4.4.5: Flush any remaining batched deltas before the final event.
+        if (pendingDelta.Length > 0)
+        {
+            stream.Report(new LlmStreamUpdate(
+                pendingDelta.ToString(),
+                text.ToString(),
+                LlmStreamEventTypes.TextDelta));
+        }
 
         stream.Report(new LlmStreamUpdate(
             string.Empty,
