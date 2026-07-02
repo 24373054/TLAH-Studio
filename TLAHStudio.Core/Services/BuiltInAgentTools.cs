@@ -1015,6 +1015,13 @@ public sealed class GitAgentTool : IAgentTool
             }
         }
 
+        // M4.4.3: Prevent external diff spawn failures. Git inherits the
+        // parent process environment, which may carry a stale GIT_EXTERNAL_DIFF
+        // pointing to a non-existent tool. Appending --no-ext-diff ensures we
+        // always use the built-in diff, matching terminal_exec behaviour.
+        if (operation == "diff" && !args.Contains("--no-ext-diff"))
+            args.Add("--no-ext-diff");
+
         // M4.4.3: Safety guard for checkout/switch.
         if (operation is "checkout" or "switch")
         {
@@ -1050,7 +1057,6 @@ public sealed class GitAgentTool : IAgentTool
         psi.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
         psi.Environment["GIT_PAGER"] = "cat";
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        psi.Environment["GIT_EXTERNAL_DIFF"] = "";
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
         using var process = new Process { StartInfo = psi };
