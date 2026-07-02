@@ -602,9 +602,18 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 "Context is within the active model budget.");
         }
 
-        if (!forceCompact &&
-            tokenState == TokenBudgetState.CompactSoon &&
-            state.CurrentStep - state.LastCompactedStep < 4)
+        // M4.4.0: Cooldown for ALL compaction states, not just CompactSoon.
+        // Without cooldown, force-compaction from context-limit errors could fire
+        // at every step, producing destructive SummarizeMiddle on each iteration.
+        var cooldownSteps = tokenState switch
+        {
+            TokenBudgetState.Blocking => 1,
+            TokenBudgetState.CompactNow => 2,
+            TokenBudgetState.CompactSoon => 4,
+            _ => forceCompact ? 1 : 0
+        };
+        if (!forceCompact && tokenState >= TokenBudgetState.CompactSoon &&
+            state.CurrentStep - state.LastCompactedStep < cooldownSteps)
         {
             return new AgentContextPreparationResult(
                 state.Messages.ToList(),

@@ -86,6 +86,25 @@ public class TokenBudgetService : ITokenBudgetService
         return total;
     }
 
-    private static int EstimateText(string? text) =>
-        string.IsNullOrEmpty(text) ? 0 : Math.Max(1, (int)(text.Length / 3.2));
+    private static int EstimateText(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+
+        // M4.4.0: CJK-aware estimation. CJK characters average ~1.5 tokens each
+        // in most tokenizers, while Latin text averages ~3.2 characters per token.
+        // The old formula (chars/3.2) underestimated Chinese by 3–6×, causing
+        // repeated context-limit errors followed by destructive force-compaction.
+        int cjk = 0;
+        foreach (char c in text)
+        {
+            if (c >= '⺀' && c <= '鿿' ||   // CJK Radicals → Ideographs
+                c >= '가' && c <= '힯' ||    // Hangul Syllables
+                c >= '豈' && c <= '﫿' ||    // CJK Compatibility Ideographs
+                c >= '＀' && c <= '￯' ||    // Fullwidth Forms
+                c >= '　' && c <= 'ヿ')      // CJK Symbols + Kana
+                cjk++;
+        }
+        int nonCjk = text.Length - cjk;
+        return Math.Max(1, (int)Math.Ceiling(cjk * 1.5 + nonCjk / 3.2));
+    }
 }

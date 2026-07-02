@@ -109,8 +109,25 @@ public sealed class AgentContextManager : IAgentContextManager
             EstimateTokens(m.ReasoningContent ?? string.Empty) +
             (m.ToolCalls?.Sum(t => EstimateTokens(t.Name) + EstimateTokens(t.ArgumentsJson)) ?? 0)));
 
-    private static int EstimateTokens(string text) =>
-        string.IsNullOrEmpty(text) ? 0 : Math.Max(1, (int)Math.Ceiling(text.Length / 3.6));
+    private static int EstimateTokens(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+
+        // M4.4.0: CJK-aware estimation matching TokenBudgetService logic
+        // but with the legacy 3.6 chars/token ratio for non-CJK text.
+        int cjk = 0;
+        foreach (char c in text)
+        {
+            if (c >= '⺀' && c <= '鿿' ||   // CJK Radicals → Ideographs
+                c >= '가' && c <= '힯' ||    // Hangul Syllables
+                c >= '豈' && c <= '﫿' ||    // CJK Compatibility Ideographs
+                c >= '＀' && c <= '￯' ||    // Fullwidth Forms
+                c >= '　' && c <= 'ヿ')      // CJK Symbols + Kana
+                cjk++;
+        }
+        int nonCjk = text.Length - cjk;
+        return Math.Max(1, (int)Math.Ceiling(cjk * 1.5 + nonCjk / 3.6));
+    }
 
     private static List<MessagePayload> TrimLargeToolResults(
         IEnumerable<MessagePayload> messages,

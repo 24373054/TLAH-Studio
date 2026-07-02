@@ -114,6 +114,15 @@ public sealed partial class AgentTaskService : IAgentTaskService
             saved.Add(item);
         }
 
+        // M4.4.0: Protect existing tasks when the model sends an empty todo list.
+        // After context compaction, the model may forget its task list and send zero
+        // todos, which would otherwise cancel all open todo-sourced tasks.
+        if (todos.Count == 0 && openExisting.Count > 0)
+        {
+            await _db.SaveChangesAsync(ct);
+            return saved.OrderBy(t => t.CreatedAt).Select(ToSnapshot).ToList();
+        }
+
         foreach (var item in openExisting.Values.Where(t => !seen.Contains(t.Id)))
         {
             item.Status = AgentTaskStatuses.Cancelled;

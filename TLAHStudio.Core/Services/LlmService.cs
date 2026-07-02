@@ -7,6 +7,7 @@ using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.AgentRuntime;
 using TLAHStudio.Core.Services.Background;
+using TLAHStudio.Core.Services.Context;
 
 #pragma warning disable CA1416 // TLAH Studio is a Windows desktop client; DPAPI is intentionally Windows-only.
 
@@ -38,6 +39,7 @@ public class LlmService : ILlmService
     private readonly IProjectMemoryService _projectMemory;
     private readonly IToolResultPersistenceService _toolResultPersistence;
     private readonly IAgentRunEngineV2 _agentRunEngineV2;
+    private readonly ITokenBudgetService _tokenBudget;
 
     public LlmService(
         DbContext db,
@@ -55,7 +57,8 @@ public class LlmService : ILlmService
         IAgentContextManager? agentContextManager = null,
         IProjectMemoryService? projectMemory = null,
         IToolResultPersistenceService? toolResultPersistence = null,
-        IAgentRunEngineV2? agentRunEngineV2 = null)
+        IAgentRunEngineV2? agentRunEngineV2 = null,
+        ITokenBudgetService? tokenBudget = null)
     {
         _db = db;
         _chatService = chatService;
@@ -132,6 +135,7 @@ public class LlmService : ILlmService
             _sandboxCommandService, _agentTools, _toolPlatform, _agentEventStream,
             _checkpointStore, _providerStreamAdapter, _toolExecutionScheduler,
             _agentContextManager, _projectMemory, _toolResultPersistence);
+        _tokenBudget = tokenBudget ?? new TokenBudgetService();
     }
 
     /// <summary>
@@ -693,7 +697,12 @@ public class LlmService : ILlmService
         var filesTokens = EstimateContextTokens(memory) + EstimateContextTokens(string.Join('\n', artifactRefs));
 
         var total = conversationTokens + executionResultTokens + toolsTokens + mcpTokens + filesTokens;
-        var available = Math.Max(1, effective.ContextBudgetTokens);
+
+        // M4.4.0: Use model-specific context window instead of the hardcoded 32K budget.
+        // The old formula (total / 32K) showed wildly misleading percentages — for a 1M-context
+        // model like deepseek-v4-pro the display was ~30× higher than actual usage.
+        var modelBudget = _tokenBudget.GetBudget(effective.Provider, effective.Model);
+        var available = Math.Max(1, modelBudget.AvailableForContext);
         return new ContextUsageSnapshot(
             total,
             available,
