@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.5.0.exe",
-  "sha256": "",
+  "sha256": "2ec5e44b8e05a5794120b2ee83dc752844c2116b8a6b0c5495e56fcd043e96ed",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.5.0: session memory (cross-compaction accumulated context), read-before-write guard, stale-file timestamp detection, file content re-injection after compaction.",
+  "releaseNotes": "4.5.0: session memory (cross-compaction accumulated context), read-before-write guard, stale-file timestamp detection, post-compaction file content re-injection.",
   "forceUpdate": true,
   "minSupportedVersion": "4.5.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97036808
 }
