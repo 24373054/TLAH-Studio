@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.6.0.exe",
-  "sha256": "",
+  "sha256": "b660f16f4091bf48f6d54abaf9b8987ac70fda184c60e9c21d6a3d204e1b9d87",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.6.0: flag-level command allowlist (git/grep/find), destructive operation warnings (16 patterns), command-level rule matching, bypass-immune safety checks for protected paths.",
+  "releaseNotes": "4.6.0: flag-level command allowlist (git/grep/find), destructive operation warnings (16 patterns), command-level rule matching, bypass-immune safety checks.",
   "forceUpdate": true,
   "minSupportedVersion": "4.6.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97044504
 }
