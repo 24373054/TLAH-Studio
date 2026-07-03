@@ -99,6 +99,22 @@ public sealed class FlagLevelValidationService : IFlagLevelValidationService
          "May destroy Terraform infrastructure."),
     ];
 
+    // ── SHARED DEPENDENCIES (must precede Allowlist — C# static fields init in textual order) ──
+
+    private static readonly Dictionary<string, FlagArgType> EmptyFlags = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly CommandConfig GitReadOnly = new(
+        new Dictionary<string, FlagArgType>(StringComparer.OrdinalIgnoreCase),
+        GitSafeGuard, GitSafeRegex);
+
+    private static readonly Regex FindSafeRegex = new(
+        @"^find(?:\s+(?:\\[()]|(?!-delete\b|-exec\b|-execdir\b|-ok\b|-okdir\b|-fprint0?\b|-fls\b|-fprintf\b)[^<>()$`|{}&;\n\r\s]|\s)+)?$",
+        RegexOptions.Compiled);
+
+    private static readonly Regex GitSafeRegex = new(
+        @"^(?!.*\s-c[\s=])(?!.*\s--exec-path[\s=])(?!.*\s--config-env[\s=]).*",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     // ── FLAG ALLOWLIST ──────────────────────────────────────────────
     // Key: command prefix (space-separated), matched by longest-prefix.
     // Value: safe flags configuration.
@@ -192,19 +208,6 @@ public sealed class FlagLevelValidationService : IFlagLevelValidationService
         ["git tag"] = new CommandConfig(EmptyFlags,
             (cmd, _) => HasNoListFlag(cmd) ? "git tag without -l/--list would create a tag." : null),
     };
-
-    private static readonly Dictionary<string, FlagArgType> EmptyFlags = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly CommandConfig GitReadOnly = new(new Dictionary<string, FlagArgType>(StringComparer.OrdinalIgnoreCase), GitSafeGuard, GitSafeRegex);
-
-    // Find: blocks write/exec flags
-    private static readonly Regex FindSafeRegex = new(
-        @"^find(?:\s+(?:\\[()]|(?!-delete\b|-exec\b|-execdir\b|-ok\b|-okdir\b|-fprint0?\b|-fls\b|-fprintf\b)[^<>()$`|{}&;\n\r\s]|\s)+)?$",
-        RegexOptions.Compiled);
-
-    // Git: blocks -c/--exec-path/--config-env injection
-    private static readonly Regex GitSafeRegex = new(
-        @"^(?!.*\s-c[\s=])(?!.*\s--exec-path[\s=])(?!.*\s--config-env[\s=]).*",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static string? GitSafeGuard(string cmd, string[]? _) =>
         GitSafeRegex.IsMatch(cmd) ? null : "git -c/--exec-path/--config-env injection blocked.";
@@ -311,9 +314,8 @@ public sealed class FlagLevelValidationService : IFlagLevelValidationService
         return tokens;
     }
 
-    private static (CommandConfig? Config, string[]? Args) MatchCommand(List<string> tokens)
+    private static (CommandConfig? Config, string[] Args) MatchCommand(List<string> tokens)
     {
-        // Try longest prefix match first
         for (int prefixLen = Math.Min(tokens.Count, 3); prefixLen >= 1; prefixLen--)
         {
             var key = string.Join(" ", tokens.Take(prefixLen));
@@ -325,7 +327,7 @@ public sealed class FlagLevelValidationService : IFlagLevelValidationService
                 return (config, args);
             }
         }
-        return (null, null);
+        return (null, Array.Empty<string>());
     }
 
     private static (FlagValidationResult Result, string? Reason) ValidateFlags(
