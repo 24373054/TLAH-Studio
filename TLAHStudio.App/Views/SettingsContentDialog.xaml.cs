@@ -75,6 +75,17 @@ public sealed partial class SettingsContentDialog : ContentDialog
         UserRoleBox.Text = _vm.UserRole;
         SoundEffectsToggle.IsOn = _vm.IsSoundEffectsEnabled;
         SoundVolumeSlider.Value = _vm.SoundVolume;
+        // M4.7.0: Populate theme/density combos
+        ThemeCombo.Items.Clear();
+        ThemeCombo.Items.Add("Dark");
+        ThemeCombo.Items.Add("Light");
+        ThemeCombo.SelectedItem = (App.MainWindow as MainWindow)?.ThemeService.CurrentTheme == TLAHStudio.App.ViewModels.ElementTheme.Dark
+            ? "Dark" : "Light";
+        DensityCombo.Items.Clear();
+        DensityCombo.Items.Add("Comfortable");
+        DensityCombo.Items.Add("Compact");
+        DensityCombo.SelectedItem = (App.MainWindow as MainWindow)?.UiDensityService.CurrentDensity == UiDensity.Compact
+            ? "Compact" : "Comfortable";
         _isPopulating = false;
     }
 
@@ -200,6 +211,30 @@ public sealed partial class SettingsContentDialog : ContentDialog
     private void TempSlider_ValueChanged(object sender, RoutedEventArgs e)
     {
         TempValueLabel.Text = TempSlider.Value.ToString("0.0");
+    }
+
+    private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isPopulating || _vm == null) return;
+        var theme = (sender as ComboBox)?.SelectedItem is "Dark"
+            ? TLAHStudio.App.ViewModels.ElementTheme.Dark : TLAHStudio.App.ViewModels.ElementTheme.Light;
+        (App.MainWindow as MainWindow)?.ThemeService.SetTheme(theme);
+    }
+
+    private void DensityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isPopulating || _vm == null) return;
+        var density = (sender as ComboBox)?.SelectedItem is "Compact"
+            ? UiDensity.Compact : UiDensity.Comfortable;
+        (App.MainWindow as MainWindow)?.UiDensityService.SetDensity(density);
+    }
+
+    private async void ResetGlobal_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm == null) return;
+        _vm.ResetGlobalSettings();
+        await _vm.LoadAsync();
+        PopulateGlobal();
     }
 
     private static void SetScopeTab(Button button, bool selected)

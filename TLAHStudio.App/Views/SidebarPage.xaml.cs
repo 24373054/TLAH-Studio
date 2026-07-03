@@ -37,7 +37,6 @@ public sealed partial class SidebarPage : UserControl
         _vm = w.SidebarVM;
         DataContext = _vm;
         PinnedListView.ItemsSource = _vm.PinnedChats;
-        ChatListView.ItemsSource = _vm.RegularChats;
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(SidebarViewModel.SelectedChat))
@@ -78,10 +77,9 @@ public sealed partial class SidebarPage : UserControl
             return;
 
         _syncingSelection = true;
-        if (list == PinnedListView)
-            ChatListView.SelectedItem = null;
-        else
-            PinnedListView.SelectedItem = null;
+        void ClearOthers() { PinnedListView.SelectedItem = null; TodayListView.SelectedItem = null; YesterdayListView.SelectedItem = null; ThisWeekListView.SelectedItem = null; OlderListView.SelectedItem = null; }
+        ClearOthers();
+        if (list is not null) list.SelectedItem = chat; // Re-apply after clearing
         _syncingSelection = false;
 
         _vm.SelectedChat = chat;
@@ -472,11 +470,14 @@ public sealed partial class SidebarPage : UserControl
             return;
 
         PinnedSection.Visibility = _vm.HasPinnedChats ? Visibility.Visible : Visibility.Collapsed;
-        ChatsSection.Visibility = _vm.HasRegularChats ? Visibility.Visible : Visibility.Collapsed;
+        // M4.7.0: Date-grouped sections visibility
+        TodaySection.Visibility = _vm.TodayChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        YesterdaySection.Visibility = _vm.YesterdayChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ThisWeekSection.Visibility = _vm.ThisWeekChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        OlderSection.Visibility = _vm.OlderChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyListState.Visibility = _isCollapsed || _vm.HasVisibleChats
             ? Visibility.Collapsed
             : Visibility.Visible;
-        ChatsSectionTitle.Text = _vm.ShowArchived ? "Archived" : "Chats";
         ArchivedToggle.IsChecked = _vm.ShowArchived;
 
         if (!string.IsNullOrWhiteSpace(_vm.SearchText))
@@ -503,7 +504,10 @@ public sealed partial class SidebarPage : UserControl
 
         _syncingSelection = true;
         PinnedListView.SelectedItem = _vm.PinnedChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
-        ChatListView.SelectedItem = _vm.RegularChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
+        TodayListView.SelectedItem = _vm.TodayChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
+        YesterdayListView.SelectedItem = _vm.YesterdayChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
+        ThisWeekListView.SelectedItem = _vm.ThisWeekChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
+        OlderListView.SelectedItem = _vm.OlderChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
         _syncingSelection = false;
     }
 
@@ -521,7 +525,6 @@ public sealed partial class SidebarPage : UserControl
         NewChatText.Visibility = visibility;
         SearchToolsGrid.Visibility = visibility;
         PinnedSectionTitle.Visibility = visibility;
-        ChatsSectionTitle.Visibility = visibility;
         ExpandedFooter.Visibility = visibility;
         CompactFooter.Visibility = _isCollapsed ? Visibility.Visible : Visibility.Collapsed;
         SidebarHeader.Padding = _isCollapsed
@@ -544,7 +547,10 @@ public sealed partial class SidebarPage : UserControl
         var templateKey = _isCollapsed ? "CompactChatItemTemplate" : "ChatItemTemplate";
         var template = (DataTemplate)Resources[templateKey];
         PinnedListView.ItemTemplate = template;
-        ChatListView.ItemTemplate = template;
+        TodayListView.ItemTemplate = template;
+        YesterdayListView.ItemTemplate = template;
+        ThisWeekListView.ItemTemplate = template;
+        OlderListView.ItemTemplate = template;
 
         if (App.MainWindow is MainWindow window)
             ApplyDensity(window.UiDensityService);

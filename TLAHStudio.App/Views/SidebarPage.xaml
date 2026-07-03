@@ -308,23 +308,10 @@
                     </ListView>
                 </StackPanel>
 
-                <StackPanel x:Name="ChatsSection" Spacing="4">
-                    <TextBlock
-                        x:Name="ChatsSectionTitle"
-                        Text="Chats"
-                        Margin="8,4,8,0"
-                        FontSize="11"
-                        FontWeight="SemiBold"
-                        Foreground="{ThemeResource TextMutedBrush}" />
-                    <ListView
-                        x:Name="ChatListView"
-                        Background="Transparent"
-                        SelectionMode="Single"
-                        IsItemClickEnabled="False"
-                        SelectionChanged="ChatList_SelectionChanged"
-                        ItemTemplate="{StaticResource ChatItemTemplate}"
-                        TabIndex="5"
-                        AutomationProperties.Name="Chats">
+                <!-- M4.7.0: Date-grouped chat sections -->
+                <StackPanel x:Name="TodaySection" Spacing="4" Visibility="Collapsed">
+                    <TextBlock Text="Today" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
+                    <ListView x:Name="TodayListView" ItemsSource="{x:Bind _vm.TodayChats, Mode=OneWay}" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="Today chats">
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="Margin" Value="0,2" />
@@ -332,6 +319,132 @@
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                                 <Setter Property="MinHeight" Value="62" />
                                 <Setter Property="CornerRadius" Value="8" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListViewItem">
+                                            <Grid>
+                                                <Border x:Name="SelectionIndicator" Width="3" HorizontalAlignment="Left" VerticalAlignment="Stretch" Background="Transparent" CornerRadius="2,0,0,2" />
+                                                <ListViewItemPresenter x:Name="Root" ContentTransitions="{TemplateBinding ContentTransitions}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" Padding="{TemplateBinding Padding}" CornerRadius="{TemplateBinding CornerRadius}" SelectionCheckMarkVisualEnabled="False" />
+                                                <VisualStateManager.VisualStateGroups>
+                                                    <VisualStateGroup x:Name="CommonStates">
+                                                        <VisualState x:Name="Normal" />
+                                                        <VisualState x:Name="Selected">
+                                                            <VisualState.Setters>
+                                                                <Setter Target="SelectionIndicator.Background" Value="{ThemeResource AccentBrush}" />
+                                                                <Setter Target="Root.Background" Value="{ThemeResource AccentSoftBrush}" />
+                                                            </VisualState.Setters>
+                                                        </VisualState>
+                                                    </VisualStateGroup>
+                                                </VisualStateManager.VisualStateGroups>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
+                </StackPanel>
+                <StackPanel x:Name="YesterdaySection" Spacing="4" Visibility="Collapsed">
+                    <TextBlock Text="Yesterday" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
+                    <ListView x:Name="YesterdayListView" ItemsSource="{x:Bind _vm.YesterdayChats, Mode=OneWay}" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="Yesterday chats">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="Margin" Value="0,2" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="MinHeight" Value="62" />
+                                <Setter Property="CornerRadius" Value="8" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListViewItem">
+                                            <Grid>
+                                                <Border x:Name="SelectionIndicator" Width="3" HorizontalAlignment="Left" VerticalAlignment="Stretch" Background="Transparent" CornerRadius="2,0,0,2" />
+                                                <ListViewItemPresenter x:Name="Root" ContentTransitions="{TemplateBinding ContentTransitions}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" Padding="{TemplateBinding Padding}" CornerRadius="{TemplateBinding CornerRadius}" SelectionCheckMarkVisualEnabled="False" />
+                                                <VisualStateManager.VisualStateGroups>
+                                                    <VisualStateGroup x:Name="CommonStates">
+                                                        <VisualState x:Name="Normal" />
+                                                        <VisualState x:Name="Selected">
+                                                            <VisualState.Setters>
+                                                                <Setter Target="SelectionIndicator.Background" Value="{ThemeResource AccentBrush}" />
+                                                                <Setter Target="Root.Background" Value="{ThemeResource AccentSoftBrush}" />
+                                                            </VisualState.Setters>
+                                                        </VisualState>
+                                                    </VisualStateGroup>
+                                                </VisualStateManager.VisualStateGroups>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
+                </StackPanel>
+                <StackPanel x:Name="ThisWeekSection" Spacing="4" Visibility="Collapsed">
+                    <TextBlock Text="This Week" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
+                    <ListView x:Name="ThisWeekListView" ItemsSource="{x:Bind _vm.ThisWeekChats, Mode=OneWay}" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="This week chats">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="Margin" Value="0,2" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="MinHeight" Value="62" />
+                                <Setter Property="CornerRadius" Value="8" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListViewItem">
+                                            <Grid>
+                                                <Border x:Name="SelectionIndicator" Width="3" HorizontalAlignment="Left" VerticalAlignment="Stretch" Background="Transparent" CornerRadius="2,0,0,2" />
+                                                <ListViewItemPresenter x:Name="Root" ContentTransitions="{TemplateBinding ContentTransitions}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" Padding="{TemplateBinding Padding}" CornerRadius="{TemplateBinding CornerRadius}" SelectionCheckMarkVisualEnabled="False" />
+                                                <VisualStateManager.VisualStateGroups>
+                                                    <VisualStateGroup x:Name="CommonStates">
+                                                        <VisualState x:Name="Normal" />
+                                                        <VisualState x:Name="Selected">
+                                                            <VisualState.Setters>
+                                                                <Setter Target="SelectionIndicator.Background" Value="{ThemeResource AccentBrush}" />
+                                                                <Setter Target="Root.Background" Value="{ThemeResource AccentSoftBrush}" />
+                                                            </VisualState.Setters>
+                                                        </VisualState>
+                                                    </VisualStateGroup>
+                                                </VisualStateManager.VisualStateGroups>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
+                </StackPanel>
+                <StackPanel x:Name="OlderSection" Spacing="4" Visibility="Collapsed">
+                    <TextBlock Text="Older" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
+                    <ListView x:Name="OlderListView" ItemsSource="{x:Bind _vm.OlderChats, Mode=OneWay}" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="Older chats">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="Margin" Value="0,2" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="MinHeight" Value="62" />
+                                <Setter Property="CornerRadius" Value="8" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListViewItem">
+                                            <Grid>
+                                                <Border x:Name="SelectionIndicator" Width="3" HorizontalAlignment="Left" VerticalAlignment="Stretch" Background="Transparent" CornerRadius="2,0,0,2" />
+                                                <ListViewItemPresenter x:Name="Root" ContentTransitions="{TemplateBinding ContentTransitions}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" Padding="{TemplateBinding Padding}" CornerRadius="{TemplateBinding CornerRadius}" SelectionCheckMarkVisualEnabled="False" />
+                                                <VisualStateManager.VisualStateGroups>
+                                                    <VisualStateGroup x:Name="CommonStates">
+                                                        <VisualState x:Name="Normal" />
+                                                        <VisualState x:Name="Selected">
+                                                            <VisualState.Setters>
+                                                                <Setter Target="SelectionIndicator.Background" Value="{ThemeResource AccentBrush}" />
+                                                                <Setter Target="Root.Background" Value="{ThemeResource AccentSoftBrush}" />
+                                                            </VisualState.Setters>
+                                                        </VisualState>
+                                                    </VisualStateGroup>
+                                                </VisualStateManager.VisualStateGroups>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
                             </Style>
                         </ListView.ItemContainerStyle>
                     </ListView>

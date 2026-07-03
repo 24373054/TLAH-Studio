@@ -18,6 +18,12 @@ public partial class SidebarViewModel : ObservableObject
     public ObservableCollection<ChatSummaryDto> PinnedChats { get; } = new();
     public ObservableCollection<ChatSummaryDto> RegularChats { get; } = new();
 
+    // M4.7.0: Date-grouped regular chats for sidebar sections.
+    public ObservableCollection<ChatSummaryDto> TodayChats { get; } = new();
+    public ObservableCollection<ChatSummaryDto> YesterdayChats { get; } = new();
+    public ObservableCollection<ChatSummaryDto> ThisWeekChats { get; } = new();
+    public ObservableCollection<ChatSummaryDto> OlderChats { get; } = new();
+
     [ObservableProperty]
     private ChatSummaryDto? _selectedChat;
 
@@ -59,6 +65,11 @@ public partial class SidebarViewModel : ObservableObject
             Chats.Clear();
             PinnedChats.Clear();
             RegularChats.Clear();
+            TodayChats.Clear();
+            YesterdayChats.Clear();
+            ThisWeekChats.Clear();
+            OlderChats.Clear();
+            var now = DateTime.Now.Date;
             foreach (var chat in chats)
             {
                 Chats.Add(chat);
@@ -67,6 +78,7 @@ public partial class SidebarViewModel : ObservableObject
                 else
                     RegularChats.Add(chat);
             }
+            PopulateDateGroups();
             UpdateGroupState();
 
             if (currentId != null)
@@ -97,6 +109,7 @@ public partial class SidebarViewModel : ObservableObject
         if (chat != null) Chats.Remove(chat);
         if (chat != null) PinnedChats.Remove(chat);
         if (chat != null) RegularChats.Remove(chat);
+        if (chat != null) { TodayChats.Remove(chat); YesterdayChats.Remove(chat); ThisWeekChats.Remove(chat); OlderChats.Remove(chat); }
         UpdateGroupState();
 
         if (!wasSelected)
@@ -162,6 +175,26 @@ public partial class SidebarViewModel : ObservableObject
 
     public Task<string> ExportChatJsonAsync(Guid chatId) =>
         _chatService.ExportChatJsonAsync(chatId);
+
+    // M4.7.0: Populate date-grouped collections from RegularChats.
+    private void PopulateDateGroups()
+    {
+        TodayChats.Clear();
+        YesterdayChats.Clear();
+        ThisWeekChats.Clear();
+        OlderChats.Clear();
+        var now = DateTime.Now.Date;
+        var yesterday = now.AddDays(-1);
+        var weekStart = now.AddDays(-(int)now.DayOfWeek);
+        foreach (var chat in RegularChats)
+        {
+            var date = chat.UpdatedAt.Date;
+            if (date == now) TodayChats.Add(chat);
+            else if (date == yesterday) YesterdayChats.Add(chat);
+            else if (date >= weekStart) ThisWeekChats.Add(chat);
+            else OlderChats.Add(chat);
+        }
+    }
 
     private void UpdateGroupState()
     {

@@ -295,8 +295,26 @@ public sealed partial class AgentActivityPanelControl : UserControl
             return stack;
         }
 
-        foreach (var line in run.Lines)
-            stack.Children.Add(BuildActivityLine(line));
+        // M4.7.0: Tree-draw the activity lines with hierarchy and timing.
+        for (int i = 0; i < run.Lines.Count; i++)
+        {
+            var line = run.Lines[i];
+            var isLast = i == run.Lines.Count - 1;
+            var prefix = isLast ? "└─ " : "├─ ";
+
+            // Compute elapsed from the previous line
+            string? elapsed = null;
+            if (i > 0)
+            {
+                var prev = run.Lines[i - 1];
+                var delta = line.CreatedAt - prev.CreatedAt;
+                elapsed = delta.TotalSeconds < 1
+                    ? $"{delta.TotalMilliseconds:F0}ms"
+                    : $"{delta.TotalSeconds:F1}s";
+            }
+
+            stack.Children.Add(BuildActivityLine(line, prefix, elapsed));
+        }
 
         return stack;
     }
@@ -404,7 +422,7 @@ public sealed partial class AgentActivityPanelControl : UserControl
         return grid;
     }
 
-    private UIElement BuildActivityLine(AgentProgressLine line)
+    private UIElement BuildActivityLine(AgentProgressLine line, string treePrefix = "", string? elapsed = null)
     {
         var grid = new Grid
         {
@@ -414,6 +432,19 @@ public sealed partial class AgentActivityPanelControl : UserControl
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
+        // M4.7.0: Tree character + severity tag + elapsed time
+        var header = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal, Spacing = 5 };
+        if (!string.IsNullOrWhiteSpace(treePrefix))
+        {
+            header.Children.Add(new TextBlock
+            {
+                Text = treePrefix,
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                FontSize = 12,
+                Foreground = TextSecondaryBrush(),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+        }
         var tag = new Border
         {
             CornerRadius = new CornerRadius(6),
@@ -428,7 +459,18 @@ public sealed partial class AgentActivityPanelControl : UserControl
                 Foreground = ProgressTagTextBrush(line.Severity)
             }
         };
-        grid.Children.Add(tag);
+        header.Children.Add(tag);
+        if (elapsed != null)
+        {
+            header.Children.Add(new TextBlock
+            {
+                Text = $"+{elapsed}",
+                FontSize = 10,
+                Foreground = TextSecondaryBrush(),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+        }
+        grid.Children.Add(header);
 
         var content = new StackPanel
         {

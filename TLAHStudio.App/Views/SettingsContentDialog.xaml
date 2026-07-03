@@ -109,6 +109,52 @@
                             </Grid>
                         </Grid>
                     </Border>
+
+                    <!-- M4.7.0: UI Appearance card -->
+                    <Border
+                        Padding="12"
+                        Background="{ThemeResource PanelAltBrush}"
+                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                        <Grid RowSpacing="10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid Row="0" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="160" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Theme" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Light or dark application appearance." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
+                                </StackPanel>
+                                <ComboBox
+                                    x:Name="ThemeCombo"
+                                    Grid.Column="1"
+                                    SelectionChanged="ThemeCombo_SelectionChanged"
+                                    AutomationProperties.Name="Theme selector" />
+                            </Grid>
+                            <Grid Row="1" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="160" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Density" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Comfortable provides more spacing; Compact fits more content." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
+                                </StackPanel>
+                                <ComboBox
+                                    x:Name="DensityCombo"
+                                    Grid.Column="1"
+                                    SelectionChanged="DensityCombo_SelectionChanged"
+                                    AutomationProperties.Name="Density selector" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
                 <TextBlock Text="Provider" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <ComboBox
                     x:Name="ProviderCombo"
@@ -261,6 +307,14 @@
                     CornerRadius="8" />
                 </StackPanel>
             </Border>
+
+            <!-- M4.7.0: Reset global settings to defaults -->
+            <HyperlinkButton
+                Content="Reset to defaults"
+                HorizontalAlignment="Right"
+                FontSize="12"
+                Click="ResetGlobal_Click"
+                AutomationProperties.Name="Reset settings to defaults" />
 
             <Border
                 x:Name="ChatForm"

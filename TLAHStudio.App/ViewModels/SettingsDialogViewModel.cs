@@ -223,6 +223,24 @@ public partial class SettingsDialogViewModel : ObservableObject
         TestMessage = "API key will be cleared when you save.";
     }
 
+    /// <summary>
+    /// M4.7.0: Reset all global settings to factory defaults.
+    /// Values are applied immediately to the ViewModel; the user still needs to Save.
+    /// </summary>
+    public void ResetGlobalSettings()
+    {
+        Temperature = 0.7;
+        MaxTokens = 4096;
+        SystemPrompt = "You are a helpful assistant.";
+        UserRole = "user";
+        IsSoundEffectsEnabled = true;
+        SoundVolume = 0.5;
+        Provider = "deepseek";
+        BaseUrl = "https://api.deepseek.com";
+        Model = "deepseek-v4-pro";
+        ThinkingDepth = "auto";
+    }
+
     public void ClearChatApiKey()
     {
         ChatApiKey = string.Empty;
