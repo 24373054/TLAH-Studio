@@ -69,6 +69,7 @@ public sealed partial class SettingsContentDialog : ContentDialog
         ModelPicker.SelectedItem = FindModelOption(_vm.GlobalModelOptions, ModelBox.Text);
         UpdateDeepSeekControls();
         TempSlider.Value = _vm.Temperature;
+        TempValueLabel.Text = _vm.Temperature.ToString("0.0");
         MaxTokensBox.Value = _vm.MaxTokens;
         SysPromptBox.Text = _vm.SystemPrompt;
         UserRoleBox.Text = _vm.UserRole;
@@ -194,6 +195,11 @@ public sealed partial class SettingsContentDialog : ContentDialog
 
         SetScopeTab(GlobalTabButton, _vm.IsGlobalTab);
         SetScopeTab(ChatTabButton, !_vm.IsGlobalTab);
+    }
+
+    private void TempSlider_ValueChanged(object sender, RoutedEventArgs e)
+    {
+        TempValueLabel.Text = TempSlider.Value.ToString("0.0");
     }
 
     private static void SetScopeTab(Button button, bool selected)

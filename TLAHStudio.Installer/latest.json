@@ -1,14 +1,14 @@
 {
-  "version": "4.6.1",
+  "version": "4.7.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.6.1.exe",
-  "sha256": "b2d236d6a7ed187c859b800e7f2fed6436a5a39457e24e498298cbb981b938ea",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.7.0.exe",
+  "sha256": "",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.6.1: destructive warnings propagated to UI, bypass-immune checks covering all file tools, git allowlist static-init bug fixed.",
+  "releaseNotes": "4.7.0: context usage color gauge, streaming text cursor, input char counter, debug word-wrap toggle, sidebar active indicator, temperature label, SetTheme/SetDensity APIs.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.6.1",
+  "minSupportedVersion": "4.7.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97041832
+  "installerSizeBytes": 0
 }

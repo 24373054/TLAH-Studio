@@ -73,6 +73,12 @@ public partial class ChatPageViewModel : ObservableObject
     [ObservableProperty]
     private string _contextUsageToolTip = "Context usage is calculated after a chat is selected.";
 
+    /// <summary>M4.7.0: Last fetched context usage snapshot for the gauge bar.</summary>
+    public ContextUsageSnapshot? LastContextUsage { get; private set; }
+
+    /// <summary>M4.7.0: Public token formatter used by the header gauge tooltips.</summary>
+    public string FormatTokens(int value) => FormatTokenCount(value);
+
     [ObservableProperty]
     private bool _isAgentStatusVisible;
 
@@ -284,6 +290,9 @@ public partial class ChatPageViewModel : ObservableObject
             _activeAgentRequest = null;
             _activeStream = null;
             IsSending = false;
+            // M4.7.0: Refresh context usage after each send so the gauge stays current.
+            if (_appState.CurrentChatId is { } cid)
+                _ = UpdateContextUsageAsync(cid);
         }
     }
 
@@ -916,6 +925,7 @@ public partial class ChatPageViewModel : ObservableObject
         try
         {
             var usage = await _llmService.GetContextUsageAsync(chatId);
+            LastContextUsage = usage;
             ContextUsageText =
                 $"Context {FormatTokenCount(usage.TotalTokens)} / {FormatTokenCount(usage.AvailableTokens)} ({usage.PercentUsed:F1}%)";
             ContextUsageToolTip =

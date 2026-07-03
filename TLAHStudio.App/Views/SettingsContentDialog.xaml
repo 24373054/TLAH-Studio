@@ -209,11 +209,30 @@
                     CornerRadius="8" />
 
                 <TextBlock Text="Temperature" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Slider
-                    x:Name="TempSlider"
-                    Minimum="0"
-                    Maximum="2"
-                    StepFrequency="0.1" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Slider
+                        x:Name="TempSlider"
+                        Grid.Column="0"
+                        Minimum="0"
+                        Maximum="2"
+                        StepFrequency="0.1"
+                        ValueChanged="TempSlider_ValueChanged" />
+                    <!-- M4.7.0: Live temperature value label -->
+                    <TextBlock
+                        x:Name="TempValueLabel"
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        MinWidth="32"
+                        TextAlignment="Right"
+                        FontSize="13"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource TextPrimaryBrush}"
+                        Text="0.7" />
+                </Grid>
 
                 <TextBlock Text="Max Tokens" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <NumberBox

@@ -255,6 +255,20 @@ public sealed partial class ChatPage : UserControl
         }
         else
         {
+            // M4.7.0: Stop cursor timers for finalized messages.
+            foreach (var message in _vm.Messages)
+            {
+                if (!IsStreamingDraft(message) &&
+                    _messageElementCache.TryGetValue(message.Id, out var cached) &&
+                    cached.Element is FrameworkElement fe &&
+                    fe.Tag is LiveStreamBodyVisuals v &&
+                    v.CursorTimer.IsEnabled)
+                {
+                    v.CursorTimer.Stop();
+                    v.CursorText.Visibility = Visibility.Collapsed;
+                }
+            }
+
             var shouldScrollToBottom =
                 !_userScrolledUp && (_vm.Messages.Count != _lastMessageCount || IsNearBottom());
             _lastMessageCount = _vm.Messages.Count;
@@ -673,8 +687,23 @@ public sealed partial class ChatPage : UserControl
         };
         panel.Children.Add(answerText);
 
+        // M4.7.0: Blinking cursor for streaming feedback.
+        var cursorText = new TextBlock
+        {
+            Text = " ▌",
+            FontSize = IsCompactDensity() ? 13 : 14,
+            LineHeight = IsCompactDensity() ? 20 : 22,
+            Foreground = TextMutedBrush(),
+            Visibility = Visibility.Visible
+        };
+        panel.Children.Add(cursorText);
+        var cursorTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
+        cursorTimer.Tick += (_, _) => cursorText.Visibility =
+            cursorText.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        cursorTimer.Start();
+
         AddAttachmentCards(panel, attachments, chatId);
-        panel.Tag = new LiveStreamBodyVisuals(thinkingBox, headerText, previewText, thinkingText, answerText);
+        panel.Tag = new LiveStreamBodyVisuals(thinkingBox, headerText, previewText, thinkingText, answerText, cursorText, cursorTimer);
 
         return panel;
     }
@@ -1444,7 +1473,9 @@ public sealed partial class ChatPage : UserControl
         TextBlock HeaderText,
         TextBlock PreviewText,
         TextBlock ThinkingText,
-        TextBlock AnswerText);
+        TextBlock AnswerText,
+        TextBlock CursorText,
+        DispatcherTimer CursorTimer);
 
     private void ApplyDensity()
     {

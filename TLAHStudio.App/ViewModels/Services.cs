@@ -102,6 +102,7 @@ public interface IThemeService
     ElementTheme CurrentTheme { get; }
     void Initialize();
     void ToggleTheme();
+    void SetTheme(ElementTheme theme); // M4.7.0
 }
 
 public record ElementTheme(string Value)
@@ -130,10 +131,12 @@ public class ThemeService : IThemeService
 
     public void ToggleTheme()
     {
-        CurrentTheme = CurrentTheme == ElementTheme.Dark
-            ? ElementTheme.Light
-            : ElementTheme.Dark;
+        SetTheme(CurrentTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark);
+    }
 
+    public void SetTheme(ElementTheme theme)
+    {
+        CurrentTheme = theme;
         LocalStore.Set(StorageKey, CurrentTheme.Value);
         ApplyTheme();
     }
@@ -244,6 +247,7 @@ public interface IUiDensityService
     UiDensity CurrentDensity { get; }
     event EventHandler<UiDensity>? DensityChanged;
     void ToggleDensity();
+    void SetDensity(UiDensity density); // M4.7.0
 }
 
 public class UiDensityService : IUiDensityService
@@ -263,9 +267,12 @@ public class UiDensityService : IUiDensityService
 
     public void ToggleDensity()
     {
-        CurrentDensity = CurrentDensity == UiDensity.Comfortable
-            ? UiDensity.Compact
-            : UiDensity.Comfortable;
+        SetDensity(CurrentDensity == UiDensity.Comfortable ? UiDensity.Compact : UiDensity.Comfortable);
+    }
+
+    public void SetDensity(UiDensity density)
+    {
+        CurrentDensity = density;
         LocalStore.Set(StorageKey, CurrentDensity == UiDensity.Compact ? "compact" : "comfortable");
         DensityChanged?.Invoke(this, CurrentDensity);
     }

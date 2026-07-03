@@ -24,6 +24,7 @@ public sealed partial class MessageInputControl : UserControl
         App.Log("MessageInputControl XAML initialized.");
         InputBox.PreviewKeyDown += OnPreviewKeyDown;
         InputBox.KeyDown += OnKeyDown;
+        InputBox.TextChanged += OnTextChanged;
         InputRoot.SizeChanged += OnInputRootSizeChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -83,6 +84,15 @@ public sealed partial class MessageInputControl : UserControl
     private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e) => HandleEnterKey(e);
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e) => HandleEnterKey(e);
+
+    private void OnTextChanged(object sender, TextChangedEventArgs e)
+    {
+        var len = InputBox.Text?.Length ?? 0;
+        CharCounter.Text = $"{len} chars";
+        CharCounter.Visibility = len > 0
+            ? Microsoft.UI.Xaml.Visibility.Visible
+            : Microsoft.UI.Xaml.Visibility.Collapsed;
+    }
 
     private void HandleEnterKey(KeyRoutedEventArgs e)
     {

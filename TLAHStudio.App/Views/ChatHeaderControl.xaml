@@ -33,6 +33,16 @@
                 Foreground="{ThemeResource TextMutedBrush}"
                 TextTrimming="CharacterEllipsis"
                 AutomationProperties.Name="Context usage" />
+            <!-- M4.7.0: Colored segmented context gauge -->
+            <Border
+                x:Name="ContextGauge"
+                Height="4"
+                Margin="0,4,0,0"
+                CornerRadius="2"
+                Background="{ThemeResource BorderSubtleBrush}"
+                Visibility="Collapsed">
+                <Grid x:Name="ContextGaugeGrid" ColumnSpacing="1" />
+            </Border>
         </StackPanel>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">

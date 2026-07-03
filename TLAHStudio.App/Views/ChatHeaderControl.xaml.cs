@@ -50,7 +50,96 @@ public sealed partial class ChatHeaderControl : UserControl
     {
         ContextUsageBlock.Text = string.IsNullOrWhiteSpace(text) ? "Context --" : text;
         ToolTipService.SetToolTip(ContextUsageBlock, string.IsNullOrWhiteSpace(tooltip) ? ContextUsageBlock.Text : tooltip);
+
+        // M4.7.0: Build colored segmented context gauge from usage data.
+        UpdateContextGauge();
     }
+
+    /// <summary>
+    /// M4.7.0: Rebuild the colored context usage bar from the ViewModel's snapshot.
+    /// Categories: conversation (blue), tools (green), MCP (yellow), files (purple), free (gray).
+    /// Threshold colors: < 50% normal, 50-80% amber bar, > 80% red bar.
+    /// </summary>
+    private void UpdateContextGauge()
+    {
+        if (App.MainWindow is not MainWindow w) return;
+        var usage = w.ChatVM.LastContextUsage;
+        if (usage == null || usage.AvailableTokens <= 0)
+        {
+            ContextGauge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            return;
+        }
+
+        ContextGauge.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+        ContextGaugeGrid.Children.Clear();
+        ContextGaugeGrid.ColumnDefinitions.Clear();
+
+        var categories = new (string Label, int Tokens, Microsoft.UI.Xaml.Media.Brush Brush)[]
+        {
+            ("Conversation", usage.ConversationTokens, CategoryBrush(0)),
+            ("Tools", usage.ToolsTokens, CategoryBrush(1)),
+            ("MCP", usage.McpTokens, CategoryBrush(2)),
+            ("Files", usage.FilesTokens, CategoryBrush(3)),
+        };
+
+        var total = usage.AvailableTokens;
+        var used = usage.TotalTokens;
+        var free = Math.Max(0, total - used);
+        var gaugeColor = used * 100.0 / total > 80 ? CategoryBrush(5)  // red
+                       : used * 100.0 / total > 50 ? CategoryBrush(4)  // amber
+                       : CategoryBrush(3); // normal (free gray)
+
+        foreach (var (label, tokens, brush) in categories)
+        {
+            if (tokens <= 0) continue;
+            var def = new Microsoft.UI.Xaml.Controls.ColumnDefinition
+            {
+                Width = new Microsoft.UI.Xaml.GridLength(tokens, Microsoft.UI.Xaml.GridUnitType.Star)
+            };
+            ContextGaugeGrid.ColumnDefinitions.Add(def);
+            var rect = new Microsoft.UI.Xaml.Shapes.Rectangle
+            {
+                Fill = brush,
+                RadiusX = 1,
+                RadiusY = 1
+            };
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(rect, ContextGaugeGrid.ColumnDefinitions.Count - 1);
+            ToolTipService.SetToolTip(rect, $"{label}: {w.ChatVM.FormatTokens(tokens)}");
+            ContextGaugeGrid.Children.Add(rect);
+        }
+
+        if (free > 0)
+        {
+            var def = new Microsoft.UI.Xaml.Controls.ColumnDefinition
+            {
+                Width = new Microsoft.UI.Xaml.GridLength(free, Microsoft.UI.Xaml.GridUnitType.Star)
+            };
+            ContextGaugeGrid.ColumnDefinitions.Add(def);
+            ContextGaugeGrid.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
+            {
+                Fill = gaugeColor,
+                Opacity = 0.15,
+                RadiusX = 1, RadiusY = 1
+            });
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(
+                (Microsoft.UI.Xaml.Shapes.Rectangle)ContextGaugeGrid.Children[^1],
+                ContextGaugeGrid.ColumnDefinitions.Count - 1);
+        }
+    }
+
+    private static Microsoft.UI.Xaml.Media.Brush CategoryBrush(int index) => index switch
+    {
+        0 => BrushColor(0x56, 0x8E, 0xE8), // blue — conversation
+        1 => BrushColor(0x4E, 0xC9, 0x9E), // green — tools
+        2 => BrushColor(0xE8, 0xC8, 0x4C), // yellow — MCP
+        3 => BrushColor(0x9B, 0x7B, 0xD4), // purple — files
+        4 => BrushColor(0xE8, 0x9C, 0x4C), // amber — >50%
+        5 => BrushColor(0xE8, 0x56, 0x56), // red — >80%
+        _ => BrushColor(0x80, 0x80, 0x80),
+    };
+
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush BrushColor(byte r, byte g, byte b) =>
+        new(Microsoft.UI.ColorHelper.FromArgb(0xFF, r, g, b));
 
     private async void Title_Tapped(object sender, TappedRoutedEventArgs e)
     {

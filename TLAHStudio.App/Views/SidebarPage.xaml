@@ -263,6 +263,46 @@
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                                 <Setter Property="MinHeight" Value="62" />
                                 <Setter Property="CornerRadius" Value="8" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListViewItem">
+                                            <Grid>
+                                                <!-- M4.7.0: Left accent border on selected item -->
+                                                <Border
+                                                    x:Name="SelectionIndicator"
+                                                    Width="3"
+                                                    HorizontalAlignment="Left"
+                                                    VerticalAlignment="Stretch"
+                                                    Background="Transparent"
+                                                    CornerRadius="2,0,0,2" />
+                                                <ListViewItemPresenter
+                                                    x:Name="Root"
+                                                    ContentTransitions="{TemplateBinding ContentTransitions}"
+                                                    HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                    VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                    Padding="{TemplateBinding Padding}"
+                                                    CornerRadius="{TemplateBinding CornerRadius}"
+                                                    SelectionCheckMarkVisualEnabled="False" />
+                                                <VisualStateManager.VisualStateGroups>
+                                                    <VisualStateGroup x:Name="CommonStates">
+                                                        <VisualState x:Name="Normal" />
+                                                        <VisualState x:Name="Selected">
+                                                            <VisualState.Setters>
+                                                                <Setter Target="SelectionIndicator.Background" Value="{ThemeResource AccentBrush}" />
+                                                                <Setter Target="Root.Background" Value="{ThemeResource AccentSoftBrush}" />
+                                                            </VisualState.Setters>
+                                                        </VisualState>
+                                                        <VisualState x:Name="PointerOver">
+                                                            <VisualState.Setters>
+                                                                <Setter Target="Root.Background" Value="{ThemeResource ListViewItemBackgroundPointerOver}" />
+                                                            </VisualState.Setters>
+                                                        </VisualState>
+                                                    </VisualStateGroup>
+                                                </VisualStateManager.VisualStateGroups>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
                             </Style>
                         </ListView.ItemContainerStyle>
                     </ListView>

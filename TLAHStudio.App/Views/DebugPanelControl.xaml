@@ -197,6 +197,19 @@
                 AutomationProperties.Name="Export debug bundle">
                 <SymbolIcon Symbol="Save" />
             </Button>
+            <!-- M4.7.0: Word wrap toggle -->
+            <ToggleButton
+                x:Name="WrapToggle"
+                Click="WrapToggle_Click"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextPrimaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="12,8"
+                ToolTipService.ToolTip="Toggle word wrap"
+                AutomationProperties.Name="Toggle word wrap">
+                <SymbolIcon Symbol="AlignLeft" />
+            </ToggleButton>
         </StackPanel>
     </Grid>
     </Border>

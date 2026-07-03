@@ -18,6 +18,7 @@ public sealed partial class DebugPanelControl : UserControl
     private DebugPanelViewModel? _vm;
     private string _tab = "request";
     private FrameworkElement? _hostElement;
+    private bool _wrapText = true; // M4.7.0: word-wrap toggle
 
     public DebugPanelControl()
     {
@@ -309,7 +310,7 @@ public sealed partial class DebugPanelControl : UserControl
         FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
         FontSize = 12,
         LineHeight = 18,
-        TextWrapping = TextWrapping.Wrap,
+        TextWrapping = _wrapText ? TextWrapping.Wrap : TextWrapping.NoWrap,
         Foreground = brushKey != null
             ? Brush(brushKey)
             : muted ? Brush("TextMutedBrush") : Brush("TextPrimaryBrush")
@@ -439,6 +440,15 @@ public sealed partial class DebugPanelControl : UserControl
 
     private void CopyAb_Click(object sender, RoutedEventArgs e) =>
         _vm?.CopyAbPackCommand.Execute(null);
+
+    private void WrapToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _wrapText = !_wrapText;
+        WrapToggle.Background = _wrapText
+            ? Brush("SurfaceElevatedBrush")
+            : Brush("AccentSoftBrush");
+        Load(CurrentJson());
+    }
 
     private void ExportBundle_Click(object sender, RoutedEventArgs e) =>
         _vm?.ExportDebugBundleCommand.Execute(null);
