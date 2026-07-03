@@ -295,14 +295,20 @@ public sealed partial class AgentActivityPanelControl : UserControl
             return stack;
         }
 
-        // M4.7.0: Tree-draw the activity lines with hierarchy and timing.
+        // M4.7.0: Tree-draw with proper indentation.
+        // The first line is the root; subsequent lines indent so their ├─/└─
+        // aligns under the tag badge of the parent (roughly 8 chars wide).
         for (int i = 0; i < run.Lines.Count; i++)
         {
             var line = run.Lines[i];
             var isLast = i == run.Lines.Count - 1;
-            var prefix = isLast ? "└─ " : "├─ ";
+            // M4.7.0: Fixed-width tree prefixes for vertical tag alignment.
+            // Root: "├─ " (3).  Continuation: "│  " + "├─ "/"└─ " (6).  Pad root to 6.
+            var continuation = i == 0 ? "" : "│  ";
+            var branch = isLast ? "└─ " : "├─ ";
+            var prefix = continuation + branch;
+            if (continuation == "") prefix = prefix.PadRight(6); // align root width to child width
 
-            // Compute elapsed from the previous line
             string? elapsed = null;
             if (i > 0)
             {
