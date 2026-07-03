@@ -502,7 +502,8 @@ public sealed record AgentToolResult(
     bool Success,
     string Output,
     string? Error = null,
-    IReadOnlyList<AgentToolArtifact>? Artifacts = null)
+    IReadOnlyList<AgentToolArtifact>? Artifacts = null,
+    string? Warning = null)
 {
     public string ToJson() => JsonSerializer.Serialize(new
     {
@@ -678,7 +679,8 @@ public sealed class SandboxExecAgentTool : IAgentTool
             !result.WasBlocked && !result.TimedOut && result.ExitCode == 0,
             output,
             result.WasBlocked ? result.BlockedReason : result.TimedOut ? "Command timed out." : null,
-            artifacts);
+            artifacts,
+            Warning: result.DestructiveWarning);
     }
 
     private async Task<IReadOnlyList<AgentToolArtifact>> DiscoverArtifactsAsync(

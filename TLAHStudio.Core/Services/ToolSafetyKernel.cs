@@ -239,6 +239,31 @@ public static partial class ToolSafetyKernel
             new { command });
     }
 
+    /// <summary>
+    /// M4.6.0: Returns a bypass-immune High assessment if the path targets a
+    /// protected file or directory (.git/, .env, shell configs). Returns null
+    /// if the path is safe.
+    /// </summary>
+    private static ToolSafetyAssessment? CheckBypassImmunePath(string fullPath)
+    {
+        // Extract the path components and check each one against the regex.
+        // We check both the full path and just the filename so that commands
+        // like "rm .git" and "edit path=.env" are both caught.
+        var fileName = Path.GetFileName(fullPath);
+        var check = string.IsNullOrEmpty(fileName) ? fullPath : $"{fullPath}|{fileName}";
+        if (BypassImmunePathRegex().IsMatch(check))
+        {
+            return ToolSafetyAssessment.High(
+                "path",
+                isWrite: true,
+                $"This operation targets a protected file or directory ({fileName}).",
+                "Protected paths require explicit user approval in all permission modes.",
+                new { path = fullPath },
+                bypassImmune: true);
+        }
+        return null;
+    }
+
     private static ToolSafetyAssessment AssessPathRead(
         ISandboxCommandService sandbox,
         Guid chatId,
@@ -264,6 +289,12 @@ public static partial class ToolSafetyKernel
         var resolved = ResolvePath(sandbox, chatId, rawPath);
         if (resolved.Error != null)
             return ToolSafetyAssessment.Blocked("path", "File write path escapes the chat sandbox.", resolved.Error);
+
+        // M4.6.0: Bypass-immune check for file tools — writing to .git/.env/shell configs
+        // always requires explicit approval regardless of permission mode.
+        var bypassCheck = CheckBypassImmunePath(resolved.FullPath ?? "");
+        if (bypassCheck != null)
+            return bypassCheck;
 
         var content = ReadString(root, "content");
         var append = ReadBool(root, "append");
@@ -326,6 +357,9 @@ public static partial class ToolSafetyKernel
         if (resolved.Error != null)
             return ToolSafetyAssessment.Blocked("path", "Directory creation path escapes the chat sandbox.", resolved.Error);
 
+        var bypassImmuneMkdir = CheckBypassImmunePath(resolved.FullPath ?? "");
+        if (bypassImmuneMkdir != null) return bypassImmuneMkdir;
+
         return ToolSafetyAssessment.Medium(
             "file_write",
             isReadOnly: false,
@@ -353,6 +387,9 @@ public static partial class ToolSafetyKernel
 
         var mode = ReadString(root, "mode", "move");
         var overwrite = ReadBool(root, "overwrite");
+        var bypassImmuneMove = CheckBypassImmunePath(from.FullPath ?? "") ?? CheckBypassImmunePath(to.FullPath ?? "");
+        if (bypassImmuneMove != null) return bypassImmuneMove;
+
         return ToolSafetyAssessment.Medium(
             "file_write",
             isReadOnly: false,
@@ -390,6 +427,7 @@ public static partial class ToolSafetyKernel
         var recursive = ReadBool(root, "recursive");
         var exists = File.Exists(resolved.FullPath) || Directory.Exists(resolved.FullPath);
         var isDirectory = Directory.Exists(resolved.FullPath);
+        var bypassImmuneDel = CheckBypassImmunePath(resolved.FullPath ?? "");
         return ToolSafetyAssessment.High(
             "file_delete",
             isWrite: true,
@@ -405,7 +443,8 @@ public static partial class ToolSafetyKernel
                 exists,
                 isDirectory,
                 recursive
-            });
+            },
+            bypassImmune: bypassImmuneDel != null);
     }
 
     private static ToolSafetyAssessment AssessGit(JsonElement root)
@@ -475,6 +514,9 @@ public static partial class ToolSafetyKernel
         if (root.TryGetProperty("edits", out var edits) && edits.ValueKind == JsonValueKind.Array)
             writeCount = edits.GetArrayLength();
 
+        var bypassImmuneCode = CheckBypassImmunePath(resolved.FullPath ?? "");
+        if (bypassImmuneCode != null) return bypassImmuneCode;
+
         return ToolSafetyAssessment.Medium(
             "code_write",
             isReadOnly: false,
@@ -511,6 +553,12 @@ public static partial class ToolSafetyKernel
             resolved.Add(item.RelativePath!);
         }
 
+        // M4.6.0: Check all patch paths for bypass-immune files.
+        var bypassImmunePatch = resolved
+            .Select(p => CheckBypassImmunePath(p ?? ""))
+            .FirstOrDefault(r => r != null);
+        if (bypassImmunePatch != null) return bypassImmunePatch;
+
         return ToolSafetyAssessment.Medium(
             "code_patch",
             isReadOnly: false,
@@ -528,6 +576,9 @@ public static partial class ToolSafetyKernel
         var resolved = ResolvePath(sandbox, chatId, rawPath);
         if (resolved.Error != null)
             return ToolSafetyAssessment.Blocked("path", "Rollback path escapes the chat sandbox.", resolved.Error);
+
+        var bypassImmuneRb = CheckBypassImmunePath(resolved.FullPath ?? "");
+        if (bypassImmuneRb != null) return bypassImmuneRb;
 
         return ToolSafetyAssessment.Medium(
             "code_rollback",

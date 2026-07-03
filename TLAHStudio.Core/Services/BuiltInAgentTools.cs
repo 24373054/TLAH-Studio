@@ -125,10 +125,12 @@ internal static class AgentToolSupport
 public sealed class TerminalExecAgentTool : IAgentTool
 {
     private readonly IExecutionBackendRouter _router;
+    private readonly IFlagLevelValidationService? _flagValidator;
 
-    public TerminalExecAgentTool(IExecutionBackendRouter router)
+    public TerminalExecAgentTool(IExecutionBackendRouter router, IFlagLevelValidationService? flagValidator = null)
     {
         _router = router;
+        _flagValidator = flagValidator;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -186,10 +188,25 @@ public sealed class TerminalExecAgentTool : IAgentTool
             stderr:
             {result.StandardError}
             """;
+        // M4.6.1: Check destructive warnings even when using non-sandbox backends.
+        string? destructiveWarning = null;
+        if (_flagValidator != null)
+        {
+            foreach (var (pattern, warning) in FlagLevelValidationService.DestructiveWarnings)
+            {
+                if (pattern.IsMatch(command))
+                {
+                    destructiveWarning = warning;
+                    break;
+                }
+            }
+        }
+
         return new AgentToolResult(
             result.Success,
             output,
-            result.BlockedReason ?? (result.TimedOut ? "Execution timed out." : result.ExitCode == 0 ? null : "Command failed."));
+            result.BlockedReason ?? (result.TimedOut ? "Execution timed out." : result.ExitCode == 0 ? null : "Command failed."),
+            Warning: destructiveWarning);
     }
 }
 
