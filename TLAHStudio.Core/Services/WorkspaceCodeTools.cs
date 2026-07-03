@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using TLAHStudio.Core.Llm;
+using TLAHStudio.Core.Services.Tools;
 
 namespace TLAHStudio.Core.Services;
 
@@ -401,10 +402,12 @@ internal static class WorkspaceBackupStore
 public sealed class CodeReadAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
+    private readonly IReadFileTracker? _readFileTracker;
 
-    public CodeReadAgentTool(ISandboxCommandService sandbox)
+    public CodeReadAgentTool(ISandboxCommandService sandbox, IReadFileTracker? readFileTracker = null)
     {
         _sandbox = sandbox;
+        _readFileTracker = readFileTracker;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -436,6 +439,8 @@ public sealed class CodeReadAgentTool : IAgentTool
             var start = Math.Max(1, WorkspaceCodeToolSupport.ReadInt(root, "start_line", 1));
             var count = Math.Clamp(WorkspaceCodeToolSupport.ReadInt(root, "line_count", 220), 1, 2000);
             var selected = lines.Skip(start - 1).Take(count).Select((line, index) => $"{start + index,5}: {line}");
+            // M4.5.0: Track the read for subsequent write/edit guards.
+            _readFileTracker?.MarkRead(path, System.IO.File.GetLastWriteTimeUtc(path));
             var output = $"File: {WorkspaceCodeToolSupport.Relative(_sandbox, context.ChatId, path)}\nLines: {lines.Length}\n{WorkspaceCodeToolSupport.FormatSnapshot(snapshot)}\n\n" +
                          string.Join(Environment.NewLine, selected);
             return new AgentToolResult(true, AgentToolSupport.Limit(output, context.MaxOutputChars));
@@ -832,10 +837,12 @@ public sealed class CodeDiffAgentTool : IAgentTool
 public sealed class CodeEditAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
+    private readonly IReadFileTracker? _readFileTracker;
 
-    public CodeEditAgentTool(ISandboxCommandService sandbox)
+    public CodeEditAgentTool(ISandboxCommandService sandbox, IReadFileTracker? readFileTracker = null)
     {
         _sandbox = sandbox;
+        _readFileTracker = readFileTracker;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -867,6 +874,19 @@ public sealed class CodeEditAgentTool : IAgentTool
             var replaceAll = WorkspaceCodeToolSupport.ReadBool(root, "replace_all");
             var createIfMissing = WorkspaceCodeToolSupport.ReadBool(root, "create_if_missing");
             var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");
+            // M4.5.0: Require the file to have been read before editing.
+            if (File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
+                return new AgentToolResult(false, string.Empty,
+                    $"Cannot edit — the file has not been read in this session. Use the read tool first.");
+            // M4.5.0: Detect stale edits — file modified externally after being read.
+            if (File.Exists(path) && _readFileTracker != null)
+            {
+                var recordedMtime = _readFileTracker.GetLastReadMtimeUtc(path);
+                var currentMtime = File.GetLastWriteTimeUtc(path);
+                if (recordedMtime.HasValue && currentMtime != recordedMtime.Value)
+                    return new AgentToolResult(false, string.Empty,
+                        $"Cannot edit — the file was modified externally since it was last read. Re-read first.");
+            }
             var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(path, expectedHash);
             if (!string.IsNullOrWhiteSpace(conflict))
                 return new AgentToolResult(false, string.Empty, conflict);
@@ -919,10 +939,12 @@ public sealed class CodeEditAgentTool : IAgentTool
 public sealed class CodeMultiEditAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
+    private readonly IReadFileTracker? _readFileTracker;
 
-    public CodeMultiEditAgentTool(ISandboxCommandService sandbox)
+    public CodeMultiEditAgentTool(ISandboxCommandService sandbox, IReadFileTracker? readFileTracker = null)
     {
         _sandbox = sandbox;
+        _readFileTracker = readFileTracker;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -962,6 +984,18 @@ public sealed class CodeMultiEditAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var path = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path"));
+            // M4.5.0: Read-before-edit guard.
+            if (File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
+                return new AgentToolResult(false, string.Empty,
+                    "Cannot multi-edit — the file has not been read in this session. Use the read tool first.");
+            if (File.Exists(path) && _readFileTracker != null)
+            {
+                var recordedMtime = _readFileTracker.GetLastReadMtimeUtc(path);
+                var currentMtime = File.GetLastWriteTimeUtc(path);
+                if (recordedMtime.HasValue && currentMtime != recordedMtime.Value)
+                    return new AgentToolResult(false, string.Empty,
+                        "Cannot multi-edit — the file was modified externally since it was last read. Re-read first.");
+            }
             if (!File.Exists(path))
                 return new AgentToolResult(false, string.Empty, "File not found.");
             var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");

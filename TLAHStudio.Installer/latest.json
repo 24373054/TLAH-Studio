@@ -1,14 +1,14 @@
 {
-  "version": "4.4.6",
+  "version": "4.5.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.4.6.exe",
-  "sha256": "1ba9bb437e217b8ef54b40b6e266f770d4733b692eaa0be66f0e45c5826c4c3a",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.5.0.exe",
+  "sha256": "",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.4.6: auto-scroll respects manual scroll, thinking expand/collapse preserved during streaming, streaming render fast-path, cache eviction on clear/remove/Id-change.",
+  "releaseNotes": "4.5.0: session memory (cross-compaction accumulated context), read-before-write guard, stale-file timestamp detection, file content re-injection after compaction.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.4.6",
+  "minSupportedVersion": "4.5.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97030832
+  "installerSizeBytes": 0
 }

@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.Tools;
 
 namespace TLAHStudio.Core.Services;
 
@@ -257,11 +258,13 @@ public sealed class FileReadAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
     private readonly IToolPlatformService _platform;
+    private readonly IReadFileTracker? _readFileTracker;
 
-    public FileReadAgentTool(ISandboxCommandService sandbox, IToolPlatformService platform)
+    public FileReadAgentTool(ISandboxCommandService sandbox, IToolPlatformService platform, IReadFileTracker? readFileTracker = null)
     {
         _sandbox = sandbox;
         _platform = platform;
+        _readFileTracker = readFileTracker;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -293,6 +296,8 @@ public sealed class FileReadAgentTool : IAgentTool
             if (info.Length > settings.MaxFileBytes)
                 return new AgentToolResult(false, string.Empty, $"File exceeds the {settings.MaxFileBytes}-byte limit.");
             var content = await File.ReadAllTextAsync(path, ct);
+            // M4.5.0: Track the read for subsequent write/edit guards.
+            _readFileTracker?.MarkRead(path, File.GetLastWriteTimeUtc(path));
             return new AgentToolResult(
                 true,
                 AgentToolSupport.Limit(content, Math.Min(context.MaxOutputChars, settings.MaxOutputChars)));
@@ -308,11 +313,13 @@ public sealed class FileWriteAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
     private readonly IToolPlatformService _platform;
+    private readonly IReadFileTracker? _readFileTracker;
 
-    public FileWriteAgentTool(ISandboxCommandService sandbox, IToolPlatformService platform)
+    public FileWriteAgentTool(ISandboxCommandService sandbox, IToolPlatformService platform, IReadFileTracker? readFileTracker = null)
     {
         _sandbox = sandbox;
         _platform = platform;
+        _readFileTracker = readFileTracker;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -342,6 +349,20 @@ public sealed class FileWriteAgentTool : IAgentTool
             var content = AgentToolSupport.GetString(root, "content");
             var append = root.TryGetProperty("append", out var appendValue) &&
                          appendValue.ValueKind == JsonValueKind.True;
+            // M4.5.0: Require the file to have been read before writing.
+            // This prevents the model from hallucinating file contents.
+            if (File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
+                return new AgentToolResult(false, string.Empty,
+                    $"Cannot write to '{AgentToolSupport.GetString(root, "path")}' — the file has not been read in this session. Use file_read or read first to inspect its contents.");
+            // M4.5.0: Detect stale writes — file was modified externally after being read.
+            if (File.Exists(path) && _readFileTracker != null)
+            {
+                var recordedMtime = _readFileTracker.GetLastReadMtimeUtc(path);
+                var currentMtime = File.GetLastWriteTimeUtc(path);
+                if (recordedMtime.HasValue && currentMtime != recordedMtime.Value)
+                    return new AgentToolResult(false, string.Empty,
+                        $"Cannot write to '{AgentToolSupport.GetString(root, "path")}' — the file was modified externally since it was last read. Re-read the file first.");
+            }
             var settings = await _platform.GetSettingsAsync(ct);
             var bytes = Encoding.UTF8.GetByteCount(content);
             var existingBytes = append && File.Exists(path) ? new FileInfo(path).Length : 0;

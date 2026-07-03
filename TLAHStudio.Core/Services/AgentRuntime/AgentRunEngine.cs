@@ -5,6 +5,7 @@ using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.Context;
+using TLAHStudio.Core.Services.SessionMemory;
 using TLAHStudio.Core.Services.Tools.Models;
 
 #pragma warning disable CA1416
@@ -63,6 +64,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private readonly IAgentTaskService _agentTasks;
     private readonly IReactiveCompactor _reactiveCompactor;
     private readonly ITokenBudgetService _tokenBudget;
+    private readonly ISessionMemoryService _sessionMemory;
 
     public AgentRunEngineV2(
         DbContext db,
@@ -82,7 +84,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         IAgentTaskService? agentTasks = null,
         IReactiveCompactor? reactiveCompactor = null,
         ITokenBudgetService? tokenBudget = null,
-        IToolLifecycleRunner? toolLifecycleRunner = null)
+        IToolLifecycleRunner? toolLifecycleRunner = null,
+        ISessionMemoryService? sessionMemory = null)
     {
         _db = db;
         _chatService = chatService;
@@ -103,6 +106,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         _agentTasks = agentTasks ?? new AgentTaskService(db);
         _reactiveCompactor = reactiveCompactor ?? new ReactiveCompactor();
         _tokenBudget = tokenBudget ?? new TokenBudgetService();
+        _sessionMemory = sessionMemory ?? new SessionMemoryService();
     }
 
     public async Task<AgentRunResult> RunAsync(
@@ -179,9 +183,20 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 if (prepared.WasCompacted)
                 {
                     state.Messages = prepared.Messages;
+                    // M4.5.0: Inject session memory into compacted context.
+                    var smContent = await _sessionMemory.ReadForCompactAsync(
+                        _sandboxCommandService.GetSandboxRoot(state.ChatId), ct);
+                    if (!string.IsNullOrEmpty(smContent))
+                        state.Messages.Insert(prepared.Messages.Count - 1,
+                            new MessagePayload("user", $"[session memory — accumulated context across compaction cycles]\n{smContent}\n[/session memory]"));
+                    // M4.5.0: Also re-inject recently read file content after compaction.
+                    var fileCtx = await BuildPostCompactFileContextAsync(state.ChatId, state.RunId, ct);
+                    if (!string.IsNullOrEmpty(fileCtx))
+                        state.Messages.Insert(prepared.Messages.Count - 1,
+                            new MessagePayload("user", fileCtx));
                     step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
                     await SaveCheckpointAsync(state, ct);
-                    var metadata = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
+                    var ctxMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
                     await AppendEventAsync(state, options, new AgentEventAppendRequest(
                         new AgentRun { Id = state.RunId },
                         AgentEventTypes.ContextCompacted,
@@ -190,11 +205,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         {
                             prepared.EstimatedTokensBefore,
                             prepared.EstimatedTokensAfter,
-                            files_changed = metadata.FilesChanged,
-                            commands_run = metadata.CommandsRun,
-                            open_questions = metadata.OpenQuestions,
-                            next_actions = metadata.NextActions,
-                            persisted_outputs = metadata.PersistedOutputs
+                            files_changed = ctxMeta.FilesChanged,
+                            commands_run = ctxMeta.CommandsRun,
+                            open_questions = ctxMeta.OpenQuestions,
+                            next_actions = ctxMeta.NextActions,
+                            persisted_outputs = ctxMeta.PersistedOutputs
                         },
                         step.Id,
                         Severity: AgentEventSeverities.Warning), events, ct);
@@ -268,8 +283,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     {
                         consecutiveCompactionFailures = 0; // Reset on success
                         state.Messages = forced.Messages;
+                        // M4.5.0: Inject session memory into force-compacted context.
+                        var smContent = await _sessionMemory.ReadForCompactAsync(
+                            _sandboxCommandService.GetSandboxRoot(state.ChatId), ct);
+                        if (!string.IsNullOrEmpty(smContent))
+                            state.Messages.Insert(forced.Messages.Count - 1,
+                                new MessagePayload("user", $"[session memory — accumulated context across compaction cycles]\n{smContent}\n[/session memory]"));
+                        // M4.5.0: Re-inject recently read file content.
+                        var fctx = await BuildPostCompactFileContextAsync(state.ChatId, state.RunId, ct);
+                        if (!string.IsNullOrEmpty(fctx))
+                            state.Messages.Insert(forced.Messages.Count - 1,
+                                new MessagePayload("user", fctx));
                         await SaveCheckpointAsync(state, ct);
-                        var metadata = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
+                        var fMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
                         await AppendEventAsync(state, options, new AgentEventAppendRequest(
                             new AgentRun { Id = state.RunId },
                             AgentEventTypes.ContextCompacted,
@@ -278,11 +304,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             {
                                 forced.EstimatedTokensBefore,
                                 forced.EstimatedTokensAfter,
-                                files_changed = metadata.FilesChanged,
-                                commands_run = metadata.CommandsRun,
-                                open_questions = metadata.OpenQuestions,
-                                next_actions = metadata.NextActions,
-                                persisted_outputs = metadata.PersistedOutputs
+                                files_changed = fMeta.FilesChanged,
+                                commands_run = fMeta.CommandsRun,
+                                open_questions = fMeta.OpenQuestions,
+                                next_actions = fMeta.NextActions,
+                                persisted_outputs = fMeta.PersistedOutputs
                             },
                             step.Id,
                             Severity: AgentEventSeverities.Warning), events, ct);
@@ -523,6 +549,16 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 state.CurrentStep = stepNumber;
                 SyncRunState(run, state);
+
+                // M4.5.0: Fire-and-forget session memory extraction after
+                // each completed step.
+                var stepMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
+                var stepSandbox = _sandboxCommandService.GetSandboxRoot(state.ChatId);
+                _ = Task.Run(() =>
+                    _sessionMemory.ExtractAsync(state.ChatId, state.RunId, state.Messages,
+                        stepSandbox, stepMeta.FilesChanged, stepMeta.CommandsRun,
+                        stepMeta.RecentFailures, stepMeta.OpenQuestions, stepMeta.NextActions,
+                        CancellationToken.None), CancellationToken.None);
             }
 
             // Step budget finalization
@@ -790,6 +826,66 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             .ToList();
 
         return new RuntimeContextMetadata(filesChanged, commands, openQuestions, nextActions, persistedOutputs, failures, recentReads);
+    }
+
+    /// <summary>
+    /// M4.5.0: After compaction, re-inject the content of recently read files
+    /// so the agent can continue without re-reading. Capped at 5 files,
+    /// 5000 chars per file, 25000 chars total. Only called post-compaction.
+    /// </summary>
+    private async Task<string?> BuildPostCompactFileContextAsync(Guid chatId, Guid runId, CancellationToken ct)
+    {
+        var invocations = await _db.Set<ToolInvocation>()
+            .Where(i => i.AgentRunId == runId &&
+                        (i.ToolName == AgentToolNames.FileRead || i.ToolName == AgentToolNames.CodeRead))
+            .OrderByDescending(i => i.CreatedAt)
+            .Take(5)
+            .ToListAsync(ct);
+        if (invocations.Count == 0)
+            return null;
+
+        var sandboxRoot = _sandboxCommandService.GetSandboxRoot(chatId);
+        var sb = new StringBuilder();
+        sb.AppendLine("[post-compaction file context — recently read files]");
+        sb.AppendLine("The following files were read before compaction. Use this content to continue without re-reading.");
+        sb.AppendLine();
+
+        var totalChars = 0;
+        const int maxPerFile = 5000;
+        const int maxTotal = 25000;
+        foreach (var inv in invocations)
+        {
+            var filePath = ReadJsonString(inv.ArgumentsJson, "file_path") ??
+                           ReadJsonString(inv.ArgumentsJson, "path");
+            if (string.IsNullOrWhiteSpace(filePath))
+                continue;
+
+            var resolved = Path.GetFullPath(Path.Combine(sandboxRoot, filePath.TrimStart('/', '\\')));
+            if (!resolved.StartsWith(sandboxRoot + Path.DirectorySeparatorChar) && resolved != sandboxRoot)
+                continue; // path escape guard
+            if (!File.Exists(resolved))
+                continue;
+
+            try
+            {
+                var content = await File.ReadAllTextAsync(resolved, Encoding.UTF8, ct);
+                var truncated = content.Length <= maxPerFile
+                    ? content
+                    : content[..maxPerFile] + $"\n[truncated — file is {content.Length} chars]";
+                sb.AppendLine($"--- {filePath} ---");
+                sb.AppendLine(truncated);
+                sb.AppendLine();
+                totalChars += truncated.Length;
+                if (totalChars >= maxTotal)
+                    break;
+            }
+            catch
+            {
+                // Skip files that can't be read (locked, binary, etc.)
+            }
+        }
+
+        return totalChars > 0 ? sb.ToString() : null;
     }
 
     private static void AppendList(StringBuilder sb, string title, IReadOnlyList<string> items)

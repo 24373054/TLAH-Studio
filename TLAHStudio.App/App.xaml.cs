@@ -18,6 +18,7 @@ using TLAHStudio.Core.Services.Sandbox;
 using TLAHStudio.Core.Services.Sdk;
 using TLAHStudio.Core.Services.Tools;
 using TLAHStudio.Core.Services.Tools.PerTool;
+using TLAHStudio.Core.Services.SessionMemory;
 using TLAHStudio.Core.Services.Workspace;
 using TLAHStudio.Data;
 using TLAHStudio.App.ViewModels;
@@ -180,8 +181,10 @@ public partial class App : Application
             services.AddSingleton<IDiagnosticPackageExporter, DiagnosticPackageExporter>();
             services.AddSingleton<ILocalSdkHost, LocalSdkHost>();
 
-            // M3.0.0: Recovery
+            // M4.5.0: Recovery & Session Memory & ReadFileTracker
             services.AddScoped<IRecoveryService, RecoveryService>();
+            services.AddSingleton<ISessionMemoryService, SessionMemoryService>();
+            services.AddScoped<IReadFileTracker, ReadFileTracker>();
 
             // ViewModels
             services.AddSingleton<MainViewModel>();
