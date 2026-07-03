@@ -37,6 +37,10 @@ public sealed partial class SidebarPage : UserControl
         _vm = w.SidebarVM;
         DataContext = _vm;
         PinnedListView.ItemsSource = _vm.PinnedChats;
+        TodayListView.ItemsSource = _vm.TodayChats;
+        YesterdayListView.ItemsSource = _vm.YesterdayChats;
+        ThisWeekListView.ItemsSource = _vm.ThisWeekChats;
+        OlderListView.ItemsSource = _vm.OlderChats;
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(SidebarViewModel.SelectedChat))
