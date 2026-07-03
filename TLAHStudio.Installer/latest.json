@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.7.0.exe",
-  "sha256": "4d45f2b5215b974a4bb740047dd1a9537b472a6807ffdeeef0fc2a81bf005c5f",
+  "sha256": "da2a00a4b1c5ba5ecfeecfd57eccf53b8d60687afac03a8f67d299010848f6d5",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.7.0: context gauge, streaming cursor, activity tree+timing, input counter, debug wrap, sidebar date groups+indicator, settings theme/density/reset.",
+  "releaseNotes": "4.7.0: context gauge, streaming cursor, activity tree+timing, input counter, debug wrap, sidebar date groups, settings theme/density/reset.",
   "forceUpdate": true,
   "minSupportedVersion": "4.7.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97044320
+  "installerSizeBytes": 97045512
 }
