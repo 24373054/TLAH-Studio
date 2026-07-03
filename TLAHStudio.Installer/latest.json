@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.7.0.exe",
-  "sha256": "",
+  "sha256": "e7c9241341fe2c3b9e72895f8b519cc9a830533d7088a65b1d95d5f56f0d9cd6",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.7.0: context usage color gauge, streaming text cursor, input char counter, debug word-wrap toggle, sidebar active indicator, temperature label, SetTheme/SetDensity APIs.",
+  "releaseNotes": "4.7.0: context usage color gauge, streaming text cursor, input char counter, debug word-wrap toggle, sidebar active indicator, temperature value label, SetTheme/SetDensity APIs.",
   "forceUpdate": true,
   "minSupportedVersion": "4.7.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97044008
 }
