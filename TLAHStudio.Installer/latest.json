@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.6.1.exe",
-  "sha256": "",
+  "sha256": "b2d236d6a7ed187c859b800e7f2fed6436a5a39457e24e498298cbb981b938ea",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
   "releaseNotes": "4.6.1: destructive warnings propagated to UI, bypass-immune checks covering all file tools, git allowlist static-init bug fixed.",
   "forceUpdate": true,
   "minSupportedVersion": "4.6.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 0
+  "installerSizeBytes": 97041832
 }
