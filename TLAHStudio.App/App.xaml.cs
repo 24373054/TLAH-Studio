@@ -185,6 +185,7 @@ public partial class App : Application
             services.AddScoped<IRecoveryService, RecoveryService>();
             services.AddSingleton<ISessionMemoryService, SessionMemoryService>();
             services.AddScoped<IReadFileTracker, ReadFileTracker>();
+            services.AddSingleton<IFlagLevelValidationService, FlagLevelValidationService>();
 
             // ViewModels
             services.AddSingleton<MainViewModel>();

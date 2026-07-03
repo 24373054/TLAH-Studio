@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using TLAHStudio.Core.Helpers;
+using TLAHStudio.Core.Services.Tools;
 using TLAHStudio.Core.Services.Workspace;
 
 namespace TLAHStudio.Core.Services;
@@ -48,15 +49,17 @@ public sealed class SandboxCommandService : ISandboxCommandService
     ];
 
     private readonly string _root;
+    private readonly IFlagLevelValidationService? _flagValidator;
 
     public SandboxCommandService()
         : this(WorkspaceRootStore.DefaultSandboxBase)
     {
     }
 
-    public SandboxCommandService(string root)
+    public SandboxCommandService(string root, IFlagLevelValidationService? flagValidator = null)
     {
         _root = Path.GetFullPath(root);
+        _flagValidator = flagValidator;
         Directory.CreateDirectory(_root);
     }
 
@@ -79,6 +82,20 @@ public sealed class SandboxCommandService : ISandboxCommandService
         var sandboxRoot = GetSandboxRoot(chatId);
         command = NormalizeCommand(command.Trim());
 
+        // M4.6.0: Destructive operation warning — informational only.
+        string? destructiveWarning = null;
+        if (_flagValidator != null)
+        {
+            foreach (var (pattern, warning) in FlagLevelValidationService.DestructiveWarnings)
+            {
+                if (pattern.IsMatch(command))
+                {
+                    destructiveWarning = warning;
+                    break;
+                }
+            }
+        }
+
         var blocked = ValidateCommand(command, sandboxRoot);
         if (blocked != null)
         {
@@ -90,7 +107,8 @@ public sealed class SandboxCommandService : ISandboxCommandService
                 Duration: TimeSpan.Zero,
                 StandardOutput: string.Empty,
                 StandardError: string.Empty,
-                BlockedReason: blocked);
+                BlockedReason: blocked,
+                DestructiveWarning: destructiveWarning);
         }
 
         var psi = new ProcessStartInfo
@@ -150,7 +168,8 @@ public sealed class SandboxCommandService : ISandboxCommandService
             timedOut,
             sw.Elapsed,
             SecretRedactor.RedactText(stdout.ToString()),
-            SecretRedactor.RedactText(stderr.ToString()));
+            SecretRedactor.RedactText(stderr.ToString()),
+            DestructiveWarning: destructiveWarning);
     }
 
     private static string? ValidateCommand(string command, string sandboxRoot)

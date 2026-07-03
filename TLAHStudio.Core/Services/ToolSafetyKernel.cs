@@ -19,21 +19,22 @@ public sealed record ToolSafetyAssessment(
     bool IsWriteOperation,
     bool RequiresExplicitApproval,
     bool IsBlocked,
+    bool BypassImmune,
     string Summary,
     string? Warning,
     string PreviewJson)
 {
     public static ToolSafetyAssessment LowRead(string category, string summary, object? preview = null) =>
-        Create(ToolSafetyLevels.Low, category, true, false, false, false, summary, null, preview);
+        Create(ToolSafetyLevels.Low, category, true, false, false, false, false, summary, null, preview);
 
     public static ToolSafetyAssessment Medium(string category, bool isReadOnly, bool isWrite, string summary, object? preview = null) =>
-        Create(ToolSafetyLevels.Medium, category, isReadOnly, isWrite, false, false, summary, null, preview);
+        Create(ToolSafetyLevels.Medium, category, isReadOnly, isWrite, false, false, false, summary, null, preview);
 
-    public static ToolSafetyAssessment High(string category, bool isWrite, string summary, string warning, object? preview = null) =>
-        Create(ToolSafetyLevels.High, category, false, isWrite, true, false, summary, warning, preview);
+    public static ToolSafetyAssessment High(string category, bool isWrite, string summary, string warning, object? preview = null, bool bypassImmune = false) =>
+        Create(ToolSafetyLevels.High, category, false, isWrite, true, false, bypassImmune, summary, warning, preview);
 
     public static ToolSafetyAssessment Blocked(string category, string summary, string warning, object? preview = null) =>
-        Create(ToolSafetyLevels.Blocked, category, false, true, false, true, summary, warning, preview);
+        Create(ToolSafetyLevels.Blocked, category, false, true, false, true, false, summary, warning, preview);
 
     private static ToolSafetyAssessment Create(
         string level,
@@ -42,6 +43,7 @@ public sealed record ToolSafetyAssessment(
         bool isWrite,
         bool requiresExplicitApproval,
         bool isBlocked,
+        bool bypassImmune,
         string summary,
         string? warning,
         object? preview)
@@ -53,6 +55,7 @@ public sealed record ToolSafetyAssessment(
             isWrite,
             requiresExplicitApproval,
             isBlocked,
+            bypassImmune,
             summary,
             warning,
             JsonSerializer.Serialize(preview ?? new { }, new JsonSerializerOptions
@@ -211,6 +214,21 @@ public static partial class ToolSafetyKernel
                 isWrite: true,
                 $"{label} writes inside the sandbox.",
                 new { command });
+        }
+
+        // M4.6.0: Bypass-immune check — operations on .git/, .env, and shell
+        // config files ALWAYS require explicit approval, even in BypassPermissions
+        // mode. These are critical files whose modification can cause data loss or
+        // security issues regardless of the agent's permission level.
+        if (BypassImmunePathRegex().IsMatch(command))
+        {
+            return ToolSafetyAssessment.High(
+                "path",
+                isWrite: true,
+                $"This command targets a protected file or directory (.git/, .env, shell config).",
+                "Protected paths require explicit user approval in all permission modes.",
+                new { command },
+                bypassImmune: true);
         }
 
         return ToolSafetyAssessment.Medium(
@@ -643,6 +661,11 @@ public static partial class ToolSafetyKernel
 
     [GeneratedRegex(@"(?ix)\b(set-content|add-content|out-file|new-item|copy-item|move-item|git\s+(init|add|commit|branch))\b|(?<![<>])>(?!>)|>>", RegexOptions.CultureInvariant)]
     private static partial Regex WriteCommandRegex();
+
+    // M4.6.0: Bypass-immune path detection. Operations targeting these paths
+    // require explicit approval even in BypassPermissions mode.
+    [GeneratedRegex(@"(?ix)(?<!\w)(\.git[\\/]|\.git\b|\.gitconfig\b|\.env\b|\.bashrc\b|\.zshrc\b|\.profile\b|\.bash_profile\b|\.zshenv\b|\.claude[\\/]|\.tlah_context[\\/])", RegexOptions.CultureInvariant)]
+    private static partial Regex BypassImmunePathRegex();
 
     private static string[] SplitLines(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');

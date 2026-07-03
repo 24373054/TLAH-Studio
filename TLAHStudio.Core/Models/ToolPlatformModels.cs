@@ -30,6 +30,7 @@ public static class ToolPolicySubjects
     public const string Tool = "tool";
     public const string Path = "path";
     public const string Domain = "domain";
+    public const string Command = "command"; // M4.6.0: command-level matching for sandbox_exec/terminal_exec
 }
 
 public static class McpTransportTypes

@@ -492,9 +492,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             continue;
                         }
 
-                        var needsApproval = !options.AutoApproveTools &&
-                            ((item.Tool.Metadata.RequiresApproval && !policy.IsAllowed) ||
-                             (item.Safety.RequiresExplicitApproval && !policy.IsAllowed));
+                        // M4.6.0: Bypass-immune safety checks survive even AutoApproveTools
+                        // mode. Operations on .git/, .env, shell configs always need approval.
+                        var safetyRequiresApproval = item.Safety.RequiresExplicitApproval ||
+                                                     (item.Safety.BypassImmune && options.AutoApproveTools);
+                        var needsApproval = !options.AutoApproveTools
+                            ? ((item.Tool.Metadata.RequiresApproval && !policy.IsAllowed) ||
+                               (safetyRequiresApproval && !policy.IsAllowed))
+                            : (item.Safety.BypassImmune && !policy.IsAllowed);
 
                         if (needsApproval)
                         {

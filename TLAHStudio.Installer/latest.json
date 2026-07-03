@@ -1,14 +1,14 @@
 {
-  "version": "4.5.0",
+  "version": "4.6.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.5.0.exe",
-  "sha256": "2ec5e44b8e05a5794120b2ee83dc752844c2116b8a6b0c5495e56fcd043e96ed",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.6.0.exe",
+  "sha256": "",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.5.0: session memory (cross-compaction accumulated context), read-before-write guard, stale-file timestamp detection, post-compaction file content re-injection.",
+  "releaseNotes": "4.6.0: flag-level command allowlist (git/grep/find), destructive operation warnings (16 patterns), command-level rule matching, bypass-immune safety checks for protected paths.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.5.0",
+  "minSupportedVersion": "4.6.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97036808
+  "installerSizeBytes": 0
 }

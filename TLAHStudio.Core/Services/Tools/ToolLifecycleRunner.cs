@@ -342,6 +342,7 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
             classification.IsDestructive,
             classification.RequiresExplicitApproval,
             classification.IsBlocked,
+            BypassImmune: false,
             classification.Summary,
             classification.Warning,
             preview);

@@ -94,6 +94,7 @@ public sealed class ToolPlatformService : IToolPlatformService
                 r.SubjectKind == ToolPolicySubjects.Tool ||
                 r.SubjectKind == ToolPolicySubjects.Path ||
                 r.SubjectKind == ToolPolicySubjects.Domain ||
+                r.SubjectKind == ToolPolicySubjects.Command ||
                 r.SubjectKind == string.Empty)
             .ToListAsync(ct);
 
@@ -443,6 +444,7 @@ public sealed class ToolPlatformService : IToolPlatformService
         {
             ToolPolicySubjects.Path => request.Paths,
             ToolPolicySubjects.Domain => request.Domains,
+            ToolPolicySubjects.Command => request.Commands,
             _ => request.ToolCandidates
         };
 
@@ -571,7 +573,8 @@ public sealed class ToolPlatformService : IToolPlatformService
     private sealed record ToolPolicyRequest(
         IReadOnlyList<string> ToolCandidates,
         IReadOnlyList<string> Paths,
-        IReadOnlyList<string> Domains)
+        IReadOnlyList<string> Domains,
+        IReadOnlyList<string> Commands)
     {
         public static ToolPolicyRequest From(
             string toolName,
@@ -584,6 +587,7 @@ public sealed class ToolPlatformService : IToolPlatformService
             };
             var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var commands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
@@ -631,10 +635,36 @@ public sealed class ToolPlatformService : IToolPlatformService
                 }
             }
 
+            // M4.6.0: Extract command text from terminal_exec / sandbox_exec arguments
+            // so users can write rules like: Pattern="git *", SubjectKind="command", Decision="allow"
+            if (string.Equals(toolName, AgentToolNames.SandboxExec, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(toolName, AgentToolNames.TerminalExec, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+                    if (doc.RootElement.TryGetProperty("command", out var cmdEl) &&
+                        cmdEl.ValueKind == JsonValueKind.String)
+                    {
+                        var cmd = cmdEl.GetString()?.Trim();
+                        if (!string.IsNullOrWhiteSpace(cmd))
+                        {
+                            commands.Add(NormalizeCandidate(ToolPolicySubjects.Command, cmd));
+                            // Also add the binary name as a shorter candidate
+                            var binary = cmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries)[0];
+                            if (binary.Length > 0 && binary.Length < cmd.Length)
+                                commands.Add(NormalizeCandidate(ToolPolicySubjects.Command, binary));
+                        }
+                    }
+                }
+                catch { }
+            }
+
             return new ToolPolicyRequest(
                 toolCandidates.ToArray(),
                 paths.ToArray(),
-                domains.ToArray());
+                domains.ToArray(),
+                commands.ToArray());
         }
 
         private static void CollectPreview(

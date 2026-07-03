@@ -23,7 +23,8 @@ public sealed record SandboxCommandResult(
     TimeSpan Duration,
     string StandardOutput,
     string StandardError,
-    string? BlockedReason = null)
+    string? BlockedReason = null,
+    string? DestructiveWarning = null)
 {
     public bool WasBlocked => !string.IsNullOrWhiteSpace(BlockedReason);
 }
