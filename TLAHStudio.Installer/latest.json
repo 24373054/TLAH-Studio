@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.0.exe",
-  "sha256": "468e960fa4f92a354b6ae5ff017d94a6d39be695b490df49de9afa0638c2d209",
+  "sha256": "090b5ac3d9a6b935a74e441091591b08e2d8c155b7865801267c9412dd5726ae",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.0: Plan mode, AskUserQuestion, Skill system (12 bundled skills), OutputStyles, multi-source skills, plugin end-to-end, 258 tests.",
+  "releaseNotes": "4.9.0 hotfix: plan mode schema, settings layout, skills reload cache.",
   "forceUpdate": true,
   "minSupportedVersion": "4.9.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97072656
+  "installerSizeBytes": 97072320
 }
