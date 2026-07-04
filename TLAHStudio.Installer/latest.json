@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.0.exe",
-  "sha256": "69bc4468787641671ec0812f0b01accf40c002dd1117f6833da0e382da4a1fc1",
+  "sha256": "7db0b881e8b2f57a1de2cccab05c5048a7ff8be9a55ef882b366f83b4eaac28d",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.0 hotfix: skill system fully wired, stateless SkillLoader, workspace-aware, three Open buttons, auto-create .tlah dirs.",
+  "releaseNotes": "4.9.0: Plan mode, AskUserQuestion, 12 bundled skills, OutputStyles, multi-source skills. Hotfix: CRLF frontmatter, skill system fully wired.",
   "forceUpdate": true,
   "minSupportedVersion": "4.9.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97072800
+  "installerSizeBytes": 97071080
 }
