@@ -30,6 +30,14 @@ public class WorkspaceRootService : IWorkspaceRootService
     public Task SetRootAsync(Guid chatId, string rootPath, CancellationToken ct = default)
     {
         WorkspaceRootStore.SetRoot(chatId, rootPath);
+        // M4.9.0: Auto-create .tlah directories for skills and output styles.
+        try
+        {
+            var tlahDir = Path.Combine(rootPath, ".tlah");
+            Directory.CreateDirectory(Path.Combine(tlahDir, "skills"));
+            Directory.CreateDirectory(Path.Combine(tlahDir, "output-styles"));
+        }
+        catch { /* best-effort */ }
         return Task.CompletedTask;
     }
 

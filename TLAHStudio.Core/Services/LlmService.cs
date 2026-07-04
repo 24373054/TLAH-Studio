@@ -8,6 +8,7 @@ using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.AgentRuntime;
 using TLAHStudio.Core.Services.Background;
 using TLAHStudio.Core.Services.Context;
+using TLAHStudio.Core.Services.Plugins;
 
 #pragma warning disable CA1416 // TLAH Studio is a Windows desktop client; DPAPI is intentionally Windows-only.
 
@@ -69,6 +70,9 @@ public class LlmService : ILlmService
         _agentContextManager = agentContextManager ?? new AgentContextManager();
         _projectMemory = projectMemory ?? new ProjectMemoryService(db);
         _toolResultPersistence = toolResultPersistence ?? new ToolResultPersistenceService();
+        // M4.9.0: Create shared services needed by engine, tools, and UI.
+        var skillLoader = new SkillLoader();
+        var outputStyle = new OutputStyleService();
         if (agentTools != null)
         {
             _agentTools = agentTools;
@@ -87,7 +91,7 @@ public class LlmService : ILlmService
                 new EnterPlanModeAgentTool(),
                 new ExitPlanModeAgentTool(_sandboxCommandService),
                 new AskUserQuestionAgentTool(),
-                new SkillAgentTool(),
+                new SkillAgentTool(skillLoader),
                 new ToolSearchAgentTool(),
                 new TodoWriteAgentTool(taskService),
                 new TaskCreateAgentTool(taskService, backgroundTaskService, _sandboxCommandService),
@@ -139,7 +143,9 @@ public class LlmService : ILlmService
             db, chatService, settingsService, httpClientFactory,
             _sandboxCommandService, _agentTools, _toolPlatform, _agentEventStream,
             _checkpointStore, _providerStreamAdapter, _toolExecutionScheduler,
-            _agentContextManager, _projectMemory, _toolResultPersistence);
+            _agentContextManager, _projectMemory, _toolResultPersistence,
+            skillLoader: skillLoader,
+            outputStyle: outputStyle);
         _tokenBudget = tokenBudget ?? new TokenBudgetService();
     }
 

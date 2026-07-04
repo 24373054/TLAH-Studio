@@ -195,18 +195,19 @@ public interface ISkillLoader
     /// </summary>
     Task<IReadOnlyList<AgentSkill>> ActivateConditionalSkillsForPathAsync(
         string filePath, CancellationToken ct = default);
+    /// <summary>M4.9.0: Update workspace root for project-level skill discovery.</summary>
+    void SetWorkspaceRoot(string? root);
     Task ReloadAsync(CancellationToken ct = default);
 }
 
 public class SkillLoader : ISkillLoader
 {
-    private readonly string _userDir;
-    private readonly string? _projectDir;  // <workspace>/.tlah/skills
-    private readonly string _bundledDir;   // Assets/bundled-skills
+    private string _userDir;
+    private string? _projectDir;
+    private string _bundledDir;
     private static readonly Regex FrontmatterRegex = new(
         @"^---\s*\n(.*?)\n---\s*\n", RegexOptions.Singleline | RegexOptions.Compiled);
 
-    private List<AgentSkill>? _cachedAll;
     private readonly Dictionary<string, AgentSkill> _conditionalSkills = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<AgentSkill> _activeConditional = [];
 
@@ -215,83 +216,80 @@ public class SkillLoader : ISkillLoader
         _userDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "TLAH Studio", "skills");
-        _projectDir = workspaceRoot != null
-            ? Path.Combine(workspaceRoot, ".tlah", "skills")
-            : null;
-        // Bundled skills ship in the app's Assets folder.
+        SetWorkspaceRoot(workspaceRoot);
         _bundledDir = bundledDir ?? Path.Combine(
             AppContext.BaseDirectory, "Assets", "bundled-skills");
     }
 
-    // ── Multi-source loading ──────────────────────────────────────
+    // ── Directory accessors (M4.9.0 hotfix) ──────────────────────
+
+    /// <summary>Bundled skills directory (shipped with the app, read-only).</summary>
+    public string BundledDir => _bundledDir;
+
+    /// <summary>User skills directory (%LOCALAPPDATA%\TLAH Studio\skills).</summary>
+    public string UserDir => _userDir;
+
+    /// <summary>Project skills directory (<workspace>/.tlah/skills), or null.</summary>
+    public string? ProjectDir => _projectDir;
+
+    /// <summary>Update the workspace root to load project-level skills.</summary>
+    public void SetWorkspaceRoot(string? root)
+    {
+        _projectDir = root != null ? Path.Combine(root, ".tlah", "skills") : null;
+    }
+
+    // ── Multi-source loading (stateless — always rescans) ────────
 
     public async Task<IReadOnlyList<AgentSkill>> LoadSkillsAsync(CancellationToken ct = default)
     {
-        if (_cachedAll != null)
-            return _cachedAll;
-
         var all = new List<AgentSkill>();
+        _conditionalSkills.Clear();
 
-        // Load from all sources.
-        var tasks = new (string Dir, string Source)[]
+        // Scan all sources fresh — no caching.
+        var sources = new List<(string? Dir, string Source)>
         {
             (_bundledDir, "bundled"),
             (_userDir, "user"),
         };
         if (_projectDir != null)
-            tasks = [..tasks, (_projectDir, "project")];
+            sources.Add((_projectDir, "project"));
 
-        var results = await Task.WhenAll(tasks.Select(async t =>
+        foreach (var (dir, source) in sources)
         {
-            var (dir, source) = t;
-            if (!Directory.Exists(dir))
-                return Array.Empty<AgentSkill>();
+            if (dir == null || !Directory.Exists(dir))
+                continue;
             var skills = new List<AgentSkill>();
             foreach (var file in Directory.GetFiles(dir, "*.md"))
             {
-                var skill = await LoadSkillFileAsync(file, source, ct);
-                if (skill != null)
-                    skills.Add(skill);
+                var s = await LoadSkillFileAsync(file, source, ct);
+                if (s != null) skills.Add(s);
             }
-            // Also scan subdirectories for SKILL.md files.
             foreach (var sub in Directory.GetDirectories(dir))
             {
                 var skillMd = Path.Combine(sub, "SKILL.md");
                 if (File.Exists(skillMd))
                 {
-                    var skill = await LoadSkillFileAsync(skillMd, source, ct);
-                    if (skill != null)
-                        skills.Add(skill);
+                    var s = await LoadSkillFileAsync(skillMd, source, ct);
+                    if (s != null) skills.Add(s);
                 }
             }
-            return skills.ToArray();
-        }));
-
-        // Deduplicate: first source wins (bundled > project > user).
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var batch in results)
-        {
-            foreach (var skill in batch)
+            // Deduplicate: first source wins (bundled > project > user).
+            foreach (var s in skills)
             {
-                if (seen.Add(skill.Id))
+                if (!all.Any(e => string.Equals(e.Id, s.Id, StringComparison.OrdinalIgnoreCase)))
                 {
-                    // Separate conditional skills from active ones.
-                    if (skill.Paths is { Count: > 0 })
-                        _conditionalSkills[skill.Id] = skill;
+                    if (s.Paths is { Count: > 0 })
+                        _conditionalSkills[s.Id] = s;
                     else
-                        all.Add(skill);
+                        all.Add(s);
                 }
             }
         }
 
         all.AddRange(_activeConditional);
-        _cachedAll = all;
         return all;
     }
 
-    /// <summary>
-    /// M4.9.0: Get the active skill listing (excludes conditional skills not yet activated).
-    /// </summary>
     public async Task<IReadOnlyList<AgentSkill>> GetActiveSkillsAsync(CancellationToken ct = default)
     {
         return await LoadSkillsAsync(ct);
@@ -299,23 +297,15 @@ public class SkillLoader : ISkillLoader
 
     public async Task<string> GetSkillContentAsync(string skillId, CancellationToken ct = default)
     {
-        // Check cache first.
-        if (_cachedAll != null)
-        {
-            var cached = _cachedAll.FirstOrDefault(s =>
-                string.Equals(s.Id, skillId, StringComparison.OrdinalIgnoreCase));
-            if (cached != null)
-                return cached.Content;
-        }
-        // Also check conditional skills.
+        // Check conditional first.
         if (_conditionalSkills.TryGetValue(skillId, out var cond))
             return cond.Content;
-
+        foreach (var s in _activeConditional)
+            if (string.Equals(s.Id, skillId, StringComparison.OrdinalIgnoreCase))
+                return s.Content;
         // Reload and search.
-        _cachedAll = null;
         var all = await LoadSkillsAsync(ct);
-        var skill = all.FirstOrDefault(s =>
-            string.Equals(s.Id, skillId, StringComparison.OrdinalIgnoreCase));
+        var skill = all.FirstOrDefault(s => string.Equals(s.Id, skillId, StringComparison.OrdinalIgnoreCase));
         return skill?.Content ?? string.Empty;
     }
 
@@ -347,30 +337,24 @@ public class SkillLoader : ISkillLoader
 
         foreach (var (id, skill) in _conditionalSkills)
         {
-            if (skill.Paths == null || skill.Paths.Count == 0)
-                continue;
-
+            if (skill.Paths == null || skill.Paths.Count == 0) continue;
             foreach (var pattern in skill.Paths)
             {
                 var glob = pattern.Replace('\\', '/');
-                if (SimpleGlobMatch(glob, normalized) ||
-                    SimpleGlobMatch(glob, fileName))
+                if (SimpleGlobMatch(glob, normalized) || SimpleGlobMatch(glob, fileName))
                 {
                     _activeConditional.Add(skill);
                     _conditionalSkills.Remove(id);
-                    _cachedAll?.Add(skill);
                     activated.Add(skill);
                     break;
                 }
             }
         }
-
         return Task.FromResult<IReadOnlyList<AgentSkill>>(activated);
     }
 
     public Task ReloadAsync(CancellationToken ct = default)
     {
-        _cachedAll = null;
         return Task.CompletedTask;
     }
 

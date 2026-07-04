@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.Core.Services.Plugins;
+using TLAHStudio.Core.Services.Workspace;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 
@@ -246,18 +247,44 @@ public sealed partial class SettingsContentDialog : ContentDialog
     private async void ReloadSkills_Click(object sender, RoutedEventArgs e)
     {
         if (_vm == null) return;
-        await _vm.LoadSkillsAsync(); // Already calls ReloadAsync internally
+        await _vm.LoadSkillsAsync();
         SkillsSummaryText.Text = _vm.SkillsSummary;
         SkillsListControl.ItemsSource = _vm.SkillsList;
     }
 
-    private async void OpenSkillsDir_Click(object sender, RoutedEventArgs e)
+    private void OpenUserSkills_Click(object sender, RoutedEventArgs e)
     {
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "TLAH Studio", "skills");
         Directory.CreateDirectory(dir);
-        await Windows.System.Launcher.LaunchFolderPathAsync(dir);
+        _ = Windows.System.Launcher.LaunchFolderPathAsync(dir);
+    }
+
+    private async void OpenProjectSkills_Click(object sender, RoutedEventArgs e)
+    {
+        var wsService = App.Services.GetService(typeof(IWorkspaceRootService)) as IWorkspaceRootService;
+        var appState = App.Services.GetService(typeof(IAppStateService)) as IAppStateService;
+        string? dir = null;
+        if (wsService != null && appState?.CurrentChatId != null)
+        {
+            var root = await wsService.GetRootAsync(appState.CurrentChatId.Value);
+            if (!string.IsNullOrWhiteSpace(root.RootPath))
+            {
+                dir = Path.Combine(root.RootPath, ".tlah", "skills");
+                Directory.CreateDirectory(dir);
+            }
+        }
+        if (dir != null)
+            await Windows.System.Launcher.LaunchFolderPathAsync(dir);
+    }
+
+    private void OpenBundledSkills_Click(object sender, RoutedEventArgs e)
+    {
+        // Bundled skills are read-only built-in. Show in Explorer if available.
+        var bundledDir = Path.Combine(AppContext.BaseDirectory, "Assets", "bundled-skills");
+        if (Directory.Exists(bundledDir))
+            _ = Windows.System.Launcher.LaunchFolderPathAsync(bundledDir);
     }
 
     private async void PopulateSkills()

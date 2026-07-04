@@ -143,6 +143,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         const int smUpdateTokenDelta = 5_000;
         const int smUpdateCallDelta = 3;
 
+        // M4.9.0: Tell the skill loader which workspace we're in so project-level
+        // skills (.tlah/skills/) are discovered for this chat.
+        var sandboxRoot = _sandboxCommandService.GetSandboxRoot(state.ChatId);
+        _skillLoader?.SetWorkspaceRoot(sandboxRoot);
+
         try
         {
             // Build system prompt with memory
