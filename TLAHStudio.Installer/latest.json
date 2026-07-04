@@ -6,7 +6,7 @@
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.0.exe",
   "sha256": "090b5ac3d9a6b935a74e441091591b08e2d8c155b7865801267c9412dd5726ae",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.0 hotfix: plan mode schema, settings layout, skills reload cache.",
+  "releaseNotes": "4.9.0 hotfix: skill system fully wired, stateless SkillLoader, workspace-aware, three Open buttons, auto-create .tlah dirs.",
   "forceUpdate": true,
   "minSupportedVersion": "4.9.0",
   "rolloutPercent": 100,
