@@ -122,7 +122,11 @@ try {
         $ReleaseNotes = "Trust hardening release.`n`nFixes:`n- Release builds no longer ship PDB debug symbols`n- App and updater carry company/product version metadata`n- Authenticode signing is supported for app binaries, updater, and installer when a code signing certificate is provided"
     }
     $latest.releaseNotes = $ReleaseNotes
-    $latest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $latestJson -Encoding UTF8
+    # M4.9.2: Write latest.json WITHOUT a UTF-8 BOM. PowerShell 7's
+    # Set-Content -Encoding UTF8 emits a BOM, which breaks the Node
+    # download-page server (JSON.parse rejects BOM → /api/latest 500).
+    $latestJsonText = $latest | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($latestJson, $latestJsonText, (New-Object System.Text.UTF8Encoding $false))
 
     if (-not $SkipQualityGate) {
         & .\tools\ci.ps1 -Configuration Release -Platform x64
@@ -315,7 +319,10 @@ try {
     $latest = Get-Content -LiteralPath $latestJson -Raw | ConvertFrom-Json
     $latest.sha256 = $sha256
     $latest | Add-Member -NotePropertyName installerSizeBytes -NotePropertyValue ((Get-Item -LiteralPath $installer.Path).Length) -Force
-    $latest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $latestJson -Encoding UTF8
+    # M4.9.2: BOM-less write (see above) — Set-Content -Encoding UTF8
+    # under PowerShell 7 emits a BOM that breaks /api/latest JSON parsing.
+    $latestJsonText2 = $latest | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($latestJson, $latestJsonText2, (New-Object System.Text.UTF8Encoding $false))
 
     & .\tools\sign-latest.ps1 -LatestJsonPath $latestJson -PrivateKeyFile $PrivateKeyFile
 
