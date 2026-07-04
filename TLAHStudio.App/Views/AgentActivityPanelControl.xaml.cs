@@ -600,98 +600,78 @@ public sealed partial class AgentActivityPanelControl : UserControl
             Color.FromArgb(0xEE, 0xFF, 0xFF, 0xFF),
             Color.FromArgb(0xCA, 0x0E, 0x16, 0x24));
 
-    private SolidColorBrush StatusBrush(string status) => new(status switch
+    // M4.9.4: Status brushes now resolve from theme tokens (Success/Warning/
+    // Info/Danger) instead of hardcoded hex, so they honor theme switching.
+    private SolidColorBrush StatusBrush(string status)
     {
-        AgentRunStatuses.Completed => ThemeColor(
-            Color.FromArgb(0xFF, 0xDB, 0xF7, 0xE8),
-            Color.FromArgb(0xFF, 0x16, 0x3A, 0x2B)),
-        AgentRunStatuses.Failed => ThemeColor(
-            Color.FromArgb(0xFF, 0xFE, 0xE2, 0xE2),
-            Color.FromArgb(0xFF, 0x45, 0x1D, 0x24)),
-        AgentRunStatuses.Cancelled => ThemeColor(
-            Color.FromArgb(0xFF, 0xEA, 0xEF, 0xF7),
-            Color.FromArgb(0xFF, 0x2A, 0x34, 0x45)),
-        AgentRunStatuses.AwaitingApproval => ThemeColor(
-            Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
-            Color.FromArgb(0xFF, 0x43, 0x34, 0x18)),
-        _ => ThemeColor(
-            Color.FromArgb(0xFF, 0xDB, 0xEA, 0xFF),
-            Color.FromArgb(0xFF, 0x1A, 0x2F, 0x52))
-    });
+        var key = status switch
+        {
+            AgentRunStatuses.Completed => "SuccessSurfaceBrush",
+            AgentRunStatuses.Failed => "DangerSurfaceBrush",
+            AgentRunStatuses.Cancelled => "SurfaceElevatedBrush",
+            AgentRunStatuses.AwaitingApproval => "WarningSurfaceBrush",
+            _ => "InfoSurfaceBrush"
+        };
+        return (SolidColorBrush)Application.Current.Resources[key];
+    }
 
-    private SolidColorBrush StatusTextBrush(string status) => new(status switch
+    private SolidColorBrush StatusTextBrush(string status)
     {
-        AgentRunStatuses.Completed => ThemeColor(
-            Color.FromArgb(0xFF, 0x16, 0x6B, 0x42),
-            Color.FromArgb(0xFF, 0xA7, 0xF3, 0xD0)),
-        AgentRunStatuses.Failed => ThemeColor(
-            Color.FromArgb(0xFF, 0xB9, 0x1C, 0x1C),
-            Color.FromArgb(0xFF, 0xFF, 0xB4, 0xB4)),
-        AgentRunStatuses.AwaitingApproval => ThemeColor(
-            Color.FromArgb(0xFF, 0x92, 0x4E, 0x0E),
-            Color.FromArgb(0xFF, 0xF8, 0xD6, 0x7A)),
-        _ => ThemeColor(
-            Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
-            Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
-    });
+        var key = status switch
+        {
+            AgentRunStatuses.Completed => "SuccessBrush",
+            AgentRunStatuses.Failed => "DangerBrush",
+            AgentRunStatuses.AwaitingApproval => "WarningBrush",
+            _ => "InfoBrush"
+        };
+        return (SolidColorBrush)Application.Current.Resources[key];
+    }
 
-    private SolidColorBrush ProgressTagBrush(string severity) => new(severity switch
+    private SolidColorBrush ProgressTagBrush(string severity)
     {
-        AgentEventSeverities.Error => ThemeColor(
-            Color.FromArgb(0xFF, 0xFE, 0xE2, 0xE2),
-            Color.FromArgb(0xFF, 0x45, 0x1D, 0x24)),
-        AgentEventSeverities.Warning => ThemeColor(
-            Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
-            Color.FromArgb(0xFF, 0x43, 0x34, 0x18)),
-        _ => ThemeColor(
-            Color.FromArgb(0xFF, 0xDB, 0xEA, 0xFF),
-            Color.FromArgb(0xFF, 0x1A, 0x2F, 0x52))
-    });
+        var key = severity switch
+        {
+            AgentEventSeverities.Error => "DangerSurfaceBrush",
+            AgentEventSeverities.Warning => "WarningSurfaceBrush",
+            _ => "InfoSurfaceBrush"
+        };
+        return (SolidColorBrush)Application.Current.Resources[key];
+    }
 
-    private SolidColorBrush ProgressTagTextBrush(string severity) => new(severity switch
+    private SolidColorBrush ProgressTagTextBrush(string severity)
     {
-        AgentEventSeverities.Error => ThemeColor(
-            Color.FromArgb(0xFF, 0xB9, 0x1C, 0x1C),
-            Color.FromArgb(0xFF, 0xFF, 0xB4, 0xB4)),
-        AgentEventSeverities.Warning => ThemeColor(
-            Color.FromArgb(0xFF, 0x92, 0x4E, 0x0E),
-            Color.FromArgb(0xFF, 0xF8, 0xD6, 0x7A)),
-        _ => ThemeColor(
-            Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
-            Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
-    });
+        var key = severity switch
+        {
+            AgentEventSeverities.Error => "DangerBrush",
+            AgentEventSeverities.Warning => "WarningBrush",
+            _ => "InfoBrush"
+        };
+        return (SolidColorBrush)Application.Current.Resources[key];
+    }
 
-    private SolidColorBrush TaskStatusBrush(string status) => new(status switch
+    private SolidColorBrush TaskStatusBrush(string status)
     {
-        AgentTaskStatuses.Completed => ThemeColor(
-            Color.FromArgb(0xFF, 0xDB, 0xF7, 0xE8),
-            Color.FromArgb(0xFF, 0x16, 0x3A, 0x2B)),
-        AgentTaskStatuses.Blocked => ThemeColor(
-            Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
-            Color.FromArgb(0xFF, 0x43, 0x34, 0x18)),
-        AgentTaskStatuses.Cancelled => ThemeColor(
-            Color.FromArgb(0xFF, 0xEA, 0xEF, 0xF7),
-            Color.FromArgb(0xFF, 0x2A, 0x34, 0x45)),
-        AgentTaskStatuses.InProgress => ThemeColor(
-            Color.FromArgb(0xFF, 0xDB, 0xEA, 0xFF),
-            Color.FromArgb(0xFF, 0x1A, 0x2F, 0x52)),
-        _ => ThemeColor(
-            Color.FromArgb(0xFF, 0xF0, 0xF5, 0xFF),
-            Color.FromArgb(0xFF, 0x1F, 0x29, 0x3A))
-    });
+        var key = status switch
+        {
+            AgentTaskStatuses.Completed => "SuccessSurfaceBrush",
+            AgentTaskStatuses.Blocked => "WarningSurfaceBrush",
+            AgentTaskStatuses.Cancelled => "SurfaceElevatedBrush",
+            AgentTaskStatuses.InProgress => "InfoSurfaceBrush",
+            _ => "SurfaceBrush"
+        };
+        return (SolidColorBrush)Application.Current.Resources[key];
+    }
 
-    private SolidColorBrush TaskStatusTextBrush(string status) => new(status switch
+    private SolidColorBrush TaskStatusTextBrush(string status)
     {
-        AgentTaskStatuses.Completed => ThemeColor(
-            Color.FromArgb(0xFF, 0x16, 0x6B, 0x42),
-            Color.FromArgb(0xFF, 0xA7, 0xF3, 0xD0)),
-        AgentTaskStatuses.Blocked => ThemeColor(
-            Color.FromArgb(0xFF, 0x92, 0x4E, 0x0E),
-            Color.FromArgb(0xFF, 0xF8, 0xD6, 0x7A)),
-        _ => ThemeColor(
-            Color.FromArgb(0xFF, 0x1D, 0x4E, 0x9A),
-            Color.FromArgb(0xFF, 0xB8, 0xD4, 0xFF))
-    });
+        var key = status switch
+        {
+            AgentTaskStatuses.Completed => "SuccessBrush",
+            AgentTaskStatuses.Blocked => "WarningBrush",
+            _ => "InfoBrush"
+        };
+        return (SolidColorBrush)Application.Current.Resources[key];
+    }
 
     private static string TaskStatusLabel(string status) => status switch
     {

@@ -41,6 +41,12 @@
                     <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#FF111A28" />
                     <SolidColorBrush x:Key="DangerBrush" Color="#FF7786" />
                     <SolidColorBrush x:Key="DangerSurfaceBrush" Color="#3DF87171" />
+                    <SolidColorBrush x:Key="SuccessBrush" Color="#4EC99E" />
+                    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#1F3A2E" />
+                    <SolidColorBrush x:Key="WarningBrush" Color="#E8C84C" />
+                    <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#3D3418" />
+                    <SolidColorBrush x:Key="InfoBrush" Color="#71A7FF" />
+                    <SolidColorBrush x:Key="InfoSurfaceBrush" Color="#1A2F52" />
 
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#DCE4EE" />
@@ -116,6 +122,12 @@
                     <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="DangerBrush" Color="#DC2626" />
                     <SolidColorBrush x:Key="DangerSurfaceBrush" Color="#FEE2E2" />
+                    <SolidColorBrush x:Key="SuccessBrush" Color="#0F9F93" />
+                    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#DBF7E8" />
+                    <SolidColorBrush x:Key="WarningBrush" Color="#B45309" />
+                    <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#FEF3C7" />
+                    <SolidColorBrush x:Key="InfoBrush" Color="#2F5FEA" />
+                    <SolidColorBrush x:Key="InfoSurfaceBrush" Color="#DBEAFF" />
 
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#161D28" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#586779" />
@@ -191,6 +203,12 @@
                     <SolidColorBrush x:Key="DialogSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
                     <SolidColorBrush x:Key="DangerBrush" Color="{ThemeResource SystemColorHotlightColor}" />
                     <SolidColorBrush x:Key="DangerSurfaceBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+                    <SolidColorBrush x:Key="SuccessBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+                    <SolidColorBrush x:Key="WarningBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="WarningSurfaceBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+                    <SolidColorBrush x:Key="InfoBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+                    <SolidColorBrush x:Key="InfoSurfaceBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
@@ -233,6 +251,35 @@
                     <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
+
+            <!-- M4.9.4: Typography scale (non-theme, global). -->
+            <x:Double x:Key="TextFontSizeDisplay">18</x:Double>
+            <x:Double x:Key="TextFontSizeTitle">16</x:Double>
+            <x:Double x:Key="TextFontSizeBody">13</x:Double>
+            <x:Double x:Key="TextFontSizeBodyCjk">14</x:Double>
+            <x:Double x:Key="TextFontSizeCaption">12</x:Double>
+            <x:Double x:Key="TextFontSizeLabel">11</x:Double>
+            <x:Double x:Key="TextFontSizeBadge">10</x:Double>
+
+            <!-- M4.9.4: Spacing scale (non-theme, global). -->
+            <x:Double x:Key="SpaceXS">4</x:Double>
+            <x:Double x:Key="SpaceS">8</x:Double>
+            <x:Double x:Key="SpaceM">12</x:Double>
+            <x:Double x:Key="SpaceL">16</x:Double>
+            <x:Double x:Key="SpaceXL">20</x:Double>
+            <x:Double x:Key="SpaceXXL">26</x:Double>
+
+            <!-- M4.9.4: Corner radius scale (non-theme, global). -->
+            <CornerRadius x:Key="RadiusContainer">8</CornerRadius>
+            <CornerRadius x:Key="RadiusCard">7</CornerRadius>
+            <CornerRadius x:Key="RadiusBadge">6</CornerRadius>
+            <CornerRadius x:Key="RadiusTag">5</CornerRadius>
+            <CornerRadius x:Key="RadiusBar">2</CornerRadius>
+
+            <!-- M4.9.4: Primary font family — CJK-aware (YaHei UI for Chinese,
+                 Segoe UI Variable for Latin), with Consolas for monospace. -->
+            <FontFamily x:Key="TextPrimaryFontFamily">Microsoft YaHei UI, Segoe UI Variable, Segoe UI</FontFamily>
+            <FontFamily x:Key="MonoFontFamily">Consolas, Cascadia Mono, Courier New</FontFamily>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
