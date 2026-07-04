@@ -101,6 +101,7 @@ public partial class SettingsDialogViewModel : ObservableObject
         }
         try
         {
+            await _skillLoader.ReloadAsync();  // Clear cache before loading
             var skills = await _skillLoader.LoadSkillsAsync();
             foreach (var s in skills)
                 SkillsList.Add(new SkillListItem(s.Name, s.Description, s.Source));

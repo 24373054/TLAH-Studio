@@ -243,9 +243,12 @@ public sealed partial class SettingsContentDialog : ContentDialog
     }
 
     // M4.9.0: Skills management
-    private void ReloadSkills_Click(object sender, RoutedEventArgs e)
+    private async void ReloadSkills_Click(object sender, RoutedEventArgs e)
     {
-        PopulateSkills();
+        if (_vm == null) return;
+        await _vm.LoadSkillsAsync(); // Already calls ReloadAsync internally
+        SkillsSummaryText.Text = _vm.SkillsSummary;
+        SkillsListControl.ItemsSource = _vm.SkillsList;
     }
 
     private async void OpenSkillsDir_Click(object sender, RoutedEventArgs e)

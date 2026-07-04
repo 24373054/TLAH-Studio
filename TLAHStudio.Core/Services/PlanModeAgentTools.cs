@@ -12,7 +12,7 @@ public sealed class EnterPlanModeAgentTool : IAgentTool
     public LlmToolDefinition Definition { get; } = new(
         AgentToolNames.EnterPlanMode,
         "Enter plan mode for read-only exploration and design. In this mode, file writes and terminal execution are blocked. Call exit_plan_mode when ready with your plan for user approval.",
-        new Dictionary<string, object>());
+        new Dictionary<string, object> { ["type"] = "object" });
 
     public bool RequiresApproval => false;
 
@@ -53,7 +53,7 @@ public sealed class ExitPlanModeAgentTool : IAgentTool
     public LlmToolDefinition Definition { get; } = new(
         AgentToolNames.ExitPlanMode,
         "Exit plan mode and present your plan for user approval. Reads the plan from .tlah_context/plans/{chatId}-plan.md. Requires explicit user approval.",
-        new Dictionary<string, object>());
+        new Dictionary<string, object> { ["type"] = "object" });
 
     public bool RequiresApproval => true;
 
