@@ -206,7 +206,7 @@ public class SkillLoader : ISkillLoader
     private string? _projectDir;
     private string _bundledDir;
     private static readonly Regex FrontmatterRegex = new(
-        @"^---\s*\n(.*?)\n---\s*\n", RegexOptions.Singleline | RegexOptions.Compiled);
+        @"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n", RegexOptions.Singleline | RegexOptions.Compiled);
 
     private readonly Dictionary<string, AgentSkill> _conditionalSkills = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<AgentSkill> _activeConditional = [];
