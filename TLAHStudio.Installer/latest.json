@@ -1,14 +1,14 @@
 {
-    "version":  "4.9.2",
-    "channel":  "stable",
-    "platform":  "windows",
-    "arch":  "x64",
-    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.2.exe",
-    "sha256":  "4ef6bfa25dc3774999b2ddbb9d74dfb6a9aa6a28cf15dce710e3bba5606ce1ce",
-    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "4.9.2 (5.x predecessor): post-compact skill/MCP/plan re-injection, Plugin end-to-end activation, OutputStyles and Skill priority fix, managed skill layer, AskUserQuestion preview, CompactionSkipped event + reset, YAML array frontmatter, AgentToolRegistry dynamic registration.",
-    "forceUpdate":  true,
-    "minSupportedVersion":  "4.9.2",
-    "rolloutPercent":  100,
-    "installerSizeBytes":  97075816
+  "version": "4.9.3",
+  "channel": "stable",
+  "platform": "windows",
+  "arch": "x64",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.3.exe",
+  "sha256": "1a8ae2eada081a90c6fd1f045457b58460aa79c5f9412812b3a704cf406de367",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+  "releaseNotes": "4.9.3: fix Full-access permission button showing as Ask; activity timeline tree depth \u2014 child events indent under parent.",
+  "forceUpdate": true,
+  "minSupportedVersion": "4.9.3",
+  "rolloutPercent": 100,
+  "installerSizeBytes": 97077816
 }

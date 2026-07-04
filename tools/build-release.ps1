@@ -315,7 +315,11 @@ try {
         & .\tools\sign-authenticode.ps1 @signInstallerArgs
     }
 
-    $sha256 = (Get-FileHash -LiteralPath $installer.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    # M4.9.3: Use .NET SHA256 directly — Get-FileHash can fail to resolve
+    # under broken PowerShell 7 environments (cmdlet auto-discovery issues).
+    $sha256Bytes = [System.Security.Cryptography.SHA256]::HashData(
+        [System.IO.File]::ReadAllBytes($installer.Path))
+    $sha256 = ([BitConverter]::ToString($sha256Bytes) -replace '-', '').ToLowerInvariant()
     $latest = Get-Content -LiteralPath $latestJson -Raw | ConvertFrom-Json
     $latest.sha256 = $sha256
     $latest | Add-Member -NotePropertyName installerSizeBytes -NotePropertyValue ((Get-Item -LiteralPath $installer.Path).Length) -Force

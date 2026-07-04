@@ -382,6 +382,10 @@ public sealed partial class MessageInputControl : UserControl
         var normalized = AgentPermissionModes.Normalize(mode);
         return normalized switch
         {
+            AgentPermissionModes.BypassPermissions => new(
+                AgentPermissionModes.BypassPermissions,
+                "Full access",
+                "All tools run without approval prompts. Use with trusted workspaces only."),
             AgentPermissionModes.Plan => new(
                 AgentPermissionModes.Plan,
                 "Plan",

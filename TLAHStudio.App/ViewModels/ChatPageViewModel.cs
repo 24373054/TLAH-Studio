@@ -1102,8 +1102,29 @@ public partial class ChatPageViewModel : ObservableObject
             render?.Preview,
             render?.RenderHint,
             render?.IsTruncated ?? false,
-            render?.PrimaryPath);
+            render?.PrimaryPath,
+            DepthForEvent(update.EventType));
     }
+
+    /// <summary>
+    /// M4.9.3: Tree depth for the activity timeline. Root events (Start/Resume)
+    /// are depth 0; model/plan and tool/approval top-level events are depth 1;
+    /// their child events (tool progress/result, approval granted/denied) are
+    /// depth 2 so the tree connector indents under the parent.
+    /// </summary>
+    private static int DepthForEvent(string eventType) => eventType switch
+    {
+        AgentEventTypes.RunStarted or AgentEventTypes.Resume => 0,
+        AgentEventTypes.ModelRequest or AgentEventTypes.ModelResponse => 1,
+        AgentEventTypes.ToolRequest or AgentEventTypes.ApprovalRequested => 1,
+        AgentEventTypes.ToolStarted or AgentEventTypes.ToolProgress or
+        AgentEventTypes.ToolHookBlocked or AgentEventTypes.ToolRollbackPlan or
+        AgentEventTypes.ToolResult => 2,
+        AgentEventTypes.ApprovalGranted or AgentEventTypes.ApprovalDenied => 2,
+        AgentEventTypes.RunCompleted or AgentEventTypes.RunPaused or
+        AgentEventTypes.RunCancelled or AgentEventTypes.Error => 1,
+        _ => 1
+    };
 
     private static string CleanSummary(string summary) =>
         summary.Replace("Agent run", "Agent", StringComparison.OrdinalIgnoreCase)
@@ -1365,7 +1386,8 @@ public sealed record AgentProgressLine(
     string? Preview = null,
     string? RenderHint = null,
     bool IsTruncated = false,
-    string? PrimaryPath = null);
+    string? PrimaryPath = null,
+    int Depth = 1);
 
 public sealed class AgentActivityRun
 {

@@ -41,10 +41,10 @@ dotnet publish TLAHStudio.App/TLAHStudio.App.csproj -c Release -r win-x64 --self
 .\tools\ci.ps1 -Configuration Release -Platform x64
 
 # Release build + sign + verify + upload
-.\tools\build-release.ps1 -Version 4.9.2 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest -Upload
+.\tools\build-release.ps1 -Version 4.9.3 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest -Upload
 
 # Verify an existing release
-.\tools\verify-release.ps1 -Version 4.9.2 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version 4.9.3 -AllowUntrustedAuthenticode
 
 # Run a single test (filter by name)
 dotnet test TLAHStudio.Core.Tests/TLAHStudio.Core.Tests.csproj -c Release --filter "FullyQualifiedName~SkillLoaderV2Tests"
@@ -289,7 +289,7 @@ Version is stored in multiple places and must be kept in sync:
 - `TLAHStudio.Installer/version.json` and `TLAHStudio.Installer/latest.json`
 - `setup.iss` → `#define MyAppVersion`
 
-Semantic versioning (`Major.Minor.Patch`). Current: **4.9.2**. Release history this cycle: 4.8.0 (foundation fixes), 4.9.0 (agent autonomy), 4.9.1 (skill/UI/CRLF fixes + de-Claude text), 4.9.2 (5.x predecessor — post-compact skill/MCP/plan re-injection, Plugin end-to-end activation, OutputStyles & Skill priority fix project>user>built-in, managed skill layer, AskUserQuestion preview, CompactionSkipped event + reset, YAML array frontmatter, AgentToolRegistry dynamic registration). The 5.0.0 Phase 2 (multi-agent orchestration) and 5.1+ Phase 3 (platform & differentiation) plans are the next milestones — see `docs/TLAH_5_0_PHASE2_ORCHESTRATION.md` and `docs/TLAH_5_1_PHASE3_PLATFORM.md`.
+Semantic versioning (`Major.Minor.Patch`). Current: **4.9.3**. Release history this cycle: 4.8.0 (foundation fixes), 4.9.0 (agent autonomy), 4.9.1 (skill/UI/CRLF fixes + de-Claude text), 4.9.2 (5.x predecessor — post-compact skill/MCP/plan re-injection, Plugin end-to-end activation, OutputStyles & Skill priority fix project>user>built-in, managed skill layer, AskUserQuestion preview, CompactionSkipped event + reset, YAML array frontmatter, AgentToolRegistry dynamic registration), 4.9.3 (fix: Full-access permission button displayed as Ask; activity timeline tree depth so child events indent under parent). The 5.0.0 Phase 2 (multi-agent orchestration) and 5.1+ Phase 3 (platform & differentiation) plans are the next milestones — see `docs/TLAH_5_0_PHASE2_ORCHESTRATION.md` and `docs/TLAH_5_1_PHASE3_PLATFORM.md`.
 
 ## Key Architectural Patterns
 

@@ -21,10 +21,10 @@
     <Description>TLAH Studio native Windows client</Description>
     <Company>Beijing Ke Entropy Technology Co., Ltd.</Company>
     <Copyright>Copyright (C) 2026 Beijing Ke Entropy Technology Co., Ltd.</Copyright>
-    <Version>4.9.2</Version>
-    <FileVersion>4.9.2.0</FileVersion>
-    <AssemblyVersion>4.9.2.0</AssemblyVersion>
-    <InformationalVersion>4.9.2</InformationalVersion>
+    <Version>4.9.3</Version>
+    <FileVersion>4.9.3.0</FileVersion>
+    <AssemblyVersion>4.9.3.0</AssemblyVersion>
+    <InformationalVersion>4.9.3</InformationalVersion>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>

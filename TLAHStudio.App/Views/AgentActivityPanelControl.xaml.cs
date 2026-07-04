@@ -296,18 +296,21 @@ public sealed partial class AgentActivityPanelControl : UserControl
         }
 
         // M4.7.0: Tree-draw with proper indentation.
-        // The first line is the root; subsequent lines indent so their ├─/└─
-        // aligns under the tag badge of the parent (roughly 8 chars wide).
+        // M4.9.3: Use per-line Depth so child events (tool result under tool,
+        // approval granted under approval) indent under their parent instead
+        // of all sharing the same top-level prefix.
         for (int i = 0; i < run.Lines.Count; i++)
         {
             var line = run.Lines[i];
             var isLast = i == run.Lines.Count - 1;
-            // M4.7.0: Fixed-width tree prefixes for vertical tag alignment.
-            // Root: "├─ " (3).  Continuation: "│  " + "├─ "/"└─ " (6).  Pad root to 6.
-            var continuation = i == 0 ? "" : "│  ";
+            var depth = Math.Max(0, line.Depth);
+            // M4.9.3: Each depth level adds a 3-char "│  " continuation column,
+            // then the branch. Root (depth 0): just "├─ "/"└─ " padded to 6.
+            // Depth 1: "│  ├─ ". Depth 2: "│  │  ├─ ".
+            var cont = depth == 0 ? "" : string.Concat(Enumerable.Repeat("│  ", depth));
             var branch = isLast ? "└─ " : "├─ ";
-            var prefix = continuation + branch;
-            if (continuation == "") prefix = prefix.PadRight(6); // align root width to child width
+            var prefix = cont + branch;
+            if (depth == 0) prefix = prefix.PadRight(6); // align root width to child width
 
             string? elapsed = null;
             if (i > 0)
