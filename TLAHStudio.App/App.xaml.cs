@@ -157,6 +157,7 @@ public partial class App : Application
             // M2.10.0: Context & Memory
             services.AddScoped<ITokenBudgetService, TokenBudgetService>();
             services.AddScoped<IReactiveCompactor, ReactiveCompactor>();
+            services.AddScoped<IModelAssistedCompactor, ModelAssistedCompactor>();
             services.AddScoped<IMemoryDirectoryService, MemoryDirectoryService>();
 
             // M2.11.0: Workspace & LSP

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.Background;
@@ -256,10 +257,12 @@ public sealed class TaskListAgentTool : IAgentTool
 public sealed class ReadPersistedOutputAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
+    private readonly DbContext? _db;
 
-    public ReadPersistedOutputAgentTool(ISandboxCommandService sandbox)
+    public ReadPersistedOutputAgentTool(ISandboxCommandService sandbox, DbContext? db = null)
     {
         _sandbox = sandbox;
+        _db = db;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -267,7 +270,8 @@ public sealed class ReadPersistedOutputAgentTool : IAgentTool
         "Read a large tool output previously persisted under .tlah_context/tool-results.",
         new Dictionary<string, object>
         {
-            ["path"] = AgentToolSupport.StringProperty("Relative path under .tlah_context/tool-results."),
+            ["path"] = AgentToolSupport.StringProperty("Relative path under .tlah_context/tool-results (or use tool_call_id instead)."),
+            ["tool_call_id"] = AgentToolSupport.StringProperty("Tool call ID to look up persisted output (alternative to path)."),
             ["max_chars"] = new Dictionary<string, object> { ["type"] = "integer", ["description"] = "Maximum characters to return." }
         },
         ["path"]);
@@ -278,6 +282,30 @@ public sealed class ReadPersistedOutputAgentTool : IAgentTool
     {
         if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
             return new AgentToolResult(false, string.Empty, error);
+
+        // M4.8.0: Support looking up by tool_call_id (from Microcompact references).
+        var toolCallId = TaskToolSchemas.GetString(root, "tool_call_id");
+        if (!string.IsNullOrWhiteSpace(toolCallId))
+        {
+            if (_db == null)
+                return new AgentToolResult(false, string.Empty,
+                    "Database not available for tool_call_id lookup. Use 'path' parameter instead.");
+            var inv = await _db.Set<ToolInvocation>()
+                .FirstOrDefaultAsync(i => i.ProviderCallId == toolCallId, ct);
+            if (inv == null)
+                return new AgentToolResult(false, string.Empty, "Tool invocation not found for the given tool_call_id.");
+            var safeName = string.Join("-", inv.ToolName.Split(Path.GetInvalidFileNameChars()));
+            var inferredPath = Path.Combine(".tlah_context", "tool-results",
+                $"{inv.Id:N}-{safeName}.txt");
+            var inferredFull = AgentToolSupport.ResolveSandboxPath(_sandbox, context.ChatId, inferredPath);
+            if (!File.Exists(inferredFull))
+                return new AgentToolResult(false, string.Empty,
+                    $"Persisted output file not found for tool_call_id {toolCallId}. Expected: {inferredPath}");
+            var inferredMax = Math.Clamp(TaskToolSchemas.GetInt(root, "max_chars", 24_000), 512, 200_000);
+            var inferredText = await File.ReadAllTextAsync(inferredFull, ct);
+            return new AgentToolResult(true, AgentToolSupport.Limit(inferredText, inferredMax));
+        }
+
         var path = TaskToolSchemas.GetString(root, "path").Replace('/', Path.DirectorySeparatorChar);
         if (!path.StartsWith(Path.Combine(".tlah_context", "tool-results"), StringComparison.OrdinalIgnoreCase))
             return new AgentToolResult(false, string.Empty, "path must be under .tlah_context/tool-results.");

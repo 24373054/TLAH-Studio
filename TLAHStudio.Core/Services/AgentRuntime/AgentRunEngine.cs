@@ -85,7 +85,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         IReactiveCompactor? reactiveCompactor = null,
         ITokenBudgetService? tokenBudget = null,
         IToolLifecycleRunner? toolLifecycleRunner = null,
-        ISessionMemoryService? sessionMemory = null)
+        ISessionMemoryService? sessionMemory = null,
+        IModelAssistedCompactor? modelAssistedCompactor = null)
     {
         _db = db;
         _chatService = chatService;
@@ -104,7 +105,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         _projectMemory = projectMemory;
         _toolResultPersistence = toolResultPersistence;
         _agentTasks = agentTasks ?? new AgentTaskService(db);
-        _reactiveCompactor = reactiveCompactor ?? new ReactiveCompactor();
+        _reactiveCompactor = reactiveCompactor ?? new ReactiveCompactor(modelAssistedCompactor);
         _tokenBudget = tokenBudget ?? new TokenBudgetService();
         _sessionMemory = sessionMemory ?? new SessionMemoryService();
     }
@@ -126,6 +127,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         LlmResponse? lastResponse = null;
         int consecutiveCompactionFailures = 0;
         const int maxCompactionFailures = 3;
+
+        // M4.8.0: Session memory throttling — avoid writing every step.
+        int _sessionMemoryTokenEstimate = 0;
+        int _sessionMemoryCallCount = 0;
+        int _sessionMemoryLastWriteEstimate = 0;
+        const int smInitTokenThreshold = 10_000;
+        const int smUpdateTokenDelta = 5_000;
+        const int smUpdateCallDelta = 3;
 
         try
         {
@@ -179,10 +188,20 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 // Context compaction check
                 var prepared = await PrepareContextAsync(
-                    state, contextOptions, effective.Provider, effective.Model, forceCompact: false, ct);
+                    state, contextOptions, effective.Provider, effective.Model, forceCompact: false, ct,
+                    provider, systemPrompt);
                 if (prepared.WasCompacted)
                 {
                     state.Messages = prepared.Messages;
+                    // M4.8.0: Force-refresh session memory before reading for compaction.
+                    await _sessionMemory.WaitForExtractionAsync(TimeSpan.FromSeconds(5), ct);
+                    {
+                        var smMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
+                        await _sessionMemory.ExtractAsync(state.ChatId, state.RunId, state.Messages,
+                            _sandboxCommandService.GetSandboxRoot(state.ChatId), smMeta.FilesChanged,
+                            smMeta.CommandsRun, smMeta.RecentFailures, smMeta.OpenQuestions,
+                            smMeta.NextActions, ct);
+                    }
                     // M4.5.0: Inject session memory into compacted context.
                     var smContent = await _sessionMemory.ReadForCompactAsync(
                         _sandboxCommandService.GetSandboxRoot(state.ChatId), ct);
@@ -194,6 +213,12 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     if (!string.IsNullOrEmpty(fileCtx))
                         state.Messages.Insert(prepared.Messages.Count - 1,
                             new MessagePayload("user", fileCtx));
+                    // M4.8.0: Re-inject available tools summary so the agent
+                    // doesn't lose track of its tool set after compaction.
+                    var toolsSummary = BuildPostCompactToolsSummary();
+                    if (!string.IsNullOrEmpty(toolsSummary))
+                        state.Messages.Insert(prepared.Messages.Count - 1,
+                            new MessagePayload("user", toolsSummary));
                     step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
                     await SaveCheckpointAsync(state, ct);
                     var ctxMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
@@ -256,73 +281,140 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         effective.Temperature, effective.MaxTokens, guard.Tools, outputStream,
                         Reasoning: BuildReasoningOptions(effective)), ct);
 
-                // Context limit retry
+                // M4.8.0: Context limit retry with PTL truncation.
                 if (_contextManager.IsContextLimitError(lastResponse))
                 {
-                    // M4.4.3: Circuit breaker — after 3 consecutive compaction
-                    // failures, give up instead of retrying forever.
                     consecutiveCompactionFailures++;
-                    if (consecutiveCompactionFailures > maxCompactionFailures)
+                    bool compactionDisabled = state.CompactionDisabled ||
+                        consecutiveCompactionFailures > maxCompactionFailures;
+
+                    if (compactionDisabled)
                     {
+                        // M4.8.0: Circuit breaker — disable auto-compaction instead
+                        // of aborting the run. Fall through to PTL truncation.
+                        state.CompactionDisabled = true;
                         await AppendEventAsync(state, options, new AgentEventAppendRequest(
                             new AgentRun { Id = state.RunId },
                             AgentEventTypes.Error,
-                            $"Compaction failed {consecutiveCompactionFailures} consecutive times. Aborting the run to prevent infinite retry.",
-                            new { consecutiveCompactionFailures, maxCompactionFailures },
-                            step.Id,
-                            Severity: AgentEventSeverities.Error), events, ct);
-                        assistantContent = lastResponse.AssistantText;
-                        state.Status = AgentRunStatuses.Failed;
-                        state.ErrorMessage = "Compaction retry limit exceeded.";
-                        break;
-                    }
-
-                    var forced = await PrepareContextAsync(
-                        state, contextOptions, effective.Provider, effective.Model, forceCompact: true, ct);
-                    if (forced.WasCompacted)
-                    {
-                        consecutiveCompactionFailures = 0; // Reset on success
-                        state.Messages = forced.Messages;
-                        // M4.5.0: Inject session memory into force-compacted context.
-                        var smContent = await _sessionMemory.ReadForCompactAsync(
-                            _sandboxCommandService.GetSandboxRoot(state.ChatId), ct);
-                        if (!string.IsNullOrEmpty(smContent))
-                            state.Messages.Insert(forced.Messages.Count - 1,
-                                new MessagePayload("user", $"[session memory — accumulated context across compaction cycles]\n{smContent}\n[/session memory]"));
-                        // M4.5.0: Re-inject recently read file content.
-                        var fctx = await BuildPostCompactFileContextAsync(state.ChatId, state.RunId, ct);
-                        if (!string.IsNullOrEmpty(fctx))
-                            state.Messages.Insert(forced.Messages.Count - 1,
-                                new MessagePayload("user", fctx));
-                        await SaveCheckpointAsync(state, ct);
-                        var fMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
-                        await AppendEventAsync(state, options, new AgentEventAppendRequest(
-                            new AgentRun { Id = state.RunId },
-                            AgentEventTypes.ContextCompacted,
-                            "Context limit hit; compacted and retrying.",
-                            new
-                            {
-                                forced.EstimatedTokensBefore,
-                                forced.EstimatedTokensAfter,
-                                files_changed = fMeta.FilesChanged,
-                                commands_run = fMeta.CommandsRun,
-                                open_questions = fMeta.OpenQuestions,
-                                next_actions = fMeta.NextActions,
-                                persisted_outputs = fMeta.PersistedOutputs
-                            },
+                            $"Compaction failed {consecutiveCompactionFailures} consecutive times. Auto-compaction disabled; using PTL truncation.",
+                            new { consecutiveCompactionFailures, maxCompactionFailures, compactionDisabled = true },
                             step.Id,
                             Severity: AgentEventSeverities.Warning), events, ct);
-
-                        var retryGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
-                        if (!retryGuard.IsRejected)
+                    }
+                    else
+                    {
+                        // Try force-compact + post-compact injection + retry.
+                        var forced = await PrepareContextAsync(
+                            state, contextOptions, effective.Provider, effective.Model, forceCompact: true, ct,
+                            provider, systemPrompt);
+                        if (forced.WasCompacted)
                         {
-                            var retryMessages = await BuildModelMessagesWithRuntimeContextAsync(
-                                state.ChatId, state.RunId, retryGuard.Messages, ct);
+                            consecutiveCompactionFailures = 0;
+                            state.Messages = forced.Messages;
+                            // M4.8.0: Force-refresh session memory before reading for compaction.
+                            await _sessionMemory.WaitForExtractionAsync(TimeSpan.FromSeconds(5), ct);
+                            {
+                                var fSmMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
+                                await _sessionMemory.ExtractAsync(state.ChatId, state.RunId, state.Messages,
+                                    _sandboxCommandService.GetSandboxRoot(state.ChatId), fSmMeta.FilesChanged,
+                                    fSmMeta.CommandsRun, fSmMeta.RecentFailures, fSmMeta.OpenQuestions,
+                                    fSmMeta.NextActions, ct);
+                            }
+                            var smContent = await _sessionMemory.ReadForCompactAsync(
+                                _sandboxCommandService.GetSandboxRoot(state.ChatId), ct);
+                            if (!string.IsNullOrEmpty(smContent))
+                                state.Messages.Insert(forced.Messages.Count - 1,
+                                    new MessagePayload("user", $"[session memory — accumulated context across compaction cycles]\n{smContent}\n[/session memory]"));
+                            var fctx = await BuildPostCompactFileContextAsync(state.ChatId, state.RunId, ct);
+                            if (!string.IsNullOrEmpty(fctx))
+                                state.Messages.Insert(forced.Messages.Count - 1,
+                                    new MessagePayload("user", fctx));
+                            // M4.8.0: Re-inject tools summary.
+                            var ftoolsSummary = BuildPostCompactToolsSummary();
+                            if (!string.IsNullOrEmpty(ftoolsSummary))
+                                state.Messages.Insert(forced.Messages.Count - 1,
+                                    new MessagePayload("user", ftoolsSummary));
+                            await SaveCheckpointAsync(state, ct);
+                            var fMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
+                            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                                new AgentRun { Id = state.RunId },
+                                AgentEventTypes.ContextCompacted,
+                                "Context limit hit; compacted and retrying.",
+                                new
+                                {
+                                    forced.EstimatedTokensBefore,
+                                    forced.EstimatedTokensAfter,
+                                    files_changed = fMeta.FilesChanged,
+                                    commands_run = fMeta.CommandsRun,
+                                    open_questions = fMeta.OpenQuestions,
+                                    next_actions = fMeta.NextActions,
+                                    persisted_outputs = fMeta.PersistedOutputs
+                                },
+                                step.Id,
+                                Severity: AgentEventSeverities.Warning), events, ct);
+
+                            var retryGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
+                            if (!retryGuard.IsRejected)
+                            {
+                                var retryMessages = await BuildModelMessagesWithRuntimeContextAsync(
+                                    state.ChatId, state.RunId, retryGuard.Messages, ct);
+                                outputStream = CreateTrackedStream(options.OutputStream, streamMetrics);
+                                lastResponse = await _providerStreamAdapter.ChatAsync(
+                                    new ProviderStreamRequest(provider, retryMessages, systemPrompt,
+                                        effective.Temperature, effective.MaxTokens, retryGuard.Tools, outputStream,
+                                        Reasoning: BuildReasoningOptions(effective)), ct);
+                            }
+                        }
+                    }
+
+                    // M4.8.0: PTL truncation — if still context-limit after compaction
+                    // (or compaction is disabled), drop oldest API-rounds and retry.
+                    for (int ptlAttempt = 0;
+                         ptlAttempt < 3 && _contextManager.IsContextLimitError(lastResponse);
+                         ptlAttempt++)
+                    {
+                        var msgs = state.Messages.ToList();
+                        const int headKeep = 2; // system + first user
+                        const int tailKeep = 6;
+                        int removeIdx = -1;
+                        for (int i = headKeep; i < msgs.Count - tailKeep; i++)
+                        {
+                            if (string.Equals(msgs[i].Role, "assistant", StringComparison.OrdinalIgnoreCase) &&
+                                (msgs[i].ToolCalls?.Count ?? 0) > 0)
+                            {
+                                removeIdx = i;
+                                break;
+                            }
+                        }
+                        if (removeIdx < 0)
+                            break; // No removable round left
+
+                        // Remove the round: assistant + its tool results.
+                        var keep = msgs.Take(removeIdx).ToList();
+                        int skip = removeIdx + 1;
+                        while (skip < msgs.Count &&
+                               string.Equals(msgs[skip].Role, "tool", StringComparison.OrdinalIgnoreCase))
+                            skip++;
+                        keep.AddRange(msgs.Skip(skip));
+                        state.Messages = keep;
+
+                        var truncGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
+                        if (!truncGuard.IsRejected)
+                        {
+                            var truncMessages = await BuildModelMessagesWithRuntimeContextAsync(
+                                state.ChatId, state.RunId, truncGuard.Messages, ct);
                             outputStream = CreateTrackedStream(options.OutputStream, streamMetrics);
                             lastResponse = await _providerStreamAdapter.ChatAsync(
-                                new ProviderStreamRequest(provider, retryMessages, systemPrompt,
-                                    effective.Temperature, effective.MaxTokens, retryGuard.Tools, outputStream,
+                                new ProviderStreamRequest(provider, truncMessages, systemPrompt,
+                                    effective.Temperature, effective.MaxTokens, truncGuard.Tools, outputStream,
                                     Reasoning: BuildReasoningOptions(effective)), ct);
+                            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                                new AgentRun { Id = state.RunId },
+                                AgentEventTypes.ContextCompacted,
+                                $"PTL truncation round {ptlAttempt + 1}: dropped oldest tool round, {keep.Count} msgs remain.",
+                                new { ptlAttempt, messageCount = keep.Count },
+                                step.Id,
+                                Severity: AgentEventSeverities.Warning), events, ct);
                         }
                     }
                 }
@@ -555,15 +647,26 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 state.CurrentStep = stepNumber;
                 SyncRunState(run, state);
 
-                // M4.5.0: Fire-and-forget session memory extraction after
-                // each completed step.
-                var stepMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
-                var stepSandbox = _sandboxCommandService.GetSandboxRoot(state.ChatId);
-                _ = Task.Run(() =>
-                    _sessionMemory.ExtractAsync(state.ChatId, state.RunId, state.Messages,
-                        stepSandbox, stepMeta.FilesChanged, stepMeta.CommandsRun,
-                        stepMeta.RecentFailures, stepMeta.OpenQuestions, stepMeta.NextActions,
-                        CancellationToken.None), CancellationToken.None);
+                // M4.8.0: Throttled session memory extraction.
+                // Not every step — init at 10K tokens, update every 5K or 3 steps.
+                var currentTokens = _tokenBudget.EstimateTokens(state.Messages);
+                _sessionMemoryTokenEstimate = currentTokens;
+                _sessionMemoryCallCount++;
+                var tokenDelta = currentTokens - _sessionMemoryLastWriteEstimate;
+                var shouldWrite = currentTokens >= smInitTokenThreshold &&
+                    (tokenDelta >= smUpdateTokenDelta || _sessionMemoryCallCount >= smUpdateCallDelta);
+                if (shouldWrite)
+                {
+                    var stepMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
+                    var stepSandbox = _sandboxCommandService.GetSandboxRoot(state.ChatId);
+                    _ = Task.Run(() =>
+                        _sessionMemory.ExtractAsync(state.ChatId, state.RunId, state.Messages,
+                            stepSandbox, stepMeta.FilesChanged, stepMeta.CommandsRun,
+                            stepMeta.RecentFailures, stepMeta.OpenQuestions, stepMeta.NextActions,
+                            CancellationToken.None), CancellationToken.None);
+                    _sessionMemoryLastWriteEstimate = currentTokens;
+                    _sessionMemoryCallCount = 0;
+                }
             }
 
             // Step budget finalization
@@ -651,7 +754,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         string provider,
         string model,
         bool forceCompact,
-        CancellationToken ct)
+        CancellationToken ct,
+        ILlmProvider? llmProvider = null,
+        string? systemPrompt = null)
     {
         var budget = _tokenBudget.GetBudget(provider, model);
         var tokenState = forceCompact
@@ -698,24 +803,47 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 TokenBudgetState.CompactSoon => CompactionStrategy.Microcompact,
                 _ => CompactionStrategy.TrimToolOutputs
             };
-            var compacted = await _reactiveCompactor.CompactAsync(
-                state.Messages, tokenState, strategy, _tokenBudget, ct);
-            var saved = compacted.EstimatedTokensBefore - compacted.EstimatedTokensAfter;
-            var minimumUsefulSavings = tokenState == TokenBudgetState.CompactSoon
-                ? Math.Max(1_024, compacted.EstimatedTokensBefore / 20)
-                : 1;
-            if (compacted.WasCompacted &&
-                saved >= minimumUsefulSavings &&
-                compacted.EstimatedTokensAfter < compacted.EstimatedTokensBefore)
+
+            // M4.8.0: Progressive upgrade chain — if current level savings are
+            // insufficient, escalate to the next more aggressive strategy.
+            var upgradeChain = strategy switch
             {
-                state.LastCompactedStep = state.CurrentStep;
-                state.LastCompactedTokenEstimate = compacted.EstimatedTokensAfter;
-                return new AgentContextPreparationResult(
-                    compacted.Messages,
-                    true,
-                    compacted.EstimatedTokensBefore,
-                    compacted.EstimatedTokensAfter,
-                    compacted.Summary);
+                CompactionStrategy.TrimToolOutputs => new[]
+                    { CompactionStrategy.TrimToolOutputs, CompactionStrategy.Microcompact,
+                      CompactionStrategy.SummarizeMiddle, CompactionStrategy.ModelAssistedSummarize,
+                      CompactionStrategy.EmergencyTruncate },
+                CompactionStrategy.Microcompact => new[]
+                    { CompactionStrategy.Microcompact, CompactionStrategy.SummarizeMiddle,
+                      CompactionStrategy.ModelAssistedSummarize, CompactionStrategy.EmergencyTruncate },
+                CompactionStrategy.SummarizeMiddle => new[]
+                    { CompactionStrategy.SummarizeMiddle, CompactionStrategy.ModelAssistedSummarize,
+                      CompactionStrategy.EmergencyTruncate },
+                _ => new[] { strategy, CompactionStrategy.EmergencyTruncate }
+            };
+
+            foreach (var tryStrategy in upgradeChain)
+            {
+                var compacted = await _reactiveCompactor.CompactAsync(
+                    state.Messages, tokenState, tryStrategy, _tokenBudget, ct,
+                    llmProvider, systemPrompt);
+                if (!compacted.WasCompacted)
+                    continue;
+                var saved = compacted.EstimatedTokensBefore - compacted.EstimatedTokensAfter;
+                var minimumUsefulSavings = tokenState == TokenBudgetState.CompactSoon
+                    ? Math.Max(1_024, compacted.EstimatedTokensBefore / 20)
+                    : 1;
+                if (saved >= minimumUsefulSavings &&
+                    compacted.EstimatedTokensAfter < compacted.EstimatedTokensBefore)
+                {
+                    state.LastCompactedStep = state.CurrentStep;
+                    state.LastCompactedTokenEstimate = compacted.EstimatedTokensAfter;
+                    return new AgentContextPreparationResult(
+                        compacted.Messages,
+                        true,
+                        compacted.EstimatedTokensBefore,
+                        compacted.EstimatedTokensAfter,
+                        $"[{tryStrategy}] {compacted.Summary}");
+                }
             }
         }
 
@@ -891,6 +1019,42 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         }
 
         return totalChars > 0 ? sb.ToString() : null;
+    }
+
+    /// <summary>
+    /// M4.8.0: After compaction, inject a summary of available tools so the
+    /// agent doesn't lose track of its tool set. Capped at 2000 chars.
+    /// </summary>
+    private string? BuildPostCompactToolsSummary()
+    {
+        var tools = _agentTools.Definitions;
+        if (tools.Count == 0)
+            return null;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("[post-compaction context — available tools]");
+        sb.AppendLine("The following tools are available for use:");
+        sb.AppendLine();
+
+        var totalChars = 0;
+        const int maxTotal = 2000;
+        foreach (var tool in tools.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var desc = string.IsNullOrWhiteSpace(tool.Description)
+                ? "(no description)"
+                : tool.Description.Length > 100
+                    ? tool.Description[..97] + "..."
+                    : tool.Description;
+            var line = $"- {tool.Name}: {desc}";
+            if (totalChars + line.Length + Environment.NewLine.Length > maxTotal && totalChars > 0)
+                break;
+            sb.AppendLine(line);
+            totalChars += line.Length + Environment.NewLine.Length;
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("[/post-compaction context]");
+        return sb.ToString();
     }
 
     private static void AppendList(StringBuilder sb, string title, IReadOnlyList<string> items)

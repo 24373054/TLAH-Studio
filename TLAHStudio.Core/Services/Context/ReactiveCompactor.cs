@@ -37,31 +37,67 @@ public interface IReactiveCompactor
         TokenBudgetState state,
         CompactionStrategy strategy,
         ITokenBudgetService tokenBudget,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        ILlmProvider? modelProvider = null,
+        string? systemPrompt = null);
 }
 
 public class ReactiveCompactor : IReactiveCompactor
 {
     private static readonly int KeepHeadMessages = 4;
     private static readonly int KeepTailMessages = 12;
+    private readonly IModelAssistedCompactor? _modelAssisted;
 
-    public Task<CompactionResult> CompactAsync(
+    public ReactiveCompactor(IModelAssistedCompactor? modelAssisted = null)
+    {
+        _modelAssisted = modelAssisted;
+    }
+
+    public async Task<CompactionResult> CompactAsync(
         IReadOnlyList<MessagePayload> messages,
         TokenBudgetState state,
         CompactionStrategy strategy,
         ITokenBudgetService tokenBudget,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ILlmProvider? modelProvider = null,
+        string? systemPrompt = null)
     {
         var before = tokenBudget.EstimateTokens(messages);
 
-        return strategy switch
+        switch (strategy)
         {
-            CompactionStrategy.TrimToolOutputs => Task.FromResult(TrimToolOutputs(messages.ToList(), tokenBudget, before)),
-            CompactionStrategy.Microcompact => Task.FromResult(Microcompact(messages.ToList(), tokenBudget, before)),
-            CompactionStrategy.SummarizeMiddle => Task.FromResult(SummarizeMiddle(messages.ToList(), tokenBudget, before)),
-            CompactionStrategy.EmergencyTruncate => Task.FromResult(EmergencyTruncate(messages.ToList(), tokenBudget, before)),
-            _ => Task.FromResult(new CompactionResult(messages.ToList(), false, before, before, "No compaction applied."))
-        };
+            case CompactionStrategy.TrimToolOutputs:
+                return TrimToolOutputs(messages.ToList(), tokenBudget, before);
+            case CompactionStrategy.Microcompact:
+                return Microcompact(messages.ToList(), tokenBudget, before);
+            case CompactionStrategy.SummarizeMiddle:
+                return SummarizeMiddle(messages.ToList(), tokenBudget, before);
+            case CompactionStrategy.EmergencyTruncate:
+                return EmergencyTruncate(messages.ToList(), tokenBudget, before);
+            case CompactionStrategy.ModelAssistedSummarize:
+                if (_modelAssisted != null && modelProvider != null)
+                {
+                    try
+                    {
+                        var summary = await _modelAssisted.GenerateSummaryAsync(
+                            messages, modelProvider, systemPrompt ?? string.Empty, ct);
+                        if (!string.IsNullOrWhiteSpace(summary) &&
+                            !summary.StartsWith("[model-assisted compact failed"))
+                        {
+                            return BuildModelAssistedResult(messages.ToList(), summary, tokenBudget, before);
+                        }
+                    }
+                    catch
+                    {
+                        // Model-assisted compaction failed — fall through to no-op.
+                    }
+                }
+                return new CompactionResult(messages.ToList(), false, before, before,
+                    "Model-assisted compaction not available (no provider or summarizer).");
+            default:
+                return new CompactionResult(messages.ToList(), false, before, before,
+                    "No compaction applied.");
+        }
     }
 
     private static CompactionResult TrimToolOutputs(
@@ -93,7 +129,6 @@ public class ReactiveCompactor : IReactiveCompactor
 
         var compacted = new List<MessagePayload>();
         var toolResultIndices = new List<int>();
-        var persistenceBase = ".tlah_context/tool-results/";
 
         for (int i = 0; i < messages.Count; i++)
         {
@@ -111,10 +146,10 @@ public class ReactiveCompactor : IReactiveCompactor
                 var toolIdx = toolResultIndices.IndexOf(i);
                 if (toolIdx >= 0 && toolIdx < recentThreshold)
                 {
-                    // Replace with compact reference
+                    // Replace with compact reference using ToolCallId as lookup key
                     compacted.Add(new MessagePayload(
                         "tool",
-                        $"[persisted-output: {persistenceBase}tool-{i:D4}.json; content-length={msg.Content.Length}]",
+                        $"[persisted-output: tool-call-id={msg.ToolCallId}; content-length={msg.Content.Length}]",
                         msg.ToolCallId));
                     continue;
                 }
@@ -264,6 +299,46 @@ public class ReactiveCompactor : IReactiveCompactor
         var after = tokenBudget.EstimateTokens(compacted);
         return new CompactionResult(compacted, true, before, after,
             $"Emergency truncation — kept only first 2 and last 6 of {messages.Count} messages.");
+    }
+
+    /// <summary>
+    /// M4.8.0: Build compacted result from a model-generated summary.
+    /// Keeps head/tail + all user messages, replaces the middle with the LLM summary.
+    /// </summary>
+    private CompactionResult BuildModelAssistedResult(
+        List<MessagePayload> messages,
+        string summary,
+        ITokenBudgetService tokenBudget,
+        int before)
+    {
+        if (messages.Count <= KeepHeadMessages + KeepTailMessages + 3)
+            return new CompactionResult(messages, false, before, before,
+                "Model-assisted compaction skipped — too few messages.");
+
+        var preserved = new HashSet<int>();
+        for (int i = 0; i < Math.Min(KeepHeadMessages, messages.Count); i++)
+            preserved.Add(i);
+        for (int i = Math.Max(0, messages.Count - KeepTailMessages); i < messages.Count; i++)
+            preserved.Add(i);
+        for (int i = 0; i < messages.Count; i++)
+            if (string.Equals(messages[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+                preserved.Add(i);
+
+        var compacted = new List<MessagePayload>();
+        for (int i = 0; i < messages.Count; i++)
+        {
+            if (preserved.Contains(i))
+                compacted.Add(messages[i]);
+            else if (i == messages.Count / 2) // Insert summary once in the middle
+            {
+                compacted.Add(new MessagePayload("user",
+                    $"[model-assisted summary]\n{summary}\n[end summary]"));
+            }
+        }
+
+        var after = tokenBudget.EstimateTokens(compacted);
+        return new CompactionResult(compacted, true, before, after,
+            $"Model-assisted compaction ({before}→{after} tokens).");
     }
 
     /// <summary>

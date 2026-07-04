@@ -1,14 +1,14 @@
 {
-  "version": "4.7.0",
+  "version": "4.8.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.7.0.exe",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.8.0.exe",
   "sha256": "126ec8297ea310acf11efde75adc0d6ec50ed773593128d4d9e0affe3444122a",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.7.0: context gauge, streaming cursor, activity tree+timing, input counter, debug wrap, sidebar date groups, settings theme/density/reset.",
+  "releaseNotes": "4.8.0: permission default fix, microcompact path fix, model-assisted compaction activated, progressive upgrade chain, PTL retry with truncation, circuit breaker skip-not-abort, post-compact tools injection, session memory throttling.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.7.0",
+  "minSupportedVersion": "4.8.0",
   "rolloutPercent": 100,
   "installerSizeBytes": 97045296
 }

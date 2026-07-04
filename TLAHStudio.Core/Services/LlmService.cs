@@ -91,7 +91,7 @@ public class LlmService : ILlmService
                 new TaskOutputAgentTool(backgroundTaskService),
                 new TaskStopAgentTool(backgroundTaskService),
                 new TaskSendMessageAgentTool(backgroundTaskService),
-                new ReadPersistedOutputAgentTool(_sandboxCommandService),
+                new ReadPersistedOutputAgentTool(_sandboxCommandService, _db),
                 new SandboxExecAgentTool(_sandboxCommandService),
                 new TerminalExecAgentTool(router),
                 new FileListAgentTool(_sandboxCommandService),

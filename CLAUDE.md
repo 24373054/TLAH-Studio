@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TLAH Studio (Talk Like A Human) is a Windows-native AI agent workspace built on C# + WinUI 3 + Windows App SDK (.NET 8). It captures the complete raw HTTP request/response for every LLM API call and provides a persistent agent runtime with tool execution, safety policies, and sandboxing. Every run is stored locally — raw provider requests/responses, agent steps, tool calls, approvals, artifacts, checkpoints, and update metadata.
 
+## Development Roadmap
+
+The 4.8 → 5.x evolution plan lives in `docs/TLAH_5_0_ROADMAP.md` (entry point), backed by four phase plans: Phase 0 foundation fixes (4.8.0), Phase 1 agent autonomy (4.9.0), Phase 2 multi-agent orchestration (5.0.0), Phase 3 platform & differentiation (5.1+). Each task carries current-state code refs, Claude Code benchmarks (`_analysis/claude-code-src/`), implementation steps, and acceptance criteria. **Read the roadmap before starting any version work** — it defines priorities, cross-phase dependencies, and the four differentiating strengths (CJK token estimation, deterministic session memory, raw HTTP capture, GUI visualization) that must not be weakened by Claude Code alignment work.
+
 ## Coding Style & Conventions
 
 - **C#** with nullable reference types and implicit usings enabled. File-scoped namespaces. Four-space indentation.
@@ -121,6 +125,11 @@ The tool system (v3.0+) uses per-tool safety classification and effect planning:
 ### Tool Safety Pipeline
 Tool calls go through: `AgentToolParser` (parse from model output) → `IAgentToolV3.ClassifySafetyAsync` (per-tool assessment) → `ToolSafetyKernel` (pre-execution assess) → `ToolProtocolGuard` (approval gate, user prompts) → `IToolLifecycleRunner.ExecuteAsync` → `ISandboxCommandService` (actual execution with resource limits).
 
+Additional safety mechanisms layered on the pipeline:
+- **`IFlagLevelValidationService`** (`FlagLevelValidationService`, M4.6.0) — per-flag command allowlist adopted from Claude Code's `readOnlyValidation.ts` / `bashSecurity.ts`. Parses shell commands into tokens, matches against a per-command safe-flag map, and returns `Allow` (auto-approve) / `NotInAllowlist` (defer to other checks) / `Reject`. Also exposes `DestructiveWarnings` (informational, never blocks — e.g. `git reset --hard`, `git push --force`, `rm -rf`) the UI can surface.
+- **`ReadFileTracker`** — read-before-write guard: blocks/flags `file_write` / `edit` against paths the agent has not first read in the current run, with stale-mtime detection.
+- **`ToolSafetyKernel` bypass-immune paths** — `.git/`, `.env`, and shell config files are checked via `CheckBypassImmunePath()` / `BypassImmunePathRegex()` and cannot be circumvented by flags like `--no-verify` or env-var overrides.
+
 ### Built-in Tools (`AgentToolNames` registry)
 `terminal_exec` (sandbox), `file_list`, `file_read`, `file_write`, `file_search`, `git`, `http_request`, `web_search`, `browser_read`, `mcp_list_tools`, `mcp_call`, `memory_read`, `memory_write`, `memory_list`, and code tools: `read`, `grep`, `glob`, `edit`, `multi_edit`, `diff`, `apply_patch`, `rollback`, `lsp_diagnostics`. Also: `task_create`, `task_update`, `task_list`, `task_output`, `task_stop`, `task_send_message`, `todo_write`.
 
@@ -134,6 +143,9 @@ Tool calls go through: `AgentToolParser` (parse from model output) → `IAgentTo
 - **`IReactiveCompactor`** — progressive compaction: `TrimToolOutputs` → `Microcompact` → `SummarizeMiddle` → `ModelAssistedSummarize` → `EmergencyTruncate`
 - **`ITokenBudgetService`** — tracks token usage, availability, and budget ceiling
 - After compaction, injects a structured runtime context block with project memory, active tasks, recent files, and open questions.
+
+### Session Memory (`TLAHStudio.Core.Services.SessionMemory`)
+- **`ISessionMemoryService`** — cross-compaction persistent memory that prevents catastrophic forgetting during long agent runs. After each step, deterministic extraction (zero API cost — unlike Claude Code's LLM-based approach) writes a structured markdown file to `{sandbox}/.tlah_context/session-memory.md` covering files changed, commands run, recent failures, open questions, and next actions. When compaction fires, the file is read and injected at the summary boundary so accumulated context survives multiple compaction cycles.
 
 ### Other Subsystems
 - **`TLAHStudio.Core.Services.Lsp`** — `ILspManager`: language server diagnostics for C#, TypeScript, Python, Rust
@@ -149,7 +161,7 @@ Tool calls go through: `AgentToolParser` (parse from model output) → `IAgentTo
 - **`SecretRedactor`** / **`ApiKeyMasker`** — strips secrets from debug logs and stored data
 - **`ProtectedSecret`** — DPAPI-based credential encryption (`System.Security.Cryptography.ProtectedData`)
 - **`ToolProtocolGuard`** / **`ToolSafetyKernel`** — pre-execution safety assessment
-- **`UpdateCrypto`** — RSA signature verification for `latest.json` (keys generated via `tools/generate-keys.ps1`)
+- **`UpdateCrypto`** — ECDSA P-256 (nistP256) + SHA-256 detached signature verification for `latest.json`; signature is Base64-encoded into `latest.json.sig` (keys generated via `tools/generate-keys.ps1`)
 
 ## App Layer — MVVM + WinUI 3
 
@@ -201,7 +213,7 @@ Updates are delivered through `https://download.matrixlabs.cn/tlah/windows/`. Th
 
 1. **Build**: `dotnet publish` + Inno Setup → `TLAHStudioSetup-x.y.z.exe`
 2. **Metadata**: `latest.json` contains version, channel, `installerUrl`, SHA256, `forceUpdate`, `minSupportedVersion`, `rolloutPercent` (0-100 for canary)
-3. **Sign**: `latest.json` is RSA-signed → `latest.json.sig` (keys via `tools/generate-keys.ps1`)
+3. **Sign**: `latest.json` is ECDSA P-256 + SHA-256 signed → detached Base64 `latest.json.sig` (keys via `tools/generate-keys.ps1`)
 4. **Upload**: installer, `latest.json`, `latest.json.sig` to update server
 5. **Client**: On startup (3s delay), fetches `latest.json` → verifies RSA signature → checks version → downloads installer → SHA256 verify → launches `TLAHStudio.Updater.exe` → main app exits → silent Inno Setup install → relaunches new version
 

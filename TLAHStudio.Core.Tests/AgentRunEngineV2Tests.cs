@@ -188,7 +188,7 @@ public class AgentRunEngineV2Tests : IDisposable
         Assert.False(options.AutoApproveTools);
         Assert.Equal(32_000, options.ContextBudgetTokens);
         Assert.Equal(24_000, options.AutoCompactTriggerTokens);
-        Assert.Equal(AgentPermissionModes.BypassPermissions, options.PermissionMode);
+        Assert.Equal(AgentPermissionModes.RequestApproval, options.PermissionMode);
     }
 
     [Fact]
@@ -206,7 +206,7 @@ public class AgentRunEngineV2Tests : IDisposable
         Assert.Equal(96, options.MaxSteps);
         Assert.True(options.AutoApproveTools);
         Assert.Equal(64_000, options.ContextBudgetTokens);
-        Assert.Equal(AgentPermissionModes.BypassPermissions, options.PermissionMode);
+        Assert.Equal(AgentPermissionModes.RequestApproval, options.PermissionMode);
     }
 
     // ── AgentRunResult tests ─────────────────────────────────

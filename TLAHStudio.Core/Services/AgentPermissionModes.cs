@@ -16,7 +16,7 @@ public static class AgentPermissionModes
             "bypass" => BypassPermissions,
             "auto" => AutoApprove,
             "ask" => RequestApproval,
-            _ => BypassPermissions
+            _ => RequestApproval
         };
 
     public static bool IsBypass(string? value) =>
@@ -31,6 +31,6 @@ public static class AgentPermissionModes
             BypassPermissions => "Full access",
             AutoApprove => "Auto approve",
             RequestApproval => "Ask approval",
-            _ => "Full access"
+            _ => "Ask approval"
         };
 }
