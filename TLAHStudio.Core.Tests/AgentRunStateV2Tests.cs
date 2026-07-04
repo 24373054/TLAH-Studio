@@ -102,9 +102,9 @@ public class AgentRunStateV2Tests
     {
         var state = new AgentRunState();
         Assert.True(state.SentSkillNames.Add("test-skill"));
-        Assert.True(state.SentSkillNames.Contains("test-skill"));
+        Assert.Contains("test-skill", state.SentSkillNames);
         Assert.False(state.SentSkillNames.Add("test-skill")); // Already present
-        Assert.Equal(1, state.SentSkillNames.Count);
+        Assert.Single(state.SentSkillNames);
     }
 
     [Fact]
@@ -113,7 +113,7 @@ public class AgentRunStateV2Tests
         var state = new AgentRunState();
         Assert.True(state.SentSkillNames.Add("MySkill"));
         Assert.False(state.SentSkillNames.Add("myskill")); // Same, case-insensitive
-        Assert.True(state.SentSkillNames.Contains("MYSKILL"));
+        Assert.Contains("MYSKILL", state.SentSkillNames);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -215,9 +215,9 @@ public class AgentRunStateV2Tests
 
         // Simulate a resume: DeepClone preserves SentSkillNames.
         var resumed = original.DeepClone();
-        Assert.Equal(2, resumed.SentSkillNames.Count);
-        Assert.True(resumed.SentSkillNames.Contains("init"));
-        Assert.True(resumed.SentSkillNames.Contains("code-review"));
+        Assert.Equal(2, resumed.SentSkillNames.Count());
+        Assert.Contains("init", resumed.SentSkillNames);
+        Assert.Contains("code-review", resumed.SentSkillNames);
 
         // New skills that show up after resume should still dedup.
         Assert.False(resumed.SentSkillNames.Add("init")); // Already sent
@@ -233,8 +233,8 @@ public class AgentRunStateV2Tests
         var clone = state.DeepClone();
         clone.SentSkillNames.Add("skill-b");
 
-        Assert.True(state.SentSkillNames.Contains("skill-a"));
-        Assert.False(state.SentSkillNames.Contains("skill-b"));
+        Assert.Contains("skill-a", state.SentSkillNames);
+        Assert.DoesNotContain("skill-b", state.SentSkillNames);
         Assert.Equal(2, clone.SentSkillNames.Count);
     }
 
@@ -274,7 +274,7 @@ public class AgentRunStateV2Tests
         Assert.True(clone.CompactionDisabled);
         Assert.True(clone.IsPlanMode);
         Assert.Equal(AgentPermissionModes.BypassPermissions, clone.PrePlanMode);
-        Assert.True(clone.SentSkillNames.Contains("init"));
+        Assert.Contains("init", clone.SentSkillNames);
         Assert.Single(clone.Messages);
     }
 

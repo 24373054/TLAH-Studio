@@ -233,12 +233,12 @@ public sealed partial class ToolPlatformDialog : ContentDialog
                 PluginSummaryText.Text = "Plugin service not available.";
                 return;
             }
-            var plugins = await pluginService.DiscoverPluginsAsync();
+            var plugins = await pluginService.ListPluginsAsync();
             var items = plugins.Select(p => new PluginListItem(
                 p.Id, p.Name, p.Version, p.Description,
                 p.TrustLevel == PluginTrustLevel.Trusted ? "Trusted — click to revoke" : "Untrusted — click to trust",
                 p.TrustLevel == PluginTrustLevel.Trusted,
-                p.Skills.Count + p.Tools.Count)).ToList();
+                p.Skills.Count + p.Tools.Count + p.McpServers.Count)).ToList();
             PluginListView.ItemsSource = items;
             PluginSummaryText.Text = items.Count > 0
                 ? $"{items.Count} plugin(s) discovered. Install plugins to %LOCALAPPDATA%\\TLAH Studio\\plugins\\."
@@ -256,14 +256,36 @@ public sealed partial class ToolPlatformDialog : ContentDialog
             return;
         try
         {
-            var pluginService = App.Current.GetType()
-                .GetProperty("Host")?.GetValue(App.Current);
-            // Static access via DI
-            await Task.CompletedTask;
-            // Re-populate after trust change
+            var pluginService = App.Services.GetService(typeof(IPluginManifestService)) as IPluginManifestService;
+            var activation = App.Services.GetService(typeof(IPluginActivationService)) as IPluginActivationService;
+            if (pluginService == null)
+                return;
+
+            // Determine current trust state to toggle.
+            var plugins = await pluginService.ListPluginsAsync();
+            var current = plugins.FirstOrDefault(p =>
+                string.Equals(p.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+            bool wasTrusted = current?.TrustLevel == PluginTrustLevel.Trusted;
+
+            if (wasTrusted)
+            {
+                await pluginService.RevokeTrustAsync(pluginId);
+                if (activation != null)
+                    await activation.DeactivateAsync(pluginId);
+            }
+            else
+            {
+                await pluginService.TrustPluginAsync(pluginId);
+                if (activation != null)
+                    await activation.ActivateAsync(pluginId);
+            }
+            // Re-populate after trust change.
             await PopulatePluginsAsync();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            PluginSummaryText.Text = $"Failed to toggle trust: {ex.Message}";
+        }
     }
 
     private async void OpenPluginsDir_Click(object sender, RoutedEventArgs e)
@@ -275,8 +297,18 @@ public sealed partial class ToolPlatformDialog : ContentDialog
         await Windows.System.Launcher.LaunchFolderPathAsync(dir);
     }
 
-    private async void RescanPlugins_Click(object sender, RoutedEventArgs e) =>
+    private async void RescanPlugins_Click(object sender, RoutedEventArgs e)
+    {
         await PopulatePluginsAsync();
+        // M4.9.2: Re-activate trusted plugins after rescan so newly-trusted
+        // plugins' skills/MCP servers are wired into the live subsystems.
+        try
+        {
+            if (App.Services.GetService(typeof(IPluginActivationService)) is IPluginActivationService activation)
+                await activation.ActivateAllAsync();
+        }
+        catch { }
+    }
 
     private sealed record PluginListItem(
         string Id, string Name, string Version, string Description,

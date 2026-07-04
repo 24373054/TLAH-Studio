@@ -41,10 +41,13 @@ dotnet publish TLAHStudio.App/TLAHStudio.App.csproj -c Release -r win-x64 --self
 .\tools\ci.ps1 -Configuration Release -Platform x64
 
 # Release build + sign + verify + upload
-.\tools\build-release.ps1 -Version 4.7.0 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest -Upload
+.\tools\build-release.ps1 -Version 4.9.2 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest -Upload
 
 # Verify an existing release
-.\tools\verify-release.ps1 -Version 4.7.0 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version 4.9.2 -AllowUntrustedAuthenticode
+
+# Run a single test (filter by name)
+dotnet test TLAHStudio.Core.Tests/TLAHStudio.Core.Tests.csproj -c Release --filter "FullyQualifiedName~SkillLoaderV2Tests"
 ```
 
 **Installer packaging:**
@@ -62,7 +65,7 @@ Requires Visual Studio 2022+ with Windows App SDK / WinUI workloads. Open `TLAHS
 | **TLAHStudio.Data** | net8.0 | classlib | EF Core `TlahDbContext` — single-file data layer with 20+ entity sets and lightweight SQLite migrations |
 | **TLAHStudio.App** | net8.0-windows | WinUI 3 | Desktop app shell: XAML Views, ViewModels (MVVM with CommunityToolkit.Mvvm), DI via `Microsoft.Extensions.Hosting` |
 | **TLAHStudio.Updater** | net8.0-windows | console | Standalone updater (single-file published): waits for main app exit → runs Inno Setup installer silently → relaunches |
-| **TLAHStudio.Core.Tests** | net8.0 | xUnit | ~30 test classes covering LLM, agent runtime, tools, safety, persistence, update, privacy, release |
+| **TLAHStudio.Core.Tests** | net8.0 | xUnit | ~25 test classes / 258 tests covering LLM, agent runtime, tools, safety, persistence, update, privacy, release, foundation v2, permission modes |
 
 **Platform targets:** x86, x64, ARM64 (App). Updater publishes as single-file with native self-extract + compression.
 
@@ -96,6 +99,50 @@ Service layer; interfaces map 1:1 from the original Python codebase.
 - **`IToolPlatformService`** — manages tool platform settings, MCP configs, credential entries, policy rules
 - **`INetworkSecurityService`** — HTTPS allowlist, private/loopback blocking, redirect control
 - **`IMcpClientService`** — MCP client (STDIO + Streamable HTTP)
+
+### Permission Modes (`AgentPermissionModes.cs`)
+Constants + helpers for the four permission modes selectable from the input bar flyout (M4.8.0/4.9.0):
+
+- **`BypassPermissions`** (`bypass_permissions`) — full access, no prompts (dangerous)
+- **`AutoApprove`** (`auto_approve`) — auto-approve every tool call
+- **`RequestApproval`** (`request_approval`) — default fallback; prompt per call
+- **`Plan`** (`plan`, M4.9.0) — read-only planning mode. Write tools are intercepted in the agent loop and rejected; agent must call `enter_plan_mode`/`exit_plan_mode` to transition. `IsAutoApprove` excludes Plan.
+
+### Agent Autonomy Tools (M4.9.0)
+Four new agent tools wired through DI in `App.xaml.cs`:
+
+- **`enter_plan_mode` / `exit_plan_mode`** (`PlanModeAgentTools.cs`) — toggle Plan mode mid-run. State stored on `AgentRunState.IsPlanMode` + `PrePlanMode`; write tools intercepted at the engine tool-execution loop.
+- **`ask_user_question`** (`AskUserQuestionAgentTool.cs`) — structured multi-question tool (1-4 questions, 2-4 options each, multi-select). Executes with answers collected from the approval flow; `AgentApprovalRequest.UpdatedArgumentsJson` carries answers back into the tool call.
+- **`skill`** (`SkillAgentTool.cs`) — invoke a discovered skill by name. Lazy-loads the skill body on call; uses `ISkillLoader` for discovery.
+
+### Skills System (M4.9.0)
+Four-source skill discovery via `ISkillLoader` (stateless, always rescans — no caching). **M4.9.2 priority: project > managed > user > bundled** (first source wins on name collision):
+
+1. **Project** (`<workspace>/.tlah/skills/`) — per-workspace skills; auto-discovered via `SetWorkspaceRoot()` at run start. `WorkspaceRootService.SetRootAsync` auto-creates `.tlah/skills/` and `.tlah/output-styles/`.
+2. **Managed** (`SetManagedDir()`, M4.9.2) — policy-level skills; set by `PluginActivationService` to a trusted plugin's directory. Optional, null by default.
+3. **User** (`%LOCALAPPDATA%/TLAH Studio/skills/`) — user-installed skills.
+4. **Bundled** (`TLAHStudio.App/Assets/bundled-skills/`) — 12 skills: `init`, `code-review`, `verify`, `simplify`, `update-config`, `debug`, `remember`, `skillify`, `security-review`, `deep-research`, `batch`, `loop`. Never truncated by budget.
+
+Skill frontmatter parsed with regex `@"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n"` (handles both CRLF and LF on Windows). List fields (`paths`, `triggers`, etc.) accept both comma-scalar form (`paths: a, b`) and YAML array form (`paths: ["a", "b"]`) — `SplitList` strips brackets/quotes (M4.9.2). Progressive disclosure: skill listings injected into the system prompt under a 1% context budget; `AgentRunState.SentSkillNames` (HashSet, deep-copied in `DeepClone`) tracks which skills have already been sent to avoid re-sending.
+
+### Plugin Activation (M4.9.2)
+`IPluginActivationService` (`PluginActivationService.cs`) — closes the M2.12.0 dead-code gap by wiring trusted plugins end-to-end at startup and on trust-toggle:
+- **Skills**: the trusted plugin's directory is registered as a managed source on the shared `ISkillLoader` (via `SetManagedDir`), so plugin `skills/*.md` appear in the listing.
+- **MCP servers**: each declared `mcp_servers` entry is persisted via `IToolPlatformService.SaveMcpServerAsync` (idempotent by name), picked up by the existing MCP startup flow.
+- **Tools** (declared in `plugin.json` `tools`): schema-only in this phase; execution routes through the plugin's MCP server via `mcp_call`. Standalone dynamic registration is supported by `IAgentToolRegistry.Register/Unregister` (built-in names protected from overwrite) but not yet wired for plugins pending registry unification across DI and LlmService self-built paths.
+Activated by `ActivateAllAsync()` at app startup (`App.xaml.cs`) and on trust-toggle/rescan in `ToolPlatformDialog`.
+
+### Output Styles (M4.9.0, priority fixed M4.9.2)
+`IOutputStyleService` (`OutputStyleService.cs`) — three built-in styles (`default`, `Explanatory`, `Learning`) plus custom `.md` loading. **M4.9.2 priority: project > user > built-in** (project `.tlah/output-styles/` overrides user `%LOCALAPPDATA%/TLAH Studio/output-styles/` overrides built-ins). Selected style appended to the end of the system prompt. Descriptions are agent-agnostic (no "Claude" references). Stored in `GlobalSettings.OutputStyle`.
+
+### Context Management Compaction Chain (M4.8.0)
+`ReactiveCompactor` progressive upgrade chain: `TrimToolOutputs` → `Microcompact` → `SummarizeMiddle` → `ModelAssistedSummarize` → `EmergencyTruncate`. Key 4.8.0 fixes:
+
+- **Context-limit retry circuit breaker**: on hitting context limit, marks `AgentRunState.CompactionDisabled` instead of aborting the run.
+- **PTL (prompt-too-long) truncation**: drops oldest API-rounds up to 3 times before failing.
+- **Post-compact tools summary**: `BuildPostCompactToolsSummary` injects a recap of available tools after compaction so the model remembers its toolset.
+- **Session memory throttling**: init/update thresholds prevent writing session-memory every step.
+- **Microcompact** references use `ToolCallId` instead of synthetic filenames.
 
 ### Agent Runtime (`TLAHStudio.Core.Services.AgentRuntime`)
 Extracted v2.7.0+ state machine from `LlmService`:
@@ -131,7 +178,7 @@ Additional safety mechanisms layered on the pipeline:
 - **`ToolSafetyKernel` bypass-immune paths** — `.git/`, `.env`, and shell config files are checked via `CheckBypassImmunePath()` / `BypassImmunePathRegex()` and cannot be circumvented by flags like `--no-verify` or env-var overrides.
 
 ### Built-in Tools (`AgentToolNames` registry)
-`terminal_exec` (sandbox), `file_list`, `file_read`, `file_write`, `file_search`, `git`, `http_request`, `web_search`, `browser_read`, `mcp_list_tools`, `mcp_call`, `memory_read`, `memory_write`, `memory_list`, and code tools: `read`, `grep`, `glob`, `edit`, `multi_edit`, `diff`, `apply_patch`, `rollback`, `lsp_diagnostics`. Also: `task_create`, `task_update`, `task_list`, `task_output`, `task_stop`, `task_send_message`, `todo_write`.
+`terminal_exec` (sandbox), `file_list`, `file_read`, `file_write`, `file_search`, `git`, `http_request`, `web_search`, `browser_read`, `mcp_list_tools`, `mcp_call`, `memory_read`, `memory_write`, `memory_list`, and code tools: `read`, `grep`, `glob`, `edit`, `multi_edit`, `diff`, `apply_patch`, `rollback`, `lsp_diagnostics`. Also: `task_create`, `task_update`, `task_list`, `task_output`, `task_stop`, `task_send_message`, `todo_write`. Agent-autonomy tools (M4.9.0): `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`, `skill`. Metadata wiring in `AgentToolMetadata.For` (switch expression); standalone arms must not be chained with `or` or other arms' cases leak into the wrong branch.
 
 ### Execution Backends (`ExecutionBackends.cs`)
 - `restricted_local` — always available, subprocess sandbox
@@ -140,7 +187,7 @@ Additional safety mechanisms layered on the pipeline:
 - `remote` — HTTP POST to remote sandbox endpoint with bearer auth
 
 ### Context Management (`TLAHStudio.Core.Services.Context`)
-- **`IReactiveCompactor`** — progressive compaction: `TrimToolOutputs` → `Microcompact` → `SummarizeMiddle` → `ModelAssistedSummarize` → `EmergencyTruncate`
+- **`IReactiveCompactor`** — progressive compaction chain (see "Context Management Compaction Chain (M4.8.0)" above for the full upgrade sequence and 4.8.0 fixes). Model-assisted summarization activated via `IModelAssistedCompactor`.
 - **`ITokenBudgetService`** — tracks token usage, availability, and budget ceiling
 - After compaction, injects a structured runtime context block with project memory, active tasks, recent files, and open questions.
 
@@ -177,8 +224,8 @@ The app uses `Microsoft.Extensions.Hosting` for DI, `CommunityToolkit.Mvvm` for 
 | `ChatHeaderControl` | — (in `ChatPageViewModel`) | Chat title, config profile selector, agent run controls, context usage display |
 | `AgentActivityPanelControl` | — | Historical agent run replay panel (right side) |
 | `DebugPanelControl` | `DebugPanelViewModel` | Raw request/response JSON inspection |
-| `SettingsContentDialog` | `SettingsDialogViewModel` | LLM provider config, API keys, model selection |
-| `ToolPlatformDialog` | `ToolPlatformViewModel` | MCP servers, execution backend, network/policy/credential/limit config |
+| `SettingsContentDialog` | `SettingsDialogViewModel` | LLM provider config, API keys, model selection, OutputStyle picker, Skills management (3 Open buttons: Bundled/User/Project + Reload + scrollable skills list) |
+| `ToolPlatformDialog` | `ToolPlatformViewModel` | MCP servers, execution backend, network/policy/credential/limit config, Plugin management (ListView + Open/Rescan, above Permission rules) |
 | `FirstRunSetupDialog` | — (in `MainViewModel`) | Onboarding wizard |
 | `TeamWorkspaceDialog` | `TeamWorkspaceViewModel` | Project spaces (Workspaces) |
 | `PrivacyDataDialog` | `PrivacyDataViewModel` | Audit log, privacy export |
@@ -200,11 +247,14 @@ Key entities: `Chat` → `Message` + `Turn` + `AgentRun` + `ProjectSpace` + `Con
 ## Configuration
 
 - `TLAHStudio.App/appsettings.json` — build-time config (app name, version, update server URL)
-- `%LOCALAPPDATA%\TLAH Studio\data\tlah.db` / `GlobalSettings` table — runtime config (LLM provider, API key, model, etc.)
+- `%LOCALAPPDATA%\TLAH Studio\data\tlah.db` / `GlobalSettings` table — runtime config (LLM provider, API key, model, OutputStyle, etc.)
 - `%LOCALAPPDATA%\TLAH Studio\data\tlah.db` / `ToolPlatformSettings` table — tool platform config
 - `%LOCALAPPDATA%\TLAH Studio\config\` — local UI and workspace configuration
 - `%LOCALAPPDATA%\TLAH Studio\sandboxes\` — private chat sandboxes when no workspace is selected
+- `.tlah_context/session-memory.md` persisted by `ISessionMemoryService` at each step.
 - `.tlah_context/tool-results/` — persisted large tool outputs inside a workspace/sandbox
+- `%LOCALAPPDATA%\TLAH Studio\skills\` — user-level skills (created on first skill install)
+- `%LOCALAPPDATA%\TLAH Studio\.tlah\skills\` & `.tlah/output-styles\` — per-workspace directories, auto-created when `WorkspaceRootService.SetRootAsync` is called.
 - `appsettings.Development.json` — gitignored; local overrides only
 
 ## Update & Deployment Architecture
@@ -239,7 +289,7 @@ Version is stored in multiple places and must be kept in sync:
 - `TLAHStudio.Installer/version.json` and `TLAHStudio.Installer/latest.json`
 - `setup.iss` → `#define MyAppVersion`
 
-Semantic versioning (`Major.Minor.Patch`). Current: **4.7.0**.
+Semantic versioning (`Major.Minor.Patch`). Current: **4.9.2**. Release history this cycle: 4.8.0 (foundation fixes), 4.9.0 (agent autonomy), 4.9.1 (skill/UI/CRLF fixes + de-Claude text), 4.9.2 (5.x predecessor — post-compact skill/MCP/plan re-injection, Plugin end-to-end activation, OutputStyles & Skill priority fix project>user>built-in, managed skill layer, AskUserQuestion preview, CompactionSkipped event + reset, YAML array frontmatter, AgentToolRegistry dynamic registration). The 5.0.0 Phase 2 (multi-agent orchestration) and 5.1+ Phase 3 (platform & differentiation) plans are the next milestones — see `docs/TLAH_5_0_PHASE2_ORCHESTRATION.md` and `docs/TLAH_5_1_PHASE3_PLATFORM.md`.
 
 ## Key Architectural Patterns
 
@@ -258,3 +308,9 @@ Semantic versioning (`Major.Minor.Patch`). Current: **4.7.0**.
 7. **Agent run engine as extracted state machine**: `AgentRunEngineV2` owns the while-loop, emitting typed `AgentRunFrame` records consumed by both WinUI and the local SDK HTTP server. State is an immutable `AgentRunState` record with explicit `DeepClone()` for safe mutation.
 
 8. **Progressive context compaction**: `ReactiveCompactor` tries `TrimToolOutputs` → `Microcompact` → `SummarizeMiddle` before the deterministic fallback. After compaction, injects structured runtime context (project memory, active tasks, recent files, open questions).
+
+9. **Plan mode interception (M4.9.0)**: In Plan mode, write tools are intercepted at the agent tool-execution loop and rejected; the agent must call `enter_plan_mode`/`exit_plan_mode` to transition. State persists across the run via `AgentRunState.IsPlanMode` + `PrePlanMode`.
+
+10. **Stateless multi-source skill loading (M4.9.0)**: A single shared `SkillLoader` instance is created in `LlmService` and injected into both `AgentRunEngineV2` and `SkillAgentTool` (never three separate instances). It is fully stateless — `ReloadAsync` and every listing rescan the filesystem — so cache staleness cannot block newly added skills. Frontmatter regex handles both CRLF and LF.
+
+11. **Approval flow with structured answers (M4.9.0)**: `ask_user_question` surfaces a custom WinUI multi-select dialog via `OnAgentApprovalRequested` in `MainWindow`; collected answers are passed back into the tool call through `AgentApprovalRequest.UpdatedArgumentsJson` → `SetAgentToolApprovalAsync(updatedArgumentsJson:)`.

@@ -124,6 +124,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         CancellationToken ct = default)
     {
         var run = await _db.Set<AgentRun>().FirstAsync(r => r.Id == state.RunId, ct);
+        // M4.9.2: A fresh run (step 0) means the user actively continued —
+        // reset the compaction circuit breaker so auto-compaction can resume.
+        if (state.CurrentStep == 0)
+            state.CompactionDisabled = false;
         SyncRunState(run, state);
         await _db.SaveChangesAsync(ct);
 
@@ -231,6 +235,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     if (!string.IsNullOrEmpty(toolsSummary))
                         state.Messages.Insert(prepared.Messages.Count - 1,
                             new MessagePayload("user", toolsSummary));
+                    // M4.9.2: Re-inject skill/MCP/plan state (completes 0.6).
+                    var skillsSummary = await BuildPostCompactSkillsSummaryAsync(state, ct);
+                    if (!string.IsNullOrEmpty(skillsSummary))
+                        state.Messages.Insert(prepared.Messages.Count - 1,
+                            new MessagePayload("user", skillsSummary));
+                    var mcpDelta = await BuildPostCompactMcpDeltaAsync(ct);
+                    if (!string.IsNullOrEmpty(mcpDelta))
+                        state.Messages.Insert(prepared.Messages.Count - 1,
+                            new MessagePayload("user", mcpDelta));
+                    var planSummary = BuildPostCompactPlanSummary(state);
+                    if (!string.IsNullOrEmpty(planSummary))
+                        state.Messages.Insert(prepared.Messages.Count - 1,
+                            new MessagePayload("user", planSummary));
                     step.InputJson = SecretRedactor.RedactJson(JsonSerializer.Serialize(state.Messages));
                     await SaveCheckpointAsync(state, ct);
                     var ctxMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
@@ -307,8 +324,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         state.CompactionDisabled = true;
                         await AppendEventAsync(state, options, new AgentEventAppendRequest(
                             new AgentRun { Id = state.RunId },
-                            AgentEventTypes.Error,
-                            $"Compaction failed {consecutiveCompactionFailures} consecutive times. Auto-compaction disabled; using PTL truncation.",
+                            AgentEventTypes.CompactionSkipped,
+                            $"Compaction failed {consecutiveCompactionFailures} consecutive times. Auto-compaction disabled; using PTL truncation. Run /compact to re-enable.",
                             new { consecutiveCompactionFailures, maxCompactionFailures, compactionDisabled = true },
                             step.Id,
                             Severity: AgentEventSeverities.Warning), events, ct);
@@ -346,6 +363,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             if (!string.IsNullOrEmpty(ftoolsSummary))
                                 state.Messages.Insert(forced.Messages.Count - 1,
                                     new MessagePayload("user", ftoolsSummary));
+                            // M4.9.2: Re-inject skill/MCP/plan state (completes 0.6).
+                            var fskillsSummary = await BuildPostCompactSkillsSummaryAsync(state, ct);
+                            if (!string.IsNullOrEmpty(fskillsSummary))
+                                state.Messages.Insert(forced.Messages.Count - 1,
+                                    new MessagePayload("user", fskillsSummary));
+                            var fmcpDelta = await BuildPostCompactMcpDeltaAsync(ct);
+                            if (!string.IsNullOrEmpty(fmcpDelta))
+                                state.Messages.Insert(forced.Messages.Count - 1,
+                                    new MessagePayload("user", fmcpDelta));
+                            var fplanSummary = BuildPostCompactPlanSummary(state);
+                            if (!string.IsNullOrEmpty(fplanSummary))
+                                state.Messages.Insert(forced.Messages.Count - 1,
+                                    new MessagePayload("user", fplanSummary));
                             await SaveCheckpointAsync(state, ct);
                             var fMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
                             await AppendEventAsync(state, options, new AgentEventAppendRequest(
@@ -1092,6 +1122,104 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         }
 
         sb.AppendLine();
+        sb.AppendLine("[/post-compaction context]");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// M4.9.2: After compaction, re-inject the bodies of skills the agent has
+    /// already invoked this run so their instructions survive the summary
+    /// boundary. Mirrors Claude Code's compact.ts skill re-injection
+    /// (per-skill 5K cap, 25K total). Only skills already sent (recorded in
+    /// SentSkillNames) are re-injected.
+    /// </summary>
+    private async Task<string?> BuildPostCompactSkillsSummaryAsync(
+        AgentRunState state, CancellationToken ct)
+    {
+        if (_skillLoader == null || state.SentSkillNames.Count == 0)
+            return null;
+
+        const int maxPerSkill = 5_000;
+        const int maxTotal = 25_000;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("[post-compaction context — active skills]");
+        sb.AppendLine("The following skills were invoked earlier and remain active:");
+        sb.AppendLine();
+
+        var totalChars = 0;
+        foreach (var name in state.SentSkillNames)
+        {
+            var content = await _skillLoader.GetSkillContentAsync(name, ct);
+            if (string.IsNullOrWhiteSpace(content))
+                continue;
+            var body = content.Length > maxPerSkill
+                ? content[..maxPerSkill] + "\n[truncated]"
+                : content;
+            var entry = $"--- skill: {name} ---\n{body}\n";
+            if (totalChars + entry.Length > maxTotal)
+            {
+                sb.AppendLine("[additional skills omitted to stay within budget]");
+                break;
+            }
+            sb.Append(entry);
+            totalChars += entry.Length;
+        }
+
+        sb.AppendLine("[/post-compaction context]");
+        return totalChars > 0 ? sb.ToString() : null;
+    }
+
+    /// <summary>
+    /// M4.9.2: After compaction, re-inject a delta of active MCP servers so
+    /// the agent doesn't lose MCP context. Mirrors Claude Code's compact.ts
+    /// MCP-instructions delta. Capped at 1500 chars.
+    /// </summary>
+    private async Task<string?> BuildPostCompactMcpDeltaAsync(CancellationToken ct)
+    {
+        var servers = await _toolPlatform.ListMcpServersAsync(ct: ct);
+        var active = servers.Where(s => s.Enabled).ToList();
+        if (active.Count == 0)
+            return null;
+
+        const int maxTotal = 1_500;
+        var sb = new StringBuilder();
+        sb.AppendLine("[post-compaction context — active MCP servers]");
+        sb.AppendLine("MCP servers available via mcp_call / mcp_list_tools:");
+        sb.AppendLine();
+
+        var totalChars = 0;
+        foreach (var s in active.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var transport = string.IsNullOrWhiteSpace(s.Transport) ? "stdio" : s.Transport;
+            var line = $"- {s.Name} ({transport})";
+            if (totalChars + line.Length + Environment.NewLine.Length > maxTotal && totalChars > 0)
+                break;
+            sb.AppendLine(line);
+            totalChars += line.Length + Environment.NewLine.Length;
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("[/post-compaction context]");
+        return totalChars > 0 ? sb.ToString() : null;
+    }
+
+    /// <summary>
+    /// M4.9.2: After compaction, re-inject plan-mode state so the agent
+    /// remembers plan mode and the pre-plan mode to restore on exit.
+    /// </summary>
+    private static string? BuildPostCompactPlanSummary(AgentRunState state)
+    {
+        if (!state.IsPlanMode && string.IsNullOrEmpty(state.PrePlanMode))
+            return null;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("[post-compaction context — plan mode state]");
+        sb.AppendLine(state.IsPlanMode
+            ? "Currently in plan mode (read-only research). Write tools are intercepted until exit_plan_mode is approved."
+            : "Plan mode is not active.");
+        if (!string.IsNullOrEmpty(state.PrePlanMode))
+            sb.AppendLine($"Permission mode to restore on plan exit: {state.PrePlanMode}");
         sb.AppendLine("[/post-compaction context]");
         return sb.ToString();
     }

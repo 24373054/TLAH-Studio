@@ -59,7 +59,9 @@ public class LlmService : ILlmService
         IProjectMemoryService? projectMemory = null,
         IToolResultPersistenceService? toolResultPersistence = null,
         IAgentRunEngineV2? agentRunEngineV2 = null,
-        ITokenBudgetService? tokenBudget = null)
+        ITokenBudgetService? tokenBudget = null,
+        ISkillLoader? skillLoader = null,
+        IOutputStyleService? outputStyle = null)
     {
         _db = db;
         _chatService = chatService;
@@ -70,9 +72,12 @@ public class LlmService : ILlmService
         _agentContextManager = agentContextManager ?? new AgentContextManager();
         _projectMemory = projectMemory ?? new ProjectMemoryService(db);
         _toolResultPersistence = toolResultPersistence ?? new ToolResultPersistenceService();
-        // M4.9.0: Create shared services needed by engine, tools, and UI.
-        var skillLoader = new SkillLoader();
-        var outputStyle = new OutputStyleService();
+        // M4.9.2: Use DI-injected skill loader / output style when available so
+        // PluginActivationService.SetManagedDir (and other runtime mutations)
+        // are visible to the agent. Fall back to self-built only when DI didn't
+        // provide one (e.g. tests).
+        var sharedSkillLoader = skillLoader ?? new SkillLoader();
+        var sharedOutputStyle = outputStyle ?? new OutputStyleService();
         if (agentTools != null)
         {
             _agentTools = agentTools;
@@ -91,7 +96,7 @@ public class LlmService : ILlmService
                 new EnterPlanModeAgentTool(),
                 new ExitPlanModeAgentTool(_sandboxCommandService),
                 new AskUserQuestionAgentTool(),
-                new SkillAgentTool(skillLoader),
+                new SkillAgentTool(sharedSkillLoader),
                 new ToolSearchAgentTool(),
                 new TodoWriteAgentTool(taskService),
                 new TaskCreateAgentTool(taskService, backgroundTaskService, _sandboxCommandService),
@@ -144,8 +149,8 @@ public class LlmService : ILlmService
             _sandboxCommandService, _agentTools, _toolPlatform, _agentEventStream,
             _checkpointStore, _providerStreamAdapter, _toolExecutionScheduler,
             _agentContextManager, _projectMemory, _toolResultPersistence,
-            skillLoader: skillLoader,
-            outputStyle: outputStyle);
+            skillLoader: sharedSkillLoader,
+            outputStyle: sharedOutputStyle);
         _tokenBudget = tokenBudget ?? new TokenBudgetService();
     }
 

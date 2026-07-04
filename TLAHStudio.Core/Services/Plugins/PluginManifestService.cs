@@ -197,6 +197,8 @@ public interface ISkillLoader
         string filePath, CancellationToken ct = default);
     /// <summary>M4.9.0: Update workspace root for project-level skill discovery.</summary>
     void SetWorkspaceRoot(string? root);
+    /// <summary>M4.9.2: Set managed (policy-level) skills directory, or null to disable.</summary>
+    void SetManagedDir(string? dir);
     Task ReloadAsync(CancellationToken ct = default);
 }
 
@@ -205,6 +207,7 @@ public class SkillLoader : ISkillLoader
     private string _userDir;
     private string? _projectDir;
     private string _bundledDir;
+    private string? _managedDir;
     private static readonly Regex FrontmatterRegex = new(
         @"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n", RegexOptions.Singleline | RegexOptions.Compiled);
 
@@ -232,6 +235,16 @@ public class SkillLoader : ISkillLoader
     /// <summary>Project skills directory (<workspace>/.tlah/skills), or null.</summary>
     public string? ProjectDir => _projectDir;
 
+    /// <summary>
+    /// M4.9.2: Managed skills directory (policy-level, optional). When set,
+    /// skills here sit between project and user in priority. Used for
+    /// enterprise/team policy skills. Null by default.
+    /// </summary>
+    public string? ManagedDir => _managedDir;
+
+    /// <summary>M4.9.2: Set the managed skills directory (policy-level).</summary>
+    public void SetManagedDir(string? dir) => _managedDir = dir;
+
     /// <summary>Update the workspace root to load project-level skills.</summary>
     public void SetWorkspaceRoot(string? root)
     {
@@ -246,13 +259,15 @@ public class SkillLoader : ISkillLoader
         _conditionalSkills.Clear();
 
         // Scan all sources fresh — no caching.
+        // M4.9.2: Priority order — project > managed > user > bundled.
+        // First source wins on name collision, so highest priority goes first.
         var sources = new List<(string? Dir, string Source)>
         {
-            (_bundledDir, "bundled"),
+            (_projectDir, "project"),
+            (_managedDir, "managed"),
             (_userDir, "user"),
+            (_bundledDir, "bundled"),
         };
-        if (_projectDir != null)
-            sources.Add((_projectDir, "project"));
 
         foreach (var (dir, source) in sources)
         {
@@ -273,7 +288,7 @@ public class SkillLoader : ISkillLoader
                     if (s != null) skills.Add(s);
                 }
             }
-            // Deduplicate: first source wins (bundled > project > user).
+            // Deduplicate: first source wins (project > managed > user > bundled).
             foreach (var s in skills)
             {
                 if (!all.Any(e => string.Equals(e.Id, s.Id, StringComparison.OrdinalIgnoreCase)))
@@ -409,10 +424,23 @@ public class SkillLoader : ISkillLoader
         catch { return null; }
     }
 
-    private static IReadOnlyList<string> SplitList(string value) =>
-        value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    private static IReadOnlyList<string> SplitList(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Array.Empty<string>();
+        // M4.9.2: Support both comma-separated scalar form ("a, b") and
+        // YAML array form ('["a","b"]' or '["a", "b"]') for frontmatter
+        // list fields like `paths` and `triggers`. Strip the surrounding
+        // brackets/quotes so the parsed items are clean scalars.
+        var trimmed = value.Trim();
+        if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+            trimmed = trimmed[1..^1];
+        return trimmed
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(v => v.Trim('"', '\''))
             .Where(v => !string.IsNullOrWhiteSpace(v))
             .ToList();
+    }
 
     private static string? ExtractField(string frontmatter, string field)
     {

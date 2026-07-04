@@ -90,7 +90,7 @@ public class FoundationServicesV2Tests : IDisposable
     }
 
     [Fact]
-    public void OutputStyle_CustomFromDir_Loaded()
+    public async Task OutputStyle_CustomFromDir_Loaded()
     {
         var userDir = Path.Combine(_tempDir, "output-styles");
         Directory.CreateDirectory(userDir);
@@ -102,7 +102,7 @@ public class FoundationServicesV2Tests : IDisposable
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?.SetValue(svc, userDir);
         // Force rebuild
-        svc.ReloadAsync().GetAwaiter().GetResult();
+        await svc.ReloadAsync();
 
         var style = svc.GetStyle("concise");
         Assert.NotNull(style);
@@ -110,10 +110,10 @@ public class FoundationServicesV2Tests : IDisposable
     }
 
     [Fact]
-    public void OutputStyle_Reload_DoesNotCrash()
+    public async Task OutputStyle_Reload_DoesNotCrash()
     {
         var svc = new OutputStyleService();
-        svc.ReloadAsync().GetAwaiter().GetResult();
+        await svc.ReloadAsync();
         var after = svc.GetStyles();
 
         // After reload, built-in styles are still there.
@@ -192,7 +192,9 @@ public class FoundationServicesV2Tests : IDisposable
 
         var match = skills.Where(s => s.Id.Contains("same-name")).ToList();
         Assert.Single(match);
-        Assert.Equal("bundled", match[0].Source);
+        // M4.9.2: Priority is project > managed > user > bundled, so user wins
+        // over bundled when only those two sources define the skill.
+        Assert.Equal("user", match[0].Source);
     }
 
     [Fact]
@@ -555,7 +557,7 @@ public class FoundationServicesV2Tests : IDisposable
     }
 
     [Fact]
-    public void ReactiveCompactor_Microcompact_UsesToolCallId()
+    public async Task ReactiveCompactor_Microcompact_UsesToolCallId()
     {
         var compactor = new ReactiveCompactor();
         var msgs = new List<MessagePayload>();
@@ -573,9 +575,9 @@ public class FoundationServicesV2Tests : IDisposable
         msgs.Add(new MessagePayload("assistant", "Recent response."));
 
         var tokenBudget = new TokenBudgetService();
-        var result = compactor.CompactAsync(
+        var result = await compactor.CompactAsync(
             msgs, TokenBudgetState.CompactSoon, CompactionStrategy.Microcompact, tokenBudget,
-            CancellationToken.None).GetAwaiter().GetResult();
+            CancellationToken.None);
 
         Assert.True(result.WasCompacted);
         // The compacted messages should contain references using tool-call-id
@@ -584,7 +586,7 @@ public class FoundationServicesV2Tests : IDisposable
     }
 
     [Fact]
-    public void ReactiveCompactor_Microcompact_TooFewMessages_FallsBackToTrim()
+    public async Task ReactiveCompactor_Microcompact_TooFewMessages_FallsBackToTrim()
     {
         var compactor = new ReactiveCompactor();
         // Only 5 messages — below the KeepHeadMessages(4) + KeepTailMessages(12) + 2 threshold.
@@ -597,16 +599,16 @@ public class FoundationServicesV2Tests : IDisposable
             new("user", "Thanks"),
         };
 
-        var result = compactor.CompactAsync(
+        var result = await compactor.CompactAsync(
             msgs, TokenBudgetState.CompactSoon, CompactionStrategy.Microcompact, new TokenBudgetService(),
-            CancellationToken.None).GetAwaiter().GetResult();
+            CancellationToken.None);
 
         // Too few messages, so no compaction happens.
         Assert.False(result.WasCompacted);
     }
 
     [Fact]
-    public void ReactiveCompactor_Microcompact_NoToolResults_OnlyTrims()
+    public async Task ReactiveCompactor_Microcompact_NoToolResults_OnlyTrims()
     {
         var compactor = new ReactiveCompactor();
         var msgs = new List<MessagePayload>();
@@ -616,16 +618,16 @@ public class FoundationServicesV2Tests : IDisposable
             msgs.Add(new MessagePayload("assistant", $"A{i}"));
         }
 
-        var result = compactor.CompactAsync(
+        var result = await compactor.CompactAsync(
             msgs, TokenBudgetState.CompactSoon, CompactionStrategy.Microcompact, new TokenBudgetService(),
-            CancellationToken.None).GetAwaiter().GetResult();
+            CancellationToken.None);
 
         // No tool results to compact — nothing changes.
         Assert.False(result.WasCompacted);
     }
 
     [Fact]
-    public void ReactiveCompactor_ModelAssistedSummarize_WithoutProvider_ReturnsNotAvailable()
+    public async Task ReactiveCompactor_ModelAssistedSummarize_WithoutProvider_ReturnsNotAvailable()
     {
         var compactor = new ReactiveCompactor(modelAssisted: null);
         var msgs = new List<MessagePayload>();
@@ -635,16 +637,16 @@ public class FoundationServicesV2Tests : IDisposable
             msgs.Add(new MessagePayload("assistant", $"R{i}"));
         }
 
-        var result = compactor.CompactAsync(
+        var result = await compactor.CompactAsync(
             msgs, TokenBudgetState.Blocking, CompactionStrategy.ModelAssistedSummarize, new TokenBudgetService(),
-            CancellationToken.None).GetAwaiter().GetResult();
+            CancellationToken.None);
 
         Assert.Contains("not available", result.Summary);
         Assert.False(result.WasCompacted);
     }
 
     [Fact]
-    public void ReactiveCompactor_EmergencyTruncate_TooFewMessages_DoesNotTruncate()
+    public async Task ReactiveCompactor_EmergencyTruncate_TooFewMessages_DoesNotTruncate()
     {
         var compactor = new ReactiveCompactor();
         // Only 6 messages — below the 8-message minimum for emergency truncation.
@@ -655,16 +657,16 @@ public class FoundationServicesV2Tests : IDisposable
             new("user", "5"), new("assistant", "6"),
         };
 
-        var result = compactor.CompactAsync(
+        var result = await compactor.CompactAsync(
             msgs, TokenBudgetState.Blocking, CompactionStrategy.EmergencyTruncate, new TokenBudgetService(),
-            CancellationToken.None).GetAwaiter().GetResult();
+            CancellationToken.None);
 
         Assert.False(result.WasCompacted);
         Assert.Contains("too few messages", result.Summary);
     }
 
     [Fact]
-    public void ReactiveCompactor_EmergencyTruncate_EnoughMessages_Truncates()
+    public async Task ReactiveCompactor_EmergencyTruncate_EnoughMessages_Truncates()
     {
         var compactor = new ReactiveCompactor();
         var msgs = new List<MessagePayload>();
@@ -674,9 +676,9 @@ public class FoundationServicesV2Tests : IDisposable
             msgs.Add(new MessagePayload("assistant", $"A{i}"));
         }
 
-        var result = compactor.CompactAsync(
+        var result = await compactor.CompactAsync(
             msgs, TokenBudgetState.Blocking, CompactionStrategy.EmergencyTruncate, new TokenBudgetService(),
-            CancellationToken.None).GetAwaiter().GetResult();
+            CancellationToken.None);
 
         Assert.True(result.WasCompacted);
         Assert.Contains("Emergency", result.Summary);

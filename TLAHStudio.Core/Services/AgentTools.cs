@@ -602,6 +602,10 @@ public interface IAgentToolRegistry
     IReadOnlyList<LlmToolDefinition> Definitions { get; }
     IReadOnlyList<AgentToolMetadata> Metadata { get; }
     bool TryGet(string name, out IAgentTool tool);
+    /// <summary>M4.9.2: Register a tool dynamically (e.g. from a trusted plugin).</summary>
+    void Register(IAgentTool tool);
+    /// <summary>M4.9.2: Unregister a dynamically registered tool by name.</summary>
+    bool Unregister(string name);
 }
 
 public sealed class AgentToolRegistry : IAgentToolRegistry
@@ -610,6 +614,8 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         "^[a-zA-Z0-9_-]+$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private readonly Dictionary<string, IAgentTool> _tools;
+    private readonly HashSet<string> _dynamicNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _lock = new();
 
     public AgentToolRegistry(IEnumerable<IAgentTool> tools)
     {
@@ -625,15 +631,58 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         }
     }
 
-    public IReadOnlyList<LlmToolDefinition> Definitions =>
-        _tools.Values.Select(t => t.Definition).ToArray();
+    public IReadOnlyList<LlmToolDefinition> Definitions
+    {
+        get
+        {
+            lock (_lock)
+                return _tools.Values.Select(t => t.Definition).ToArray();
+        }
+    }
 
-    public IReadOnlyList<AgentToolMetadata> Metadata =>
-        _tools.Values.Select(t => t.Metadata).ToArray();
+    public IReadOnlyList<AgentToolMetadata> Metadata
+    {
+        get
+        {
+            lock (_lock)
+                return _tools.Values.Select(t => t.Metadata).ToArray();
+        }
+    }
 
     public bool TryGet(string name, out IAgentTool tool)
     {
-        return _tools.TryGetValue(AgentToolNames.Normalize(name), out tool!);
+        lock (_lock)
+            return _tools.TryGetValue(AgentToolNames.Normalize(name), out tool!);
+    }
+
+    /// <summary>M4.9.2: Register a tool dynamically (thread-safe). Built-in names cannot be overwritten.</summary>
+    public void Register(IAgentTool tool)
+    {
+        if (tool == null) throw new ArgumentNullException(nameof(tool));
+        if (!ValidToolName.IsMatch(tool.Definition.Name))
+            throw new InvalidOperationException($"Agent tool name '{tool.Definition.Name}' is invalid.");
+        lock (_lock)
+        {
+            // Built-in (non-dynamic) names are protected from overwrite.
+            if (_tools.ContainsKey(tool.Definition.Name) && !_dynamicNames.Contains(tool.Definition.Name))
+                throw new InvalidOperationException(
+                    $"Cannot overwrite built-in tool '{tool.Definition.Name}' with a plugin tool.");
+            _tools[tool.Definition.Name] = tool;
+            _dynamicNames.Add(tool.Definition.Name);
+        }
+    }
+
+    /// <summary>M4.9.2: Unregister a dynamically registered tool. Built-in tools cannot be removed.</summary>
+    public bool Unregister(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        var normalized = AgentToolNames.Normalize(name);
+        lock (_lock)
+        {
+            if (!_dynamicNames.Contains(normalized)) return false;
+            _dynamicNames.Remove(normalized);
+            return _tools.Remove(normalized);
+        }
     }
 }
 

@@ -285,30 +285,66 @@ public sealed partial class MainWindow : Window
                 {
                     var label = opt.GetProperty("label").GetString() ?? "";
                     var desc = opt.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
+                    var preview = opt.TryGetProperty("preview", out var pv) ? pv.GetString() ?? "" : "";
+
+                    // M4.9.2: Option container holds the selector + an optional
+                    // monospace preview box beneath it.
+                    var optPanel = new StackPanel { Spacing = 4 };
+                    string selectorContent = string.IsNullOrEmpty(desc) ? label : $"{label} — {desc}";
 
                     if (multiSelect)
                     {
                         var cb = new CheckBox
                         {
-                            Content = $"{label} — {desc}",
+                            Content = selectorContent,
                             Tag = label,
                             MinHeight = 30
                         };
                         cb.Checked += (_, _) => { if (cb.Tag is string l) selectedLabels.Add(l); };
                         cb.Unchecked += (_, _) => { if (cb.Tag is string l) selectedLabels.Remove(l); };
-                        qPanel.Children.Add(cb);
+                        optPanel.Children.Add(cb);
                     }
                     else
                     {
                         var rb = new RadioButton
                         {
-                            Content = $"{label} — {desc}",
+                            Content = selectorContent,
                             Tag = label,
                             MinHeight = 30,
                             GroupName = header
                         };
-                        qPanel.Children.Add(rb);
+                        optPanel.Children.Add(rb);
                     }
+
+                    if (!string.IsNullOrWhiteSpace(preview))
+                    {
+                        var previewText = preview.Length > 500 ? preview[..500] + "\n[preview truncated]" : preview;
+                        var box = new Border
+                        {
+                            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"],
+                            BorderThickness = new Thickness(1),
+                            CornerRadius = new CornerRadius(4),
+                            Padding = new Thickness(8),
+                            Margin = new Thickness(20, 0, 0, 0),
+                            Opacity = 0.85,
+                            Child = new ScrollViewer
+                            {
+                                MaxHeight = 160,
+                                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                                Content = new TextBlock
+                                {
+                                    Text = previewText,
+                                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                                    TextWrapping = TextWrapping.Wrap,
+                                    IsTextSelectionEnabled = true
+                                }
+                            }
+                        };
+                        optPanel.Children.Add(box);
+                    }
+                    qPanel.Children.Add(optPanel);
                 }
                 content.Children.Add(qPanel);
                 answers[header] = multiSelect ? selectedLabels : ""; // will be filled on submit
@@ -345,10 +381,17 @@ public sealed partial class MainWindow : Window
                     string? singleAnswer = null;
                     foreach (var c in qp.Children)
                     {
-                        if (c is CheckBox cb && cb.IsChecked == true)
-                            multiAnswer.Add(cb.Tag?.ToString() ?? "");
-                        else if (c is RadioButton rb && rb.IsChecked == true)
-                            singleAnswer = rb.Tag?.ToString() ?? "";
+                        // M4.9.2: Each option is now wrapped in an optPanel
+                        // (StackPanel) that holds the selector and optional
+                        // preview box. Descend into it to find the selector.
+                        var selectorHost = c is StackPanel sp ? sp : c;
+                        foreach (var inner in (selectorHost is StackPanel s ? s.Children : Enumerable.Empty<UIElement>()))
+                        {
+                            if (inner is CheckBox cb && cb.IsChecked == true)
+                                multiAnswer.Add(cb.Tag?.ToString() ?? "");
+                            else if (inner is RadioButton rb && rb.IsChecked == true)
+                                singleAnswer = rb.Tag?.ToString() ?? "";
+                        }
                     }
                     if (multiAnswer.Count > 0)
                         finalAnswers[qHeader] = string.Join(", ", multiAnswer);

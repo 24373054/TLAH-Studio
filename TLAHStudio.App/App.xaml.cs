@@ -183,6 +183,8 @@ public partial class App : Application
             services.AddScoped<IMcpAuthService, McpAuthService>();
             services.AddScoped<IPluginManifestService, PluginManifestService>();
             services.AddScoped<ISkillLoader, SkillLoader>();
+            // M4.9.2: Plugin end-to-end activation (skills/MCP/tools wiring).
+            services.AddScoped<IPluginActivationService, PluginActivationService>();
 
             // M2.13.0: Sandbox & Background Tasks
             services.AddScoped<ISandboxBackendRegistry, SandboxBackendRegistry>();
@@ -250,14 +252,20 @@ public partial class App : Application
 
             _host.Services.GetRequiredService<IThemeService>().Initialize();
 
-            // M4.9.0: Pre-load plugin manifests (skills and output styles from
-            // plugin directories are auto-discovered by ISkillLoader / IOutputStyleService).
+            // M4.9.2: Plugin end-to-end activation — discover manifests, then
+            // wire trusted plugins' skills/MCP servers/tools into the live
+            // subsystems (closes the M2.12.0 dead-code gap).
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var pluginService = scope.ServiceProvider.GetRequiredService<IPluginManifestService>();
+                    using var activateScope = _host.Services.CreateScope();
+                    var sp = activateScope.ServiceProvider;
+                    var pluginService = sp.GetRequiredService<IPluginManifestService>();
                     await pluginService.DiscoverPluginsAsync();
+                    var activation = sp.GetRequiredService<IPluginActivationService>();
+                    var n = await activation.ActivateAllAsync();
+                    if (n > 0) Log($"Activated {n} trusted plugin(s).");
                 }
                 catch (Exception ex) { Log($"Plugin init: {ex.Message}"); }
             });

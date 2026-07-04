@@ -1,14 +1,14 @@
-{
-  "version": "4.9.1",
-  "channel": "stable",
-  "platform": "windows",
-  "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.1.exe",
-  "sha256": "51b25a52fe8b932023d28417240a8871c01c230364a1ad8641d1eb179fa10553",
-  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.1: Auto-create .tlah dirs, Plugin UI move, init de-Clauded, OutputStyle agent-agnostic, CRLF fix, skill system wired.",
-  "forceUpdate": true,
-  "minSupportedVersion": "4.9.1",
-  "rolloutPercent": 100,
-  "installerSizeBytes": 97072688
+﻿{
+    "version":  "4.9.2",
+    "channel":  "stable",
+    "platform":  "windows",
+    "arch":  "x64",
+    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.2.exe",
+    "sha256":  "4ef6bfa25dc3774999b2ddbb9d74dfb6a9aa6a28cf15dce710e3bba5606ce1ce",
+    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+    "releaseNotes":  "4.9.2 (5.x predecessor): post-compact skill/MCP/plan re-injection, Plugin end-to-end activation, OutputStyles and Skill priority fix, managed skill layer, AskUserQuestion preview, CompactionSkipped event + reset, YAML array frontmatter, AgentToolRegistry dynamic registration.",
+    "forceUpdate":  true,
+    "minSupportedVersion":  "4.9.2",
+    "rolloutPercent":  100,
+    "installerSizeBytes":  97075816
 }

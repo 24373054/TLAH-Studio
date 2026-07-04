@@ -49,7 +49,12 @@ public sealed class AskUserQuestionAgentTool : IAgentTool
                                     ["properties"] = new Dictionary<string, object>
                                     {
                                         ["label"] = new Dictionary<string, object> { ["type"] = "string" },
-                                        ["description"] = new Dictionary<string, object> { ["type"] = "string" }
+                                        ["description"] = new Dictionary<string, object> { ["type"] = "string" },
+                                        ["preview"] = new Dictionary<string, object>
+                                        {
+                                            ["type"] = "string",
+                                            ["description"] = "Optional preview content (code snippet, layout, or example) shown in a monospace box to help the user compare this option against others. Max ~500 chars."
+                                        }
                                     }
                                 }
                             },

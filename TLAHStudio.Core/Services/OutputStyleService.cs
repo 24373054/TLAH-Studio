@@ -144,11 +144,19 @@ public class OutputStyleService : IOutputStyleService
     {
         if (_styles.Count == 0)
         {
-            // Lazy build on first access
-            var list = new List<OutputStyleConfig> { DefaultStyle, ExplanatoryStyle, LearningStyle };
-            LoadCustomStyles(list, _userDir, "user");
+            // Lazy build on first access.
+            // M4.9.2: Priority is project > user > built-in — load highest
+            // priority first so later (lower-priority) sources cannot
+            // overwrite a same-named style from a higher-priority source.
+            var list = new List<OutputStyleConfig>();
             if (_projectDir != null)
                 LoadCustomStyles(list, _projectDir, "project");
+            LoadCustomStyles(list, _userDir, "user");
+            // Built-ins last: they only fill in names not provided by a
+            // higher-priority source.
+            AddBuiltInIfMissing(list, DefaultStyle);
+            AddBuiltInIfMissing(list, ExplanatoryStyle);
+            AddBuiltInIfMissing(list, LearningStyle);
             _styles = list;
         }
         return _styles;
@@ -208,6 +216,17 @@ public class OutputStyleService : IOutputStyleService
                 // Skip unreadable files.
             }
         }
+    }
+
+    /// <summary>
+    /// M4.9.2: Add a built-in style only if no higher-priority source has
+    /// already provided a style with the same name.
+    /// </summary>
+    private static void AddBuiltInIfMissing(List<OutputStyleConfig> list, OutputStyleConfig builtIn)
+    {
+        if (list.Any(s => string.Equals(s.Name, builtIn.Name, StringComparison.OrdinalIgnoreCase)))
+            return;
+        list.Add(builtIn);
     }
 
     private static string? ExtractField(string frontmatter, string field)

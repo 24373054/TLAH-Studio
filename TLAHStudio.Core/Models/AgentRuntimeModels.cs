@@ -41,6 +41,7 @@ public static class AgentEventTypes
     public const string ModelResponse = "model_response";
     public const string ProtocolRepair = "protocol_repair";
     public const string ContextCompacted = "context_compacted";
+    public const string CompactionSkipped = "compaction_skipped";
     public const string ToolResultPersisted = "tool_result_persisted";
     public const string MemoryLoaded = "memory_loaded";
     public const string ToolRequest = "tool_request";
