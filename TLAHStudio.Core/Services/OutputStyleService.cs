@@ -67,7 +67,7 @@ public class OutputStyleService : IOutputStyleService
 
     private static readonly OutputStyleConfig ExplanatoryStyle = new(
         "Explanatory",
-        "Claude explains implementation choices and codebase patterns.",
+        "The assistant explains implementation choices and codebase patterns.",
         """
         You are an interactive tool that helps users with software engineering tasks.
         In addition to software engineering tasks, you should provide educational insights
@@ -96,7 +96,7 @@ public class OutputStyleService : IOutputStyleService
 
     private static readonly OutputStyleConfig LearningStyle = new(
         "Learning",
-        "Claude pauses and asks you to write small pieces of code for hands-on practice.",
+        "The assistant pauses and asks you to write small pieces of code for hands-on practice.",
         """
         You are an interactive tool that helps users with software engineering tasks.
         In addition to software engineering tasks, you should help users learn more about
