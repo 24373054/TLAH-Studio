@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.0.exe",
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "468e960fa4f92a354b6ae5ff017d94a6d39be695b490df49de9afa0638c2d209",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.0: Plan mode (read-only research), AskUserQuestion multi-select dialog, Skill system activated (12 bundled skills + skill tool), progressive disclosure with budget control, OutputStyles (default/Explanatory/Learning), multi-source skills (bundled/project/user), conditional skill activation via paths, plugin end-to-end discovery and UI, 258 tests (104 new).",
+  "releaseNotes": "4.9.0: Plan mode, AskUserQuestion, Skill system (12 bundled skills), OutputStyles, multi-source skills, plugin end-to-end, 258 tests.",
   "forceUpdate": true,
   "minSupportedVersion": "4.9.0",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97047536
+  "installerSizeBytes": 97072656
 }
