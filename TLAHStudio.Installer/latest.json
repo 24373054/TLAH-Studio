@@ -4,11 +4,11 @@
   "platform": "windows",
   "arch": "x64",
   "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.1.exe",
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "51b25a52fe8b932023d28417240a8871c01c230364a1ad8641d1eb179fa10553",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.1: Auto-create .tlah dirs on workspace setup, Plugin section moved above permissions, init skill de-Clauded, OutputStyle descriptions agent-agnostic, CRLF frontmatter fix, skill system fully wired.",
+  "releaseNotes": "4.9.1: Auto-create .tlah dirs, Plugin UI move, init de-Clauded, OutputStyle agent-agnostic, CRLF fix, skill system wired.",
   "forceUpdate": true,
   "minSupportedVersion": "4.9.1",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97071080
+  "installerSizeBytes": 97072688
 }
