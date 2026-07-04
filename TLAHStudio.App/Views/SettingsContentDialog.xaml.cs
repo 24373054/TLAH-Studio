@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using TLAHStudio.App.ViewModels;
+using TLAHStudio.Core.Services.Plugins;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 
@@ -33,6 +34,7 @@ public sealed partial class SettingsContentDialog : ContentDialog
             ChatProviderCombo.SelectionChanged += ChatProviderCombo_SelectionChanged;
             PopulateGlobal();
             PopulateChat();
+            PopulateSkills();  // M4.9.0
             UpdateScope();
             UpdateTestText();
             _ = AutoRefreshVisibleModelListsAsync();
@@ -86,6 +88,9 @@ public sealed partial class SettingsContentDialog : ContentDialog
         DensityCombo.Items.Add("Compact");
         DensityCombo.SelectedItem = (App.MainWindow as MainWindow)?.UiDensityService.CurrentDensity == UiDensity.Compact
             ? "Compact" : "Comfortable";
+        // M4.9.0: Output style combo
+        OutputStyleCombo.ItemsSource = _vm.OutputStyleOptions;
+        OutputStyleCombo.SelectedItem = _vm.OutputStyle;
         _isPopulating = false;
     }
 
@@ -227,6 +232,37 @@ public sealed partial class SettingsContentDialog : ContentDialog
         var density = (sender as ComboBox)?.SelectedItem is "Compact"
             ? UiDensity.Compact : UiDensity.Comfortable;
         (App.MainWindow as MainWindow)?.UiDensityService.SetDensity(density);
+    }
+
+    // M4.9.0: Output style selector
+    private void OutputStyleCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isPopulating || _vm == null) return;
+        if (sender is ComboBox combo && combo.SelectedItem is string style)
+            _vm.OutputStyle = style;
+    }
+
+    // M4.9.0: Skills management
+    private void ReloadSkills_Click(object sender, RoutedEventArgs e)
+    {
+        PopulateSkills();
+    }
+
+    private async void OpenSkillsDir_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TLAH Studio", "skills");
+        Directory.CreateDirectory(dir);
+        await Windows.System.Launcher.LaunchFolderPathAsync(dir);
+    }
+
+    private async void PopulateSkills()
+    {
+        if (_vm == null) return;
+        await _vm.LoadSkillsAsync();
+        SkillsSummaryText.Text = _vm.SkillsSummary;
+        SkillsListControl.ItemsSource = _vm.SkillsList;
     }
 
     private async void ResetGlobal_Click(object sender, RoutedEventArgs e)

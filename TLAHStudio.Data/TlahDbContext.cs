@@ -364,6 +364,7 @@ public class TlahDbContext : DbContext
         AddColumnIfMissing(connection, "Chats", "ConfigProfileId", "TEXT NULL");
         AddColumnIfMissing(connection, "GlobalSettings", "UseLongContext", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "GlobalSettings", "ThinkingDepth", "TEXT NOT NULL DEFAULT 'auto'");
+        AddColumnIfMissing(connection, "GlobalSettings", "OutputStyle", "TEXT NULL");  // M4.9.0
         AddColumnIfMissing(connection, "ChatSettings", "UseLongContext", "INTEGER NULL");
         AddColumnIfMissing(connection, "ChatSettings", "ThinkingDepth", "TEXT NULL");
 

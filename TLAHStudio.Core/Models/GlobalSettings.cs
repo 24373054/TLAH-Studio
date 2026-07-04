@@ -37,5 +37,9 @@ public class GlobalSettings
     [MaxLength(50)]
     public string UserRole { get; set; } = "user";
 
+    /// <summary>M4.9.0: Active output style name (default, Explanatory, Learning, or custom).</summary>
+    [MaxLength(100)]
+    public string? OutputStyle { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

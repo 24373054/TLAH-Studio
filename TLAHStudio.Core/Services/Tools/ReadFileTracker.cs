@@ -1,3 +1,5 @@
+using TLAHStudio.Core.Services.Plugins;
+
 namespace TLAHStudio.Core.Services.Tools;
 
 /// <summary>
@@ -25,10 +27,21 @@ public interface IReadFileTracker
 public sealed class ReadFileTracker : IReadFileTracker
 {
     private readonly Dictionary<string, DateTime> _files = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ISkillLoader? _skillLoader;
+
+    public ReadFileTracker(ISkillLoader? skillLoader = null)
+    {
+        _skillLoader = skillLoader;
+    }
 
     public void MarkRead(string path, DateTime mtimeUtc)
     {
-        _files[NormalizePath(path)] = mtimeUtc;
+        var normalized = NormalizePath(path);
+        _files[normalized] = mtimeUtc;
+
+        // M4.9.0: Activate conditional skills on first read of a matching file.
+        if (_skillLoader != null)
+            _ = _skillLoader.ActivateConditionalSkillsForPathAsync(path);
     }
 
     public bool WasRead(string path) =>

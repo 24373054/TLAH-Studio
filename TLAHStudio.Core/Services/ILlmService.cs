@@ -54,7 +54,8 @@ public interface ILlmService
         Guid invocationId,
         bool approved,
         string policyScope = "once",
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? updatedArgumentsJson = null);  // M4.9.0
 
     Task CancelAgentRunAsync(
         Guid agentRunId,

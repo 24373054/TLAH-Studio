@@ -1,14 +1,14 @@
 {
-  "version": "4.8.0",
+  "version": "4.9.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.8.0.exe",
-  "sha256": "c3910fbfa9b7902ffb17239134633530f038a42030cce5da7871b9d960ce01e6",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.0.exe",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.8.0: permission default fix, microcompact path fix, model-assisted compaction activated, progressive upgrade chain, PTL retry with truncation, circuit breaker skip-not-abort, post-compact tools injection, session memory throttling.",
+  "releaseNotes": "4.9.0: Plan mode (read-only research), AskUserQuestion multi-select dialog, Skill system activated (12 bundled skills + skill tool), progressive disclosure with budget control, OutputStyles (default/Explanatory/Learning), multi-source skills (bundled/project/user), conditional skill activation via paths, plugin end-to-end discovery and UI, 258 tests (104 new).",
   "forceUpdate": true,
-  "minSupportedVersion": "4.8.0",
+  "minSupportedVersion": "4.9.0",
   "rolloutPercent": 100,
   "installerSizeBytes": 97047536
 }

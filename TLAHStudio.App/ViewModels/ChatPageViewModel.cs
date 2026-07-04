@@ -642,7 +642,8 @@ public partial class ChatPageViewModel : ObservableObject
                     AgentApprovalChoice.AlwaysDeny => ToolPolicyScopes.Global,
                     _ => ToolPolicyScopes.Once
                 },
-                ct);
+                ct,
+                request.UpdatedArgumentsJson);  // M4.9.0
             AgentStatusText = choice is AgentApprovalChoice.DenyOnce or AgentApprovalChoice.AlwaysDeny
                 ? "Tool denied. Asking the agent for a safer next step..."
                 : "Tool approved. Continuing the agent run...";
@@ -1660,6 +1661,8 @@ public sealed class AgentApprovalRequest : EventArgs
     public string SafetyLevel { get; }
     public string SafetySummary { get; }
     public string SafetyJson { get; }
+    /// <summary>M4.9.0: Updated tool arguments (e.g. AskUserQuestion answers).</summary>
+    public string? UpdatedArgumentsJson { get; set; }
     public TaskCompletionSource<AgentApprovalChoice> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

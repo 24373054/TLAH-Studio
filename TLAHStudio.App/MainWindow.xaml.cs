@@ -121,6 +121,22 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            // M4.9.0: AskUserQuestion — custom multi-question dialog.
+            if (string.Equals(request.ToolName, "ask_user_question", StringComparison.OrdinalIgnoreCase))
+            {
+                var answers = await ShowAskUserQuestionDialogAsync(request.ArgumentsJson);
+                if (answers != null)
+                {
+                    request.UpdatedArgumentsJson = answers;
+                    request.Completion.TrySetResult(AgentApprovalChoice.AllowOnce);
+                }
+                else
+                {
+                    request.Completion.TrySetResult(AgentApprovalChoice.DenyOnce);
+                }
+                return;
+            }
+
             SoundService.Play(InteractionSound.Approval);
             var details = request.ArgumentsJson;
             try
@@ -229,6 +245,124 @@ public sealed partial class MainWindow : Window
         {
             App.Log($"AGENT APPROVAL DIALOG FAILED: {ex}");
             request.Completion.TrySetResult(AgentApprovalChoice.AlwaysDeny);
+        }
+    }
+
+    /// <summary>
+    /// M4.9.0: Render a multi-question dialog for AskUserQuestion.
+    /// Returns a JSON string with the answers, or null if the user cancelled.
+    /// </summary>
+    private static async Task<string?> ShowAskUserQuestionDialogAsync(string argumentsJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(argumentsJson);
+            if (!doc.RootElement.TryGetProperty("questions", out var questionsEl) ||
+                questionsEl.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var content = new StackPanel { Spacing = 16, MaxWidth = 600 };
+            var answers = new Dictionary<string, object>();
+
+            foreach (var q in questionsEl.EnumerateArray())
+            {
+                var question = q.GetProperty("question").GetString() ?? "";
+                var header = q.TryGetProperty("header", out var h) ? h.GetString() ?? "" : "";
+                var multiSelect = q.TryGetProperty("multiSelect", out var ms) && ms.GetBoolean();
+                var options = q.GetProperty("options");
+
+                var qPanel = new StackPanel { Spacing = 6 };
+                qPanel.Children.Add(new TextBlock
+                {
+                    Text = question,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"]
+                });
+
+                var selectedLabels = new List<string>();
+                foreach (var opt in options.EnumerateArray())
+                {
+                    var label = opt.GetProperty("label").GetString() ?? "";
+                    var desc = opt.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
+
+                    if (multiSelect)
+                    {
+                        var cb = new CheckBox
+                        {
+                            Content = $"{label} — {desc}",
+                            Tag = label,
+                            MinHeight = 30
+                        };
+                        cb.Checked += (_, _) => { if (cb.Tag is string l) selectedLabels.Add(l); };
+                        cb.Unchecked += (_, _) => { if (cb.Tag is string l) selectedLabels.Remove(l); };
+                        qPanel.Children.Add(cb);
+                    }
+                    else
+                    {
+                        var rb = new RadioButton
+                        {
+                            Content = $"{label} — {desc}",
+                            Tag = label,
+                            MinHeight = 30,
+                            GroupName = header
+                        };
+                        qPanel.Children.Add(rb);
+                    }
+                }
+                content.Children.Add(qPanel);
+                answers[header] = multiSelect ? selectedLabels : ""; // will be filled on submit
+            }
+
+            var dialog = new ContentDialog
+            {
+                Title = "Answer Questions",
+                Content = new ScrollViewer
+                {
+                    Content = content,
+                    MaxHeight = 480,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+                },
+                PrimaryButtonText = "Submit",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = App.MainWindow?.Content?.XamlRoot
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+                return null;
+
+            // Collect final answers after dialog closes.
+            var finalAnswers = new Dictionary<string, object>();
+            foreach (var child in content.Children)
+            {
+                if (child is StackPanel qp && qp.Children.Count > 0 &&
+                    qp.Children[0] is TextBlock tb)
+                {
+                    var qHeader = tb.Text; // use question text as key
+                    var multiAnswer = new List<string>();
+                    string? singleAnswer = null;
+                    foreach (var c in qp.Children)
+                    {
+                        if (c is CheckBox cb && cb.IsChecked == true)
+                            multiAnswer.Add(cb.Tag?.ToString() ?? "");
+                        else if (c is RadioButton rb && rb.IsChecked == true)
+                            singleAnswer = rb.Tag?.ToString() ?? "";
+                    }
+                    if (multiAnswer.Count > 0)
+                        finalAnswers[qHeader] = string.Join(", ", multiAnswer);
+                    else if (singleAnswer != null)
+                        finalAnswers[qHeader] = singleAnswer;
+                }
+            }
+
+            return JsonSerializer.Serialize(new { answers = finalAnswers });
+        }
+        catch (Exception ex)
+        {
+            App.Log($"AskUserQuestion dialog failed: {ex}");
+            return null;
         }
     }
 

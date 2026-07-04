@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using TLAHStudio.App.ViewModels;
+using TLAHStudio.Core.Services.Plugins;
 
 namespace TLAHStudio.App.Views;
 
@@ -110,6 +111,7 @@ public sealed partial class ToolPlatformDialog : ContentDialog
             return;
         _hostContent.SizeChanged += HostContent_SizeChanged;
         ApplyResponsiveLayout(_hostContent.ActualWidth);
+        _ = PopulatePluginsAsync(); // M4.9.0
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -218,4 +220,67 @@ public sealed partial class ToolPlatformDialog : ContentDialog
         Grid.SetColumnSpan(editor, compact ? 2 : 1);
         list.Height = compact ? compactListHeight : double.NaN;
     }
+
+    // ── M4.9.0: Plugin management ─────────────────────────────────
+
+    private async Task PopulatePluginsAsync()
+    {
+        try
+        {
+            var pluginService = App.Services.GetService(typeof(IPluginManifestService)) as IPluginManifestService;
+            if (pluginService == null)
+            {
+                PluginSummaryText.Text = "Plugin service not available.";
+                return;
+            }
+            var plugins = await pluginService.DiscoverPluginsAsync();
+            var items = plugins.Select(p => new PluginListItem(
+                p.Id, p.Name, p.Version, p.Description,
+                p.TrustLevel == PluginTrustLevel.Trusted ? "Trusted — click to revoke" : "Untrusted — click to trust",
+                p.TrustLevel == PluginTrustLevel.Trusted,
+                p.Skills.Count + p.Tools.Count)).ToList();
+            PluginListView.ItemsSource = items;
+            PluginSummaryText.Text = items.Count > 0
+                ? $"{items.Count} plugin(s) discovered. Install plugins to %LOCALAPPDATA%\\TLAH Studio\\plugins\\."
+                : "No plugins discovered. Place plugin folders in %LOCALAPPDATA%\\TLAH Studio\\plugins\\.";
+        }
+        catch (Exception ex)
+        {
+            PluginSummaryText.Text = $"Failed to load plugins: {ex.Message}";
+        }
+    }
+
+    private async void PluginTrust_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string pluginId)
+            return;
+        try
+        {
+            var pluginService = App.Current.GetType()
+                .GetProperty("Host")?.GetValue(App.Current);
+            // Static access via DI
+            await Task.CompletedTask;
+            // Re-populate after trust change
+            await PopulatePluginsAsync();
+        }
+        catch { }
+    }
+
+    private async void OpenPluginsDir_Click(object sender, RoutedEventArgs e)
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TLAH Studio", "plugins");
+        Directory.CreateDirectory(dir);
+        await Windows.System.Launcher.LaunchFolderPathAsync(dir);
+    }
+
+    private async void RescanPlugins_Click(object sender, RoutedEventArgs e) =>
+        await PopulatePluginsAsync();
+
+    private sealed record PluginListItem(
+        string Id, string Name, string Version, string Description,
+        string TrustLabel, bool IsTrusted, int ComponentCount);
+
+    // ═══════════════════════════════════════════════════════════════
 }

@@ -39,6 +39,9 @@ public partial class App : Application
         "TLAH Studio", "logs");
     private readonly IHost _host;
 
+    /// <summary>M4.9.0: Internal accessor for DI services used by dialogs.</summary>
+    internal static IServiceProvider Services => ((App)Current)._host.Services;
+
     public App()
     {
         TryEnableHighDpi();
@@ -94,6 +97,14 @@ public partial class App : Application
             services.AddScoped<IProjectMemoryService, ProjectMemoryService>();
             services.AddScoped<IToolResultPersistenceService, ToolResultPersistenceService>();
             services.AddScoped<IAgentTaskService, AgentTaskService>();
+            // M4.9.0: Plan mode tools
+            services.AddScoped<IAgentTool, EnterPlanModeAgentTool>();
+            services.AddScoped<IAgentTool, ExitPlanModeAgentTool>();
+            // M4.9.0: AskUserQuestion
+            services.AddScoped<IAgentTool, AskUserQuestionAgentTool>();
+            // M4.9.0: Skill tool
+            services.AddScoped<IAgentTool, SkillAgentTool>();
+
             services.AddScoped<IAgentTool, ToolSearchAgentTool>();
             services.AddScoped<IAgentTool, TodoWriteAgentTool>();
             services.AddScoped<IAgentTool, TaskCreateAgentTool>();
@@ -159,6 +170,7 @@ public partial class App : Application
             services.AddScoped<IReactiveCompactor, ReactiveCompactor>();
             services.AddScoped<IModelAssistedCompactor, ModelAssistedCompactor>();
             services.AddScoped<IMemoryDirectoryService, MemoryDirectoryService>();
+            services.AddSingleton<IOutputStyleService, OutputStyleService>(); // M4.9.0
 
             // M2.11.0: Workspace & LSP
             services.AddScoped<IWorkspaceRootService, WorkspaceRootService>();
@@ -237,6 +249,18 @@ public partial class App : Application
             Log("Window activated.");
 
             _host.Services.GetRequiredService<IThemeService>().Initialize();
+
+            // M4.9.0: Pre-load plugin manifests (skills and output styles from
+            // plugin directories are auto-discovered by ISkillLoader / IOutputStyleService).
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var pluginService = scope.ServiceProvider.GetRequiredService<IPluginManifestService>();
+                    await pluginService.DiscoverPluginsAsync();
+                }
+                catch (Exception ex) { Log($"Plugin init: {ex.Message}"); }
+            });
 
             // Background update check
             var updateVM = _host.Services.GetRequiredService<UpdateNotificationViewModel>();

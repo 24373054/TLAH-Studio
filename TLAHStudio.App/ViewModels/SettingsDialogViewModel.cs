@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
+using TLAHStudio.Core.Services.Plugins;
 
 namespace TLAHStudio.App.ViewModels;
 
@@ -17,6 +18,8 @@ public partial class SettingsDialogViewModel : ObservableObject
     private readonly ILlmService _llmService;
     private readonly IAppStateService _appState;
     private readonly IInteractionSoundService _soundService;
+    private readonly IOutputStyleService _outputStyleService;
+    private readonly ISkillLoader? _skillLoader;  // M4.9.0
 
     // ── Provider list ──────────────────────────────────────────────
     public ObservableCollection<ProviderInfo> Providers { get; } = new();
@@ -80,6 +83,37 @@ public partial class SettingsDialogViewModel : ObservableObject
     [ObservableProperty] private bool _isGlobalLongContextEnabled;
     [ObservableProperty] private bool _isChatLongContextEnabled;
 
+    // M4.9.0: Output style
+    public ObservableCollection<string> OutputStyleOptions { get; } = new();
+    [ObservableProperty] private string _outputStyle = "default";
+
+    // M4.9.0: Skills list
+    public ObservableCollection<SkillListItem> SkillsList { get; } = new();
+    [ObservableProperty] private string _skillsSummary = "Loading...";
+
+    public async Task LoadSkillsAsync()
+    {
+        SkillsList.Clear();
+        if (_skillLoader == null)
+        {
+            SkillsSummary = "Skill loader not available.";
+            return;
+        }
+        try
+        {
+            var skills = await _skillLoader.LoadSkillsAsync();
+            foreach (var s in skills)
+                SkillsList.Add(new SkillListItem(s.Name, s.Description, s.Source));
+            SkillsSummary = $"{SkillsList.Count} skill(s) loaded. Add custom skills to %LOCALAPPDATA%\\TLAH Studio\\skills\\ or <workspace>\\.tlah\\skills\\.";
+        }
+        catch (Exception ex)
+        {
+            SkillsSummary = $"Failed to load skills: {ex.Message}";
+        }
+    }
+
+    public sealed record SkillListItem(string Name, string Description, string Source);
+
     public bool HasCurrentChat => _appState.CurrentChatId != null;
     public string ChatIdLabel => _appState.CurrentChatId?.ToString("D") ?? "No chat selected";
 
@@ -87,12 +121,16 @@ public partial class SettingsDialogViewModel : ObservableObject
         ISettingsService settingsService,
         ILlmService llmService,
         IAppStateService appState,
-        IInteractionSoundService soundService)
+        IInteractionSoundService soundService,
+        IOutputStyleService? outputStyleService = null,
+        ISkillLoader? skillLoader = null)
     {
         _settingsService = settingsService;
         _llmService = llmService;
         _appState = appState;
         _soundService = soundService;
+        _outputStyleService = outputStyleService ?? new OutputStyleService();
+        _skillLoader = skillLoader;
 
         foreach (var p in ProviderInfo.Supported)
             Providers.Add(p);
@@ -121,6 +159,12 @@ public partial class SettingsDialogViewModel : ObservableObject
             IsGlobalLongContextEnabled = gs.UseLongContext;
             IsSoundEffectsEnabled = _soundService.IsEnabled;
             SoundVolume = _soundService.Volume;
+
+            // M4.9.0: Output styles
+            OutputStyleOptions.Clear();
+            foreach (var s in _outputStyleService.GetStyles())
+                OutputStyleOptions.Add(s.Name);
+            OutputStyle = gs.OutputStyle ?? "default";
 
             SelectedProvider = Providers.FirstOrDefault(p => p.Key == gs.Provider);
             LoadFallbackModelOptions(GlobalModelOptions, Provider);
@@ -239,6 +283,7 @@ public partial class SettingsDialogViewModel : ObservableObject
         BaseUrl = "https://api.deepseek.com";
         Model = "deepseek-v4-pro";
         ThinkingDepth = "auto";
+        OutputStyle = "default";  // M4.9.0
     }
 
     public void ClearChatApiKey()
@@ -348,7 +393,8 @@ public partial class SettingsDialogViewModel : ObservableObject
                 Temperature: Temperature,
                 MaxTokens: MaxTokens,
                 SystemPrompt: SystemPrompt,
-                UserRole: UserRole
+                UserRole: UserRole,
+                OutputStyle: OutputStyle == "default" ? null : OutputStyle  // M4.9.0: null = default
             ));
             _soundService.SetVolume(SoundVolume);
             _soundService.SetEnabled(IsSoundEffectsEnabled);

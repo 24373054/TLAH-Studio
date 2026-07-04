@@ -136,6 +136,11 @@
                         x:Name="AutoApproveItem"
                         Text="Auto approve"
                         Click="AutoApprove_Click" />
+                    <!-- M4.9.0: Plan mode -->
+                    <MenuFlyoutItem
+                        x:Name="PlanItem"
+                        Text="Plan"
+                        Click="Plan_Click" />
                     <MenuFlyoutItem
                         x:Name="AskApprovalItem"
                         Text="Ask"

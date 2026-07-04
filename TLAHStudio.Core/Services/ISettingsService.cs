@@ -39,7 +39,8 @@ public record GlobalSettingsDto(
     double Temperature,
     int MaxTokens,
     string SystemPrompt,
-    string UserRole
+    string UserRole,
+    string? OutputStyle = null  // M4.9.0
 );
 
 public record GlobalSettingsUpdateDto(
@@ -52,7 +53,8 @@ public record GlobalSettingsUpdateDto(
     double? Temperature = null,
     int? MaxTokens = null,
     string? SystemPrompt = null,
-    string? UserRole = null
+    string? UserRole = null,
+    string? OutputStyle = null   // M4.9.0
 );
 
 public record ChatSettingsDto(

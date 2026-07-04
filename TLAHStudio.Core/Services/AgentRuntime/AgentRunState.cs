@@ -26,6 +26,11 @@ public sealed record AgentRunState
     public int LastCompactedStep { get; set; } = -100;
     public int LastCompactedTokenEstimate { get; set; }
     public bool CompactionDisabled { get; set; }
+    // M4.9.0: Plan mode — read-only exploration, write tools intercepted.
+    public bool IsPlanMode { get; set; }
+    public string? PrePlanMode { get; set; }
+    // M4.9.0: Track sent skill names so they survive compaction/resume.
+    public HashSet<string> SentSkillNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 
     /// <summary>
@@ -37,7 +42,9 @@ public sealed record AgentRunState
         {
             ToolCalls = m.ToolCalls?.Select(tc => tc with { }).ToList(),
             ToolCallId = m.ToolCallId
-        }).ToList()
+        }).ToList(),
+        // M4.9.0: Deep-copy SentSkillNames so resume doesn't share state.
+        SentSkillNames = new HashSet<string>(SentSkillNames, SentSkillNames.Comparer)
     };
 }
 

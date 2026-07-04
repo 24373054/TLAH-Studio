@@ -52,7 +52,8 @@ public class SettingsService : ISettingsService
             Temperature: gs.Temperature,
             MaxTokens: gs.MaxTokens,
             SystemPrompt: gs.SystemPrompt,
-            UserRole: gs.UserRole
+            UserRole: gs.UserRole,
+            OutputStyle: gs.OutputStyle  // M4.9.0
         );
     }
 
@@ -77,6 +78,7 @@ public class SettingsService : ISettingsService
         if (data.MaxTokens.HasValue) gs.MaxTokens = data.MaxTokens.Value;
         if (data.SystemPrompt != null) gs.SystemPrompt = data.SystemPrompt;
         if (data.UserRole != null) gs.UserRole = data.UserRole;
+        if (data.OutputStyle != null) gs.OutputStyle = data.OutputStyle;  // M4.9.0
 
         gs.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);

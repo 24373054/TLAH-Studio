@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
+using TLAHStudio.Core.Services.Plugins;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.Context;
 using TLAHStudio.Core.Services.SessionMemory;
@@ -65,6 +66,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private readonly IReactiveCompactor _reactiveCompactor;
     private readonly ITokenBudgetService _tokenBudget;
     private readonly ISessionMemoryService _sessionMemory;
+    private readonly IOutputStyleService? _outputStyle;
+    private readonly ISkillLoader? _skillLoader;
 
     public AgentRunEngineV2(
         DbContext db,
@@ -86,7 +89,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         ITokenBudgetService? tokenBudget = null,
         IToolLifecycleRunner? toolLifecycleRunner = null,
         ISessionMemoryService? sessionMemory = null,
-        IModelAssistedCompactor? modelAssistedCompactor = null)
+        IModelAssistedCompactor? modelAssistedCompactor = null,
+        IOutputStyleService? outputStyle = null,
+        ISkillLoader? skillLoader = null)
     {
         _db = db;
         _chatService = chatService;
@@ -108,6 +113,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         _reactiveCompactor = reactiveCompactor ?? new ReactiveCompactor(modelAssistedCompactor);
         _tokenBudget = tokenBudget ?? new TokenBudgetService();
         _sessionMemory = sessionMemory ?? new SessionMemoryService();
+        _outputStyle = outputStyle;
+        _skillLoader = skillLoader;
     }
 
     public async Task<AgentRunResult> RunAsync(
@@ -139,7 +146,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         try
         {
             // Build system prompt with memory
-            var systemPrompt = await BuildSystemPromptAsync(state.ChatId, options.PermissionMode, ct);
+            var systemPrompt = await BuildSystemPromptAsync(state, options.PermissionMode, ct);
             var effective = await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct);
             var provider = LlmProviderFactory.Create(
                 _httpClientFactory.CreateClient("LLM"),
@@ -588,6 +595,16 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         // mode. Operations on .git/, .env, shell configs always need approval.
                         var safetyRequiresApproval = item.Safety.RequiresExplicitApproval ||
                                                      (item.Safety.BypassImmune && options.AutoApproveTools);
+
+                        // M4.9.0: In Plan mode, all write/destructive operations require
+                        // explicit user approval — even if the mode is BypassPermissions.
+                        if (state.IsPlanMode &&
+                            (item.Safety.IsWriteOperation || item.Tool.Metadata.IsDestructive ||
+                             !item.Safety.IsReadOnly))
+                        {
+                            safetyRequiresApproval = true;
+                        }
+
                         var needsApproval = !options.AutoApproveTools
                             ? ((item.Tool.Metadata.RequiresApproval && !policy.IsAllowed) ||
                                (safetyRequiresApproval && !policy.IsAllowed))
@@ -633,6 +650,23 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                         var execResult = await ExecuteSingleInvocationAsync(state, item, step, options, events, ct);
                         frameProgress?.Report(execResult.Frame ?? AgentRunFrame.Empty(stepNumber, AgentRunFrameKinds.ToolResult));
+
+                        // M4.9.0: Plan mode state transitions.
+                        if (string.Equals(item.ToolCall.Name, AgentToolNames.EnterPlanMode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            state.IsPlanMode = true;
+                            state.PrePlanMode = options.PermissionMode;
+                        }
+                        else if (string.Equals(item.ToolCall.Name, AgentToolNames.ExitPlanMode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            state.IsPlanMode = false;
+                            // Restore pre-plan mode, with circuit breaker: never
+                            // restore to Plan (shouldn't happen, but guard).
+                            var restored = state.PrePlanMode ?? AgentPermissionModes.RequestApproval;
+                            if (restored == AgentPermissionModes.Plan)
+                                restored = AgentPermissionModes.RequestApproval;
+                            options = options with { PermissionMode = restored };
+                        }
                     }
 
                     if (approvalNeeded) break;
@@ -1093,22 +1127,80 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         }
     }
 
-    private async Task<string> BuildSystemPromptAsync(Guid chatId, string permissionMode, CancellationToken ct)
+    private async Task<string> BuildSystemPromptAsync(AgentRunState state, string permissionMode, CancellationToken ct)
     {
         var prompt = await SystemPromptBuilder.BuildAsync(
             _db.Set<Chat>(), _db.Set<GlobalSettings>(), _db.Set<AgentFile>(),
-            _db.Set<ProjectSpace>(), _db.Set<ConfigProfile>(), chatId, ct);
-        var memoryPath = await _projectMemory.GetMemoryPathAsync(chatId, ct);
-        var projectMemory = await _projectMemory.ReadAsync(chatId, ct);
+            _db.Set<ProjectSpace>(), _db.Set<ConfigProfile>(), state.ChatId, ct);
+        var memoryPath = await _projectMemory.GetMemoryPathAsync(state.ChatId, ct);
+        var projectMemory = await _projectMemory.ReadAsync(state.ChatId, ct);
         // Simplified append (delegates to actual implementation in caller)
         if (!string.IsNullOrWhiteSpace(projectMemory))
             prompt += $"\n\n[project memory: {memoryPath}]\n{projectMemory[..Math.Min(projectMemory.Length, 12_000)]}";
-        var taskSummary = await _agentTasks.BuildOpenTaskSummaryAsync(chatId, ct: ct);
+        var taskSummary = await _agentTasks.BuildOpenTaskSummaryAsync(state.ChatId, ct: ct);
         prompt += $"\n\n[current tracked tasks]\n{taskSummary}";
         prompt += BuildAgentInstructions(
-            _sandboxCommandService.GetSandboxRoot(chatId),
+            _sandboxCommandService.GetSandboxRoot(state.ChatId),
             _agentTools.Definitions.Select(t => t.Name),
             permissionMode);
+        // M4.9.0: Skill listing — inject available skills with budget control.
+        if (_skillLoader != null)
+        {
+            var skills = await _skillLoader.LoadSkillsAsync(ct);
+            if (skills.Count > 0)
+            {
+                const int maxTotalChars = 8_000; // ~1% of 200K window
+                var skillBlock = new StringBuilder();
+                skillBlock.AppendLine("<system-reminder>");
+                skillBlock.AppendLine("The following skills are available for use with the skill tool:");
+                skillBlock.AppendLine();
+
+                var totalChars = 0;
+                var newSent = 0;
+                const int maxDescChars = 250;
+                foreach (var skill in skills.OrderBy(s => s.Source == "bundled" ? 0 : 1))
+                {
+                    if (totalChars >= maxTotalChars)
+                        break;
+                    var name = skill.Name;
+                    if (!state.SentSkillNames.Add(name))
+                        continue; // Already sent — skip to preserve prompt cache.
+
+                    var desc = string.IsNullOrWhiteSpace(skill.WhenToUse)
+                        ? skill.Description
+                        : $"{skill.Description} — {skill.WhenToUse}";
+                    if (desc.Length > maxDescChars)
+                        desc = desc[..(maxDescChars - 1)] + "…";
+
+                    var line = $"- {name}: {desc}";
+                    if (totalChars + line.Length + Environment.NewLine.Length > maxTotalChars && totalChars > 0)
+                    {
+                        // Non-bundled skills: downgrade to name-only if budget tight.
+                        if (skill.Source != "bundled")
+                            line = $"- {name}";
+                        else
+                            break; // Bundled — stop adding anything.
+                    }
+                    skillBlock.AppendLine(line);
+                    totalChars += line.Length + Environment.NewLine.Length;
+                    newSent++;
+                }
+                skillBlock.AppendLine();
+                skillBlock.AppendLine("When a skill matches the user's request, invoke the skill tool BEFORE generating any other response about the task. NEVER mention a skill without actually calling the skill tool.");
+                skillBlock.AppendLine("</system-reminder>");
+                if (newSent > 0)
+                    prompt += $"\n\n{skillBlock}";
+            }
+        }
+        // M4.9.0: Append active output style prompt.
+        if (_outputStyle != null)
+        {
+            var gs = await _db.Set<GlobalSettings>().FirstOrDefaultAsync(g => g.Id == 1, ct);
+            var styleName = gs?.OutputStyle ?? _outputStyle.DefaultStyleName;
+            var style = _outputStyle.GetStyle(styleName);
+            if (style != null && !string.IsNullOrWhiteSpace(style.Prompt))
+                prompt += $"\n\n{style.Prompt}";
+        }
         return prompt;
     }
 
@@ -1116,7 +1208,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     {
         var tools = string.Join(", ", toolNames.OrderBy(t => t, StringComparer.OrdinalIgnoreCase));
         var normalizedMode = AgentPermissionModes.Normalize(permissionMode);
-        var hostAccessLine = AgentPermissionModes.IsBypass(normalizedMode)
+        var hostAccessLine = AgentPermissionModes.IsPlan(normalizedMode)
+            ? "Permission mode: Plan (read-only). Explore, research, and design only. File writes, terminal execution, and destructive operations are blocked until the plan is approved via exit_plan_mode. Write your plan to .tlah_context/plans/{{chatId}}-plan.md before calling exit_plan_mode."
+            : AgentPermissionModes.IsBypass(normalizedMode)
             ? "Permission mode: Full access. terminal_exec may run unrestricted local PowerShell and can access host files, programs, and the internet when needed. Use it deliberately and state the reason."
             : normalizedMode == AgentPermissionModes.AutoApprove
                 ? "Permission mode: Auto approve. The app approves detected tool directions automatically, but safety and policy blocks still apply."

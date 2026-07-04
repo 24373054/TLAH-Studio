@@ -374,11 +374,18 @@ public sealed partial class MessageInputControl : UserControl
         UseSandboxItem.IsEnabled = _vm?.IsWorkspaceConfigured == true;
     }
 
+    private void Plan_Click(object sender, RoutedEventArgs e) =>
+        SetPermissionMode(AgentPermissionModes.Plan);
+
     private static PermissionModeItem GetPermissionModeItem(string? mode)
     {
         var normalized = AgentPermissionModes.Normalize(mode);
         return normalized switch
         {
+            AgentPermissionModes.Plan => new(
+                AgentPermissionModes.Plan,
+                "Plan",
+                "Read-only exploration and design. Writes and terminal execution are blocked until plan is approved."),
             AgentPermissionModes.AutoApprove => new(
                 AgentPermissionModes.AutoApprove,
                 "Auto approve",
@@ -388,9 +395,9 @@ public sealed partial class MessageInputControl : UserControl
                 "Ask",
                 "Requests approval for risky tools and scoped permission rules."),
             _ => new(
-                AgentPermissionModes.BypassPermissions,
-                "Full access",
-                "Unrestricted local terminal access; approvals are bypassed.")
+                AgentPermissionModes.RequestApproval,
+                "Ask",
+                "Requests approval for risky tools and scoped permission rules.")
         };
     }
 

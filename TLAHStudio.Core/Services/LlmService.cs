@@ -83,6 +83,11 @@ public class LlmService : ILlmService
             var backgroundTaskService = new BackgroundTaskService(db);
             _agentTools = new AgentToolRegistry(
             [
+                // M4.9.0
+                new EnterPlanModeAgentTool(),
+                new ExitPlanModeAgentTool(_sandboxCommandService),
+                new AskUserQuestionAgentTool(),
+                new SkillAgentTool(),
                 new ToolSearchAgentTool(),
                 new TodoWriteAgentTool(taskService),
                 new TaskCreateAgentTool(taskService, backgroundTaskService, _sandboxCommandService),
@@ -741,7 +746,8 @@ public class LlmService : ILlmService
         Guid invocationId,
         bool approved,
         string policyScope = "once",
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? updatedArgumentsJson = null)  // M4.9.0: for AskUserQuestion answers
     {
         var invocation = await _db.Set<ToolInvocation>()
             .Include(i => i.AgentRun)
@@ -752,6 +758,9 @@ public class LlmService : ILlmService
 
         invocation.Approved = approved;
         invocation.ApprovedAt = DateTime.UtcNow;
+        // M4.9.0: Update arguments with user-provided answers (AskUserQuestion).
+        if (!string.IsNullOrWhiteSpace(updatedArgumentsJson))
+            invocation.ArgumentsJson = updatedArgumentsJson;
         invocation.Status = approved
             ? ToolInvocationStatuses.Approved
             : ToolInvocationStatuses.Denied;

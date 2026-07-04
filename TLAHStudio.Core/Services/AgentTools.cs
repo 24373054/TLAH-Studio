@@ -49,6 +49,11 @@ public static class AgentToolNames
     public const string CodeRollback = "rollback";
     public const string CodeDiagnostics = "lsp_diagnostics";
     public const string CodeSymbols = "symbols";
+    // M4.9.0: Plan mode tools
+    public const string EnterPlanMode = "enter_plan_mode";
+    public const string ExitPlanMode = "exit_plan_mode";
+    public const string AskUserQuestion = "ask_user_question";
+    public const string Skill = "skill";
 
     public static string Normalize(string name) =>
         string.Equals(name, LegacySandboxExec, StringComparison.OrdinalIgnoreCase)
@@ -144,7 +149,42 @@ public sealed record AgentToolMetadata(
             AgentToolNames.TaskList or
             AgentToolNames.TaskOutput or
             AgentToolNames.ReadPersistedOutput or
-            AgentToolNames.CodeDiff or
+            AgentToolNames.CodeDiff => new(
+                normalized, requiresApproval,
+                IsReadOnly: true, IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.File, 24_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
+            // M4.9.0
+            AgentToolNames.AskUserQuestion => new(
+                normalized, requiresApproval,
+                IsReadOnly: true, IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.Text, 20_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
+            AgentToolNames.Skill => new(
+                normalized, requiresApproval,
+                IsReadOnly: true, IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.Text, 50_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
+            AgentToolNames.EnterPlanMode => new(
+                normalized, requiresApproval,
+                IsReadOnly: true, IsConcurrencySafe: true,
+                IsDestructive: false,
+                AgentToolRenderHints.File, 100_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
+            AgentToolNames.ExitPlanMode => new(
+                normalized, requiresApproval,
+                IsReadOnly: true, IsConcurrencySafe: false,
+                IsDestructive: false,
+                AgentToolRenderHints.File, 100_000,
+                AgentToolResultPersistenceModes.PersistLargeOutputs),
+
             AgentToolNames.CodeDiagnostics or
             AgentToolNames.CodeSymbols => new(
                 normalized,
