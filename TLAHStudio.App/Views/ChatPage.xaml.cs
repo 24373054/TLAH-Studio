@@ -498,10 +498,101 @@ public sealed partial class ChatPage : UserControl
         var isConfigError =
             error.Contains("api key", StringComparison.OrdinalIgnoreCase) ||
             error.Contains("not configured", StringComparison.OrdinalIgnoreCase);
+        var isDark = ActualTheme == Microsoft.UI.Xaml.ElementTheme.Dark;
 
-        var border = new Border
+        // M4.9.5 Phase D: error card — left danger bar + icon + message +
+        // copy/retry actions. Concrete ARGB colors keyed on isDark.
+        var barColor = isDark ? 0xFFFF7786 : 0xFFDC2626;
+        var iconColor = isDark ? 0xFFFF7786 : 0xFFDC2626;
+        var bodyFg = isDark ? 0xFFFFFFFF : 0xFF172033;
+
+        // Left danger bar (4px) — the visual signature of an error card.
+        var bar = new Border
         {
-            Padding = new Thickness(14, 12, 14, 12),
+            Width = 4,
+            Background = Solid(barColor),
+            VerticalAlignment = VerticalAlignment.Stretch,
+            CornerRadius = new CornerRadius(2)
+        };
+
+        // Error icon + message row.
+        var icon = new FontIcon
+        {
+            Glyph = "", // Error/CancelMark (Segoe Fluent Icons)
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons"),
+            FontSize = 16,
+            Foreground = Solid(iconColor),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var msg = new TextBlock
+        {
+            Text = isConfigError
+                ? "API key is missing. Open Settings to add a provider key before sending."
+                : $"Request failed: {error}",
+            IsTextSelectionEnabled = true,
+            Foreground = Solid(bodyFg),
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 8, 0)
+        };
+
+        var contentRow = new Grid { ColumnSpacing = 8 };
+        contentRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // icon
+        contentRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // message
+        contentRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // actions
+        Grid.SetColumn(icon, 0);
+        Grid.SetColumn(msg, 1);
+        contentRow.Children.Add(icon);
+        contentRow.Children.Add(msg);
+
+        // Actions: Copy (always) + Settings (config) or Retry (request error).
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var copyBtn = PrimaryStateButton("Copy", Symbol.Copy, () =>
+        {
+            try
+            {
+                var dp = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                dp.SetText(error);
+                Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(dp);
+            }
+            catch { }
+            return Task.CompletedTask;
+        });
+        actions.Children.Add(copyBtn);
+
+        if (isConfigError)
+        {
+            var settingsBtn = PrimaryStateButton("Settings", Symbol.Setting, OpenSettingsAsync);
+            actions.Children.Add(settingsBtn);
+        }
+        else
+        {
+            var retryBtn = PrimaryStateButton("Retry", Symbol.Refresh, () =>
+            {
+                var lastAssistant = _vm?.Messages.LastOrDefault(m =>
+                    string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase));
+                if (lastAssistant != null)
+                    return _vm!.RegenerateMessageAsync(lastAssistant);
+                return Task.CompletedTask;
+            });
+            actions.Children.Add(retryBtn);
+        }
+        Grid.SetColumn(actions, 2);
+        contentRow.Children.Add(actions);
+
+        // Inner padding panel sits between the left bar and the content.
+        var inner = new Grid { ColumnSpacing = 10, Padding = new Thickness(12, 10, 12, 10) };
+        inner.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // bar
+        inner.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // content
+        Grid.SetColumn(bar, 0);
+        Grid.SetColumn(contentRow, 1);
+        inner.Children.Add(bar);
+        inner.Children.Add(contentRow);
+
+        return new Border
+        {
+            Padding = new Thickness(0),
             Background = ThemeBrush(
                 Color.FromArgb(0xFF, 0xFF, 0xF7, 0xED),
                 Color.FromArgb(0xE8, 0x2A, 0x1D, 0x1B)),
@@ -511,32 +602,9 @@ public sealed partial class ChatPage : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Margin = new Thickness(0, 0, 0, IsCompactDensity() ? 4 : 8)
+            Margin = new Thickness(0, 0, 0, IsCompactDensity() ? 4 : 8),
+            Child = inner
         };
-
-        var grid = new Grid { ColumnSpacing = 10 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(new TextBlock
-        {
-            Text = isConfigError
-                ? "API key is missing. Open Settings to add a provider key before sending."
-                : $"Request failed: {error}",
-            IsTextSelectionEnabled = true,
-            Foreground = TextPrimaryBrush(),
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-
-        if (isConfigError)
-        {
-            var button = PrimaryStateButton("Settings", Symbol.Setting, OpenSettingsAsync);
-            Grid.SetColumn(button, 1);
-            grid.Children.Add(button);
-        }
-
-        border.Child = grid;
-        return border;
     }
 
     private UIElement BuildMessage(Message message)
@@ -744,14 +812,35 @@ public sealed partial class ChatPage : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8)
         };
-        var thinkingText = new TextBlock
+        // M4.9.5 Phase D: thinking content renders as markdown (chains/lists/
+        // inline code in the model's reasoning stay readable) in a dim tone.
+        var thinkingText = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
         {
             Text = thinking,
             IsTextSelectionEnabled = true,
-            TextWrapping = TextWrapping.Wrap,
+            Background = Solid(0x00000000),
+            RequestedTheme = ActualTheme == Microsoft.UI.Xaml.ElementTheme.Dark
+                ? Microsoft.UI.Xaml.ElementTheme.Dark : Microsoft.UI.Xaml.ElementTheme.Light,
             Foreground = TextSecondaryBrush(),
             FontSize = IsCompactDensity() ? 12 : 13,
-            LineHeight = IsCompactDensity() ? 18 : 20
+            LinkForeground = (Brush)Application.Current.Resources["AccentSecondaryBrush"],
+            InlineCodeBackground = Solid(0x00000000),
+            InlineCodeBorderBrush = TextMutedBrush(),
+            InlineCodeForeground = TextSecondaryBrush(),
+            CodeBackground = Solid(0x00000000),
+            CodeBorderBrush = TextMutedBrush(),
+            CodeForeground = TextSecondaryBrush(),
+            QuoteBackground = Solid(0x00000000),
+            QuoteBorderBrush = TextMutedBrush(),
+            QuoteForeground = TextMutedBrush(),
+            Header1Foreground = TextSecondaryBrush(),
+            Header2Foreground = TextSecondaryBrush(),
+            Header3Foreground = TextSecondaryBrush(),
+            Header4Foreground = TextSecondaryBrush(),
+            Header5Foreground = TextSecondaryBrush(),
+            Header6Foreground = TextMutedBrush(),
+            HorizontalRuleBrush = TextMutedBrush(),
+            TableBorderBrush = TextMutedBrush()
         };
         thinkingBox.Content = new ScrollViewer
         {
@@ -845,14 +934,35 @@ public sealed partial class ChatPage : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8)
         };
-        var thinkingText = new TextBlock
+        // M4.9.5 Phase D: thinking content renders as markdown (chains/lists/
+        // inline code in the model's reasoning stay readable) in a dim tone.
+        var thinkingText = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
         {
             Text = thinking,
             IsTextSelectionEnabled = true,
-            TextWrapping = TextWrapping.Wrap,
+            Background = Solid(0x00000000),
+            RequestedTheme = ActualTheme == Microsoft.UI.Xaml.ElementTheme.Dark
+                ? Microsoft.UI.Xaml.ElementTheme.Dark : Microsoft.UI.Xaml.ElementTheme.Light,
             Foreground = TextSecondaryBrush(),
             FontSize = IsCompactDensity() ? 12 : 13,
-            LineHeight = IsCompactDensity() ? 18 : 20
+            LinkForeground = (Brush)Application.Current.Resources["AccentSecondaryBrush"],
+            InlineCodeBackground = Solid(0x00000000),
+            InlineCodeBorderBrush = TextMutedBrush(),
+            InlineCodeForeground = TextSecondaryBrush(),
+            CodeBackground = Solid(0x00000000),
+            CodeBorderBrush = TextMutedBrush(),
+            CodeForeground = TextSecondaryBrush(),
+            QuoteBackground = Solid(0x00000000),
+            QuoteBorderBrush = TextMutedBrush(),
+            QuoteForeground = TextMutedBrush(),
+            Header1Foreground = TextSecondaryBrush(),
+            Header2Foreground = TextSecondaryBrush(),
+            Header3Foreground = TextSecondaryBrush(),
+            Header4Foreground = TextSecondaryBrush(),
+            Header5Foreground = TextSecondaryBrush(),
+            Header6Foreground = TextMutedBrush(),
+            HorizontalRuleBrush = TextMutedBrush(),
+            TableBorderBrush = TextMutedBrush()
         };
         thinkingBox.Content = new ScrollViewer
         {
@@ -1341,7 +1451,45 @@ public sealed partial class ChatPage : UserControl
             return null;
         }
 
-        var stack = new StackPanel { Spacing = 4 };
+        var isDark = ActualTheme == Microsoft.UI.Xaml.ElementTheme.Dark;
+
+        // M4.9.5 Phase D: header row = status dot + title/path.
+        var header = new Grid { ColumnSpacing = 8 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });   // status dot
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // title
+
+        var (dotBrush, animate) = StatusDot(line.Status, isDark);
+        var dot = new Microsoft.UI.Xaml.Shapes.Ellipse
+        {
+            Width = 8,
+            Height = 8,
+            Fill = dotBrush,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        if (animate)
+        {
+            // Blinking opacity storyboard for running tools.
+            var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+            var anim = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+            {
+                From = 1.0,
+                To = 0.25,
+                Duration = new TimeSpan(0, 0, 0, 0, 600),
+                AutoReverse = true,
+                RepeatBehavior = Microsoft.UI.Xaml.Media.Animation.RepeatBehavior.Forever
+            };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(anim, dot);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(anim, "Opacity");
+            sb.Children.Add(anim);
+            sb.Begin();
+            // Keep a ref so it stops if the element is unloaded (Storyboard runs
+            // on the dispatcher; GC keeps it alive while the dot is in tree).
+            dot.Loaded += (_, _) => sb.Begin();
+            dot.Unloaded += (_, _) => sb.Stop();
+        }
+        Grid.SetColumn(dot, 0);
+        header.Children.Add(dot);
+
         if (!string.IsNullOrWhiteSpace(line.ToolTitle) ||
             !string.IsNullOrWhiteSpace(line.PrimaryPath))
         {
@@ -1353,23 +1501,58 @@ public sealed partial class ChatPage : UserControl
                 Foreground = TextPrimaryBrush(),
                 FontSize = 12,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                TextTrimming = TextTrimming.CharacterEllipsis
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center
             };
-            stack.Children.Add(title);
+            Grid.SetColumn(title, 1);
+            header.Children.Add(title);
         }
 
+        var stack = new StackPanel { Spacing = 4 };
+        stack.Children.Add(header);
+
+        // M4.9.5 Phase D: if the preview is truncated, render it inside an
+        // Expander so the user can see the full output; otherwise inline.
         if (!string.IsNullOrWhiteSpace(line.Preview))
         {
-            stack.Children.Add(new TextBlock
+            var previewText = line.IsTruncated ? $"{line.Preview} [truncated]" : line.Preview;
+            if (line.IsTruncated)
             {
-                Text = line.IsTruncated ? $"{line.Preview} [truncated]" : line.Preview,
-                IsTextSelectionEnabled = true,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = TextSecondaryBrush(),
-                FontSize = 12,
-                LineHeight = 18,
-                MaxLines = 3
-            });
+                var exp = new Expander
+                {
+                    Header = new TextBlock
+                    {
+                        Text = "Show full output",
+                        FontSize = 11,
+                        Foreground = TextSecondaryBrush()
+                    },
+                    Content = new TextBlock
+                    {
+                        Text = previewText,
+                        IsTextSelectionEnabled = true,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = TextSecondaryBrush(),
+                        FontSize = 12,
+                        LineHeight = 18
+                    },
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Padding = new Thickness(0)
+                };
+                stack.Children.Add(exp);
+            }
+            else
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = previewText,
+                    IsTextSelectionEnabled = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = TextSecondaryBrush(),
+                    FontSize = 12,
+                    LineHeight = 18,
+                    MaxLines = 3
+                });
+            }
         }
 
         return new Border
@@ -1381,6 +1564,39 @@ public sealed partial class ChatPage : UserControl
             Background = ToolPreviewBackgroundBrush(line.RenderHint),
             Child = stack
         };
+    }
+
+    /// <summary>
+    /// M4.9.5 Phase D: Map a tool-call status to a status-dot brush + whether
+    /// it should blink. Concrete ARGB colors keyed on isDark (same lesson as
+    /// the markdown fix — don't rely on Application.Current.Resources here).
+    /// </summary>
+    private static (Brush Dot, bool Animate) StatusDot(string status, bool isDark)
+    {
+        var grey = isDark ? 0xFF718195 : 0xFF8A93A6;
+        var blue = isDark ? 0xFF71A7FF : 0xFF2F5FEA;
+        var green = isDark ? 0xFF4EC99E : 0xFF0F9F93;
+        var red = isDark ? 0xFFFF7786 : 0xFFDC2626;
+        var amber = isDark ? 0xFFE8C84C : 0xFFB45309;
+        return status switch
+        {
+            ToolCallStatuses.Pending => (Solid(grey), false),
+            ToolCallStatuses.Running => (Solid(blue), true),
+            ToolCallStatuses.Done => (Solid(green), false),
+            ToolCallStatuses.Error => (Solid(red), false),
+            ToolCallStatuses.Cancelled => (Solid(amber), false),
+            _ => (Solid(grey), false)
+        };
+    }
+
+    private static SolidColorBrush Solid(uint argb)
+    {
+        var c = Windows.UI.Color.FromArgb(
+            (byte)((argb >> 24) & 0xFF),
+            (byte)((argb >> 16) & 0xFF),
+            (byte)((argb >> 8) & 0xFF),
+            (byte)(argb & 0xFF));
+        return new SolidColorBrush(c);
     }
 
     private Brush ToolPreviewBackgroundBrush(string? renderHint)
@@ -1654,7 +1870,7 @@ public sealed partial class ChatPage : UserControl
         Expander Expander,
         TextBlock HeaderText,
         TextBlock PreviewText,
-        TextBlock ThinkingText,
+        CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock ThinkingText,
         Controls.StreamingAnswerRenderer? AnswerRenderer,
         TextBlock CursorText,
         DispatcherTimer CursorTimer);

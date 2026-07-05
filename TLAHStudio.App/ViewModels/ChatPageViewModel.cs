@@ -1092,6 +1092,20 @@ public partial class ChatPageViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(text))
             return null;
 
+        // M4.9.5 Phase D: derive the tool-call lifecycle status from the event
+        // type + severity so the tool card can render a colored status dot.
+        var status = update.EventType switch
+        {
+            AgentEventTypes.ToolRequest => ToolCallStatuses.Pending,
+            AgentEventTypes.ToolStarted or AgentEventTypes.ToolProgress => ToolCallStatuses.Running,
+            AgentEventTypes.ToolResult => update.Severity == AgentEventSeverities.Error
+                ? ToolCallStatuses.Error : ToolCallStatuses.Done,
+            AgentEventTypes.ApprovalDenied or AgentEventTypes.ToolRollbackPlan => ToolCallStatuses.Cancelled,
+            AgentEventTypes.ApprovalRequested => ToolCallStatuses.Pending,
+            AgentEventTypes.Error => ToolCallStatuses.Error,
+            _ => ToolCallStatuses.Info
+        };
+
         return new AgentProgressLine(
             update.SequenceNumber,
             label,
@@ -1103,7 +1117,8 @@ public partial class ChatPageViewModel : ObservableObject
             render?.RenderHint,
             render?.IsTruncated ?? false,
             render?.PrimaryPath,
-            DepthForEvent(update.EventType));
+            DepthForEvent(update.EventType),
+            status);
     }
 
     /// <summary>
@@ -1387,7 +1402,24 @@ public sealed record AgentProgressLine(
     string? RenderHint = null,
     bool IsTruncated = false,
     string? PrimaryPath = null,
-    int Depth = 1);
+    int Depth = 1,
+    // M4.9.5 Phase D: tool-call lifecycle status for the status dot.
+    //   pending  — tool requested, not yet started (grey)
+    //   running  — tool started / in progress (animated blue)
+    //   done     — tool result, success (green)
+    //   error    — tool result, error severity (red)
+    //   cancelled— denied / rollback (amber)
+    string Status = "info");
+
+public static class ToolCallStatuses
+{
+    public const string Pending = "pending";
+    public const string Running = "running";
+    public const string Done = "done";
+    public const string Error = "error";
+    public const string Cancelled = "cancelled";
+    public const string Info = "info";
+}
 
 public sealed class AgentActivityRun
 {
