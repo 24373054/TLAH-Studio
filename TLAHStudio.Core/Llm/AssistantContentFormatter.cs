@@ -36,16 +36,34 @@ public static class AssistantContentFormatter
         if (string.IsNullOrEmpty(content))
             return false;
 
-        if (content.StartsWith(ThinkingExpanded, StringComparison.Ordinal))
+        // M4.9.4: Find the thinking block anywhere in the content (not just at
+        // the start). Previously TryParse required content to START with the
+        // thinking tag — if any text preceded it (e.g. a leading newline, or
+        // answer tokens arriving before thinking in some provider orderings),
+        // parsing failed and the thinking block silently disappeared from the
+        // rendered message. Now we locate the opening tag wherever it is.
+        int expandedStart = content.IndexOf(ThinkingExpanded, StringComparison.Ordinal);
+        int collapsedStart = content.IndexOf(ThinkingCollapsed, StringComparison.Ordinal);
+        int openStart;
+        if (expandedStart >= 0 && (collapsedStart < 0 || expandedStart <= collapsedStart))
         {
             isThinkingExpanded = true;
+            openStart = expandedStart;
         }
-        else if (!content.StartsWith(ThinkingCollapsed, StringComparison.Ordinal))
+        else if (collapsedStart >= 0)
+        {
+            isThinkingExpanded = false;
+            openStart = collapsedStart;
+        }
+        else
         {
             return false;
         }
 
-        var firstLineEnd = content.IndexOf('\n');
+        // Text before the thinking tag (if any) becomes part of the answer.
+        var before = openStart > 0 ? content[..openStart] : string.Empty;
+
+        var firstLineEnd = content.IndexOf('\n', openStart);
         if (firstLineEnd < 0)
             return false;
 
@@ -54,7 +72,16 @@ public static class AssistantContentFormatter
             return false;
 
         thinking = content[(firstLineEnd + 1)..end].Trim();
-        answer = content[(end + ThinkingEnd.Length)..].TrimStart('\r', '\n');
+        var after = content[(end + ThinkingEnd.Length)..];
+        // Compose answer = before + after, trimming stray leading newlines.
+        var answerBuilder = new System.Text.StringBuilder();
+        if (!string.IsNullOrWhiteSpace(before))
+        {
+            answerBuilder.Append(before.TrimEnd('\r', '\n'));
+            answerBuilder.Append('\n');
+        }
+        answerBuilder.Append(after.TrimStart('\r', '\n'));
+        answer = answerBuilder.ToString().TrimStart('\r', '\n');
         return true;
     }
 

@@ -23,9 +23,14 @@ internal static class ChatBlockRenderer
 {
     public static UIElement? Render(ChatMessageBlock block, bool isUser, bool isCompact)
     {
+        // M4.9.4: CommunityToolkit MarkdownTextBlock picks its internal color
+        // palette from RequestedTheme; if left unset it can default to Light
+        // and render dark-on-dark under Dark mode. Detect the app theme and
+        // pass it down so the markdown control uses the matching palette.
+        var isDark = Application.Current.RequestedTheme == ApplicationTheme.Dark;
         return block.BlockType switch
         {
-            ChatBlockType.MarkdownText => RenderMarkdown(block, isUser, isCompact),
+            ChatBlockType.MarkdownText => RenderMarkdown(block, isUser, isCompact, isDark),
             ChatBlockType.CodeBlock => RenderCode(block, isCompact),
             ChatBlockType.Table => RenderTable(block, isCompact),
             ChatBlockType.Quote => RenderQuote(block, isCompact),
@@ -37,13 +42,14 @@ internal static class ChatBlockRenderer
 
     // ── MarkdownText ───────────────────────────────────────────────
 
-    private static UIElement RenderMarkdown(ChatMessageBlock block, bool isUser, bool isCompact)
+    private static UIElement RenderMarkdown(ChatMessageBlock block, bool isUser, bool isCompact, bool isDark)
     {
         // M4.9.4: CommunityToolkit MarkdownTextBlock renders GFM markdown
         // (headings, lists, links, inline code, bold/italic, blockquotes).
         // Theme-aware: explicitly set every sub-element brush from app tokens —
         // CommunityToolkit's defaults are light-theme-oriented and render
         // invisible (dark text on dark bg) under Dark mode if left unset.
+        // Also set RequestedTheme so the control's internal palette matches.
         var res = Application.Current.Resources;
         var textPrimary = (Brush)res["TextPrimaryBrush"];
         var textSecondary = (Brush)res["TextSecondaryBrush"];
@@ -58,6 +64,7 @@ internal static class ChatBlockRenderer
             Padding = new Thickness(0),
             IsTextSelectionEnabled = true,
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            RequestedTheme = isDark ? ElementTheme.Dark : ElementTheme.Light,
             // Body + headings use the primary text color (honors theme).
             Foreground = isUser ? accent : textPrimary,
             FontSize = isCompact ? 13 : 14,

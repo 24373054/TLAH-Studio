@@ -607,7 +607,13 @@ public sealed partial class ChatPage : UserControl
         if (AssistantContentFormatter.TryParse(message.Content, out var thinking, out var answer, out var isExpanded))
         {
             var parsed = MessageAttachmentFormatter.Extract(answer);
-            return BuildLiveStreamBody(thinking, parsed.Body, isExpanded, parsed.Attachments, message.ChatId);
+            // M4.9.4: A finalized (non-draft) message with a thinking block must
+            // NOT use the streaming body — that path carries a blinking cursor
+            // timer that never stops and re-renders the answer as a streaming
+            // suffix. Route finalized thinking messages to a static body instead.
+            if (isDraft)
+                return BuildLiveStreamBody(thinking, parsed.Body, isExpanded, parsed.Attachments, message.ChatId);
+            return BuildFinalThinkingBody(thinking, parsed.Body, isExpanded, parsed.Attachments, message.ChatId, isUser);
         }
 
         var body = MessageAttachmentFormatter.Extract(message.Content);
@@ -684,6 +690,114 @@ public sealed partial class ChatPage : UserControl
             || text.Contains("\n* ", StringComparison.Ordinal)
             || text.Contains("\n| ", StringComparison.Ordinal)
             || text.Contains("**", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// M4.9.4: Static (non-streaming) body for a finalized assistant message
+    /// that contains a thinking block. Renders the thinking Expander (no
+    /// blinking cursor — that's streaming-only) plus the answer rendered as
+    /// rich markdown via ChatBlockRenderer, exactly like a non-thinking
+    /// message. Replaces the old path where finalized thinking messages were
+    /// always rendered through BuildLiveStreamBody and kept a running cursor.
+    /// </summary>
+    private UIElement BuildFinalThinkingBody(
+        string thinking,
+        string answer,
+        bool isExpanded,
+        IReadOnlyList<MessageAttachment>? attachments,
+        Guid chatId,
+        bool isUser)
+    {
+        var panel = new StackPanel { Spacing = 8 };
+        var header = new StackPanel { Spacing = 2 };
+        var headerText = new TextBlock
+        {
+            Text = isExpanded ? "Thinking..." : $"Thinking collapsed · {thinking.Length} chars",
+            Foreground = TextSecondaryBrush(),
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        };
+        header.Children.Add(headerText);
+        var preview = AssistantContentFormatter.Preview(thinking);
+        var previewText = new TextBlock
+        {
+            Text = preview,
+            Foreground = TextMutedBrush(),
+            FontSize = 11,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap,
+            MaxWidth = IsCompactDensity() ? 640 : 720,
+            Visibility = !isExpanded && !string.IsNullOrWhiteSpace(preview)
+                ? Visibility.Visible : Visibility.Collapsed
+        };
+        header.Children.Add(previewText);
+
+        var thinkingBox = new Expander
+        {
+            IsExpanded = isExpanded,
+            Header = header,
+            Background = ThemeBrush(
+                Color.FromArgb(0xAA, 0xF3, 0xF7, 0xFD),
+                Color.FromArgb(0x8A, 0x0E, 0x17, 0x25)),
+            BorderBrush = MessageBorderBrush(),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8)
+        };
+        var thinkingText = new TextBlock
+        {
+            Text = thinking,
+            IsTextSelectionEnabled = true,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = TextSecondaryBrush(),
+            FontSize = IsCompactDensity() ? 12 : 13,
+            LineHeight = IsCompactDensity() ? 18 : 20
+        };
+        thinkingBox.Content = new ScrollViewer
+        {
+            MaxHeight = 180,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = thinkingText
+        };
+        panel.Children.Add(thinkingBox);
+
+        // Answer: rich markdown (same path as non-thinking messages). No cursor.
+        if (!string.IsNullOrWhiteSpace(answer))
+        {
+            if (ContentHasMarkdownStructure(answer))
+            {
+                var answerPanel = new StackPanel { Spacing = 6 };
+                foreach (var block in MarkdownBlockParser.Parse(Guid.Empty, "assistant", answer))
+                {
+                    var el = Controls.ChatBlockRenderer.Render(block, isUser, IsCompactDensity());
+                    if (el != null) answerPanel.Children.Add(el);
+                    else answerPanel.Children.Add(new TextBlock
+                    {
+                        Text = block.Content,
+                        IsTextSelectionEnabled = true,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = isUser ? AccentTextBrush() : TextPrimaryBrush(),
+                        FontSize = IsCompactDensity() ? 13 : 14,
+                        LineHeight = IsCompactDensity() ? 20 : 22
+                    });
+                }
+                panel.Children.Add(answerPanel);
+            }
+            else
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = answer,
+                    IsTextSelectionEnabled = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = TextPrimaryBrush(),
+                    FontSize = IsCompactDensity() ? 13 : 14,
+                    LineHeight = IsCompactDensity() ? 20 : 22
+                });
+            }
+        }
+
+        AddAttachmentCards(panel, attachments, chatId);
+        return panel;
     }
 
     private UIElement BuildLiveStreamBody(

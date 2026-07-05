@@ -4,11 +4,11 @@
     "platform":  "windows",
     "arch":  "x64",
     "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
-    "sha256":  "12e716093a65d88a20320a63a708409e0a2aba65112e42fc373b2f8dfddd553f",
+    "sha256":  "73bd2cbaf6c782457cf9f2b5bfd436bb7b4212d44b0de505fd7b26ef5d5d1d5b",
     "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "4.9.4 mid3: fix dark-mode markdown text invisible (set all MarkdownTextBlock sub-element brushes from theme tokens); fix cursor blinking after response ends in non-agent mode (IsStreamingDraft now gates on IsSending; stop cursor on streaming-only path too).",
+    "releaseNotes":  "4.9.4 mid5: three fixes 鈥?dark-mode markdown (RequestedTheme + all sub-element brushes), cursor on finalized thinking messages (new BuildFinalThinkingBody, no cursor), thinking block disappearing (TryParse now finds thinking tag anywhere in content not just at start).",
     "forceUpdate":  true,
     "minSupportedVersion":  "4.9.4",
     "rolloutPercent":  100,
-    "installerSizeBytes":  97913800
+    "installerSizeBytes":  97914576
 }
