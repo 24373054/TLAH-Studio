@@ -46,16 +46,23 @@ internal static class ChatBlockRenderer
     {
         // M4.9.4: CommunityToolkit MarkdownTextBlock renders GFM markdown
         // (headings, lists, links, inline code, bold/italic, blockquotes).
-        // Theme-aware: explicitly set every sub-element brush from app tokens —
-        // CommunityToolkit's defaults are light-theme-oriented and render
-        // invisible (dark text on dark bg) under Dark mode if left unset.
-        // Also set RequestedTheme so the control's internal palette matches.
-        var res = Application.Current.Resources;
-        var textPrimary = (Brush)res["TextPrimaryBrush"];
-        var textSecondary = (Brush)res["TextSecondaryBrush"];
-        var accent = (Brush)res["AccentBrush"];
-        var surface = (Brush)res["SurfaceBrush"];
-        var borderSubtle = (Brush)res["BorderSubtleBrush"];
+        //
+        // Decompilation of CommunityToolkit 7.1.2 shows the body RichTextBlock's
+        // Foreground comes from the render context, which is seeded from the
+        // control's Foreground property (markdownRenderer.Foreground = ((Control)this).Foreground).
+        // So setting md.Foreground IS the right lever for body text.
+        //
+        // The earlier bug: brushes were pulled from Application.Current.Resources,
+        // which resolve against the APPLICATION theme, not the control's visual
+        // theme. When the window runs Dark but Application.RequestedTheme is
+        // Light (or vice versa), TextPrimaryBrush resolved to the Light value
+        // (dark text) and rendered invisible on a Dark background. Fix: derive
+        // every color directly from isDark with concrete SolidColorBrush values.
+        var textPrimary = Solid(isDark ? 0xFFFFFFFF : 0xFF172033);
+        var textSecondary = Solid(isDark ? 0xFFE0E8F4 : 0xFF56657A);
+        var accent = Solid(isDark ? 0xFF71A7FF : 0xFF2F5FEA);
+        var surface = Solid(isDark ? 0xFF192434 : 0xFFF6F8FC);
+        var borderSubtle = Solid(isDark ? 0xFF718195 : 0xFFD2DCEB);
 
         var md = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
         {
@@ -63,7 +70,7 @@ internal static class ChatBlockRenderer
             Margin = new Thickness(0),
             Padding = new Thickness(0),
             IsTextSelectionEnabled = true,
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            Background = Solid(0x00000000),
             RequestedTheme = isDark ? ElementTheme.Dark : ElementTheme.Light,
             // Body + headings use the primary text color (honors theme).
             Foreground = isUser ? accent : textPrimary,
@@ -82,7 +89,7 @@ internal static class ChatBlockRenderer
             CodeBorderBrush = borderSubtle,
             CodeForeground = textPrimary,
             // Blockquotes: secondary text, subtle border.
-            QuoteBackground = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            QuoteBackground = Solid(0x00000000),
             QuoteBorderBrush = accent,
             QuoteForeground = textSecondary,
             // Headings: primary (slightly heavier weight is automatic).
@@ -96,6 +103,16 @@ internal static class ChatBlockRenderer
             TableBorderBrush = borderSubtle
         };
         return md;
+    }
+
+    private static SolidColorBrush Solid(uint argb)
+    {
+        var c = Windows.UI.Color.FromArgb(
+            (byte)((argb >> 24) & 0xFF),
+            (byte)((argb >> 16) & 0xFF),
+            (byte)((argb >> 8) & 0xFF),
+            (byte)(argb & 0xFF));
+        return new SolidColorBrush(c);
     }
 
     // ── CodeBlock ──────────────────────────────────────────────────

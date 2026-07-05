@@ -4,11 +4,11 @@
     "platform":  "windows",
     "arch":  "x64",
     "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
-    "sha256":  "73bd2cbaf6c782457cf9f2b5bfd436bb7b4212d44b0de505fd7b26ef5d5d1d5b",
+    "sha256":  "",
     "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "4.9.4 mid5: three fixes 鈥?dark-mode markdown (RequestedTheme + all sub-element brushes), cursor on finalized thinking messages (new BuildFinalThinkingBody, no cursor), thinking block disappearing (TryParse now finds thinking tag anywhere in content not just at start).",
+    "releaseNotes":  "4.9.4: dark-mode markdown root-cause fix — body RichTextBlock Foreground comes from render context seeded by control Foreground, which was pulled from Application.Current.Resources (resolves against APPLICATION theme not window theme). Now derives colors directly from isDark with concrete ARGB brushes, bypassing the resource theme resolution entirely.",
     "forceUpdate":  true,
     "minSupportedVersion":  "4.9.4",
     "rolloutPercent":  100,
-    "installerSizeBytes":  97914576
+    "installerSizeBytes":  97915656
 }
