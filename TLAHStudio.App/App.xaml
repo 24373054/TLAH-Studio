@@ -281,15 +281,12 @@
             <FontFamily x:Key="TextPrimaryFontFamily">Microsoft YaHei UI, Segoe UI Variable, Segoe UI</FontFamily>
             <FontFamily x:Key="MonoFontFamily">Consolas, Cascadia Mono, Courier New</FontFamily>
 
-            <!-- M4.9.5 Phase F3: apply the CJK-aware primary font globally.
-                 Implicit styles on TextBlock + Control ensure every text-bearing
-                 element (including ContentDialogs/Popups, which don't inherit
-                 from the window root) renders Chinese with YaHei UI. BasedOn
-                 the default style so we only override FontFamily. -->
-            <Style TargetType="TextBlock" BasedOn="{StaticResource DefaultTextBlockStyle}">
-                <Setter Property="FontFamily" Value="{StaticResource TextPrimaryFontFamily}" />
-            </Style>
-            <Style TargetType="Control">
+            <!-- M4.9.5 Phase F3: apply the CJK-aware primary font globally via
+                 an implicit TextBlock style (no BasedOn — WinUI 3's default
+                 TextBlock style key isn't reliably resolvable here, and a
+                 bare style that only sets FontFamily still inherits the
+                 platform defaults for everything else). -->
+            <Style TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="{StaticResource TextPrimaryFontFamily}" />
             </Style>
         </ResourceDictionary>

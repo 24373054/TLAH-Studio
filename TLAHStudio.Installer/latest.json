@@ -1,14 +1,14 @@
 {
-  "version": "4.9.4",
+  "version": "4.9.5",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
-  "sha256": "0c05f5e88fcd869cd3924df8c0e5248851e690d12e1956d2c13fb5512a98d209",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.5.exe",
+  "sha256": "053aa29b31d464c420abbf4260afcfd0d2380a18e4347ca670c8db750c4368b9",
   "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.4: UI overhaul Phase A-C — style token foundation (semantic colors, typography/spacing/corner scales, CJK font); structured block data flow (MarkdownBlockParser); Markdown rendering via CommunityToolkit + TextMate syntax highlighting (VS Code grammars bundled); streaming markdown (stable-prefix memoization); code block with line numbers/fold/copy. Fixes: dark-mode markdown invisible, cursor blinking after response, thinking block disappearing.",
+  "releaseNotes": "4.9.5: UI overhaul Phase D-G. Tool cards: status dots (running blink/done/error) + expandable truncated output. Error card: danger bar + icon + copy/retry. Thinking block: markdown rendering. Slash commands: full system aggregating built-ins + skills + agent tools + MCP tools, with live completion popup (Tab/Enter/Up/Down/Esc). Input: command history (Up/Down), dynamic placeholder. Context gauge: compact warning at >80%. Global CJK font (YaHei UI). Chat bubbles: elevation shadows + hover lift. Day-grouped timeline.",
   "forceUpdate": true,
-  "minSupportedVersion": "4.9.4",
+  "minSupportedVersion": "4.9.5",
   "rolloutPercent": 100,
-  "installerSizeBytes": 97918288
+  "installerSizeBytes": 97930128
 }
