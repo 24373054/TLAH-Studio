@@ -43,6 +43,16 @@
                 Visibility="Collapsed">
                 <Grid x:Name="ContextGaugeGrid" ColumnSpacing="1" />
             </Border>
+            <!-- M4.9.5 Phase F1: compact warning — shown when context > 80%. -->
+            <TextBlock
+                x:Name="CompactWarn"
+                Text="⚠ Context near limit — consider compacting"
+                FontSize="11"
+                FontWeight="SemiBold"
+                Foreground="{ThemeResource DangerBrush}"
+                Margin="0,4,0,0"
+                Visibility="Collapsed"
+                AutomationProperties.Name="Context near limit warning" />
         </StackPanel>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">

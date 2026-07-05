@@ -67,6 +67,7 @@ public sealed partial class ChatHeaderControl : UserControl
         if (usage == null || usage.AvailableTokens <= 0)
         {
             ContextGauge.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            CompactWarn.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
             return;
         }
 
@@ -88,6 +89,11 @@ public sealed partial class ChatHeaderControl : UserControl
         var gaugeColor = used * 100.0 / total > 80 ? CategoryBrush(5)  // red
                        : used * 100.0 / total > 50 ? CategoryBrush(4)  // amber
                        : CategoryBrush(3); // normal (free gray)
+
+        // M4.9.5 Phase F1: show the compact warning when usage crosses 80%.
+        CompactWarn.Visibility = used * 100.0 / total > 80
+            ? Microsoft.UI.Xaml.Visibility.Visible
+            : Microsoft.UI.Xaml.Visibility.Collapsed;
 
         foreach (var (label, tokens, brush) in categories)
         {
