@@ -308,8 +308,20 @@ public sealed partial class ChatPage : UserControl
                 return;
             }
 
+            // M4.9.5 Phase G4: group messages by day. Insert a date separator
+            // before the first message of each new calendar day (and at the top
+            // of a resumed conversation) so the timeline reads naturally.
+            DateTime? lastDay = null;
             foreach (var message in _vm.Messages)
+            {
+                var day = message.CreatedAt.ToLocalTime().Date;
+                if (lastDay == null || day.Date != lastDay.Value.Date)
+                {
+                    elements.Add(BuildDaySeparator(message.CreatedAt, lastDay == null));
+                    lastDay = day;
+                }
                 elements.Add(GetCachedMessageElement(message));
+            }
 
             var signature = string.Join(
                 "|",
@@ -607,6 +619,49 @@ public sealed partial class ChatPage : UserControl
         };
     }
 
+    /// <summary>
+    /// M4.9.5 Phase G4: a centered day-separator label between message groups
+    /// that fall on different calendar days. Shows "Today" / "Yesterday" /
+    /// the locale date; muted, with thin divider rules on either side.
+    /// </summary>
+    private UIElement BuildDaySeparator(DateTime utc, bool isConversationStart)
+    {
+        var local = utc.ToLocalTime();
+        var today = DateTime.Today;
+        var label = local.Date == today ? "Today"
+            : local.Date == today.AddDays(-1) ? "Yesterday"
+            : local.ToString("yyyy-MM-dd");
+
+        // At the very top of a conversation we don't need a top spacer margin.
+        var margin = isConversationStart
+            ? new Thickness(0, 0, 0, 8)
+            : new Thickness(0, 14, 0, 8);
+
+        var row = new Grid { Margin = margin, ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var ruleBrush = (Brush)Application.Current.Resources["BorderSubtleBrush"];
+        var leftRule = new Microsoft.UI.Xaml.Shapes.Rectangle { Height = 1, Fill = ruleBrush, VerticalAlignment = VerticalAlignment.Center };
+        var rightRule = new Microsoft.UI.Xaml.Shapes.Rectangle { Height = 1, Fill = ruleBrush, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(leftRule, 0);
+        Grid.SetColumn(rightRule, 2);
+        var text = new TextBlock
+        {
+            Text = label,
+            FontSize = 11,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["TextMutedBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        Grid.SetColumn(text, 1);
+        row.Children.Add(leftRule);
+        row.Children.Add(text);
+        row.Children.Add(rightRule);
+        return row;
+    }
+
     private UIElement BuildMessage(Message message)
     {
         var isUser = string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase);
@@ -623,7 +678,7 @@ public sealed partial class ChatPage : UserControl
 
         var border = new Border
         {
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = (CornerRadius)Application.Current.Resources["RadiusCard"],
             Padding = IsCompactDensity()
                 ? new Thickness(12, 9, 12, 9)
                 : new Thickness(16, 13, 16, 13),
@@ -631,6 +686,34 @@ public sealed partial class ChatPage : UserControl
             BorderBrush = isUser ? AccentSubtleBrush() : MessageBorderBrush(),
             Background = MessageBrush(message.Role)
         };
+        // M4.9.5 Phase G1: subtle elevation shadow on chat bubbles. ThemeShadow
+        // needs a non-zero Translation Z to cast; 8 gives a soft 2-3px lift.
+        try
+        {
+            border.Shadow = new Microsoft.UI.Xaml.Media.ThemeShadow();
+            border.Translation = new System.Numerics.Vector3(0, 0, 8);
+        }
+        catch { /* ThemeShadow unavailable in some hosting contexts */ }
+
+        // M4.9.5 Phase G3: hover micro-interaction — lift the bubble slightly
+        // and brighten its border on pointer enter, restore on exit. Only
+        // applied to finalized (non-draft) messages to avoid interfering with
+        // streaming reflow.
+        if (!isDraft)
+        {
+            var restBorder = border.BorderBrush;
+            var hoverBorder = isUser ? AccentSubtleBrush() : MessageBorderBrush();
+            border.PointerEntered += (_, _) =>
+            {
+                border.BorderBrush = hoverBorder;
+                border.Translation = new System.Numerics.Vector3(0, -1, 12);
+            };
+            border.PointerExited += (_, _) =>
+            {
+                border.BorderBrush = restBorder;
+                border.Translation = new System.Numerics.Vector3(0, 0, 8);
+            };
+        }
 
         var stack = new StackPanel { Spacing = 7 };
         stack.Children.Add(new TextBlock
