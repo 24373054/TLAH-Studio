@@ -4,11 +4,11 @@
     "platform":  "windows",
     "arch":  "x64",
     "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
-    "sha256":  "63294f8da0a5bd2374749100283380588a8441a2cbe8ba9c1208a064cfb64b9e",
+    "sha256":  "12e716093a65d88a20320a63a708409e0a2aba65112e42fc373b2f8dfddd553f",
     "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "4.9.4 mid2: Phase C redone to spec 鈥?fixed code-block blank rendering (parser rewrite + defensive CodeBlock), streaming markdown (stable-prefix memoization), code block line numbers/fold/copy, markdown theme adaptation.",
+    "releaseNotes":  "4.9.4 mid3: fix dark-mode markdown text invisible (set all MarkdownTextBlock sub-element brushes from theme tokens); fix cursor blinking after response ends in non-agent mode (IsStreamingDraft now gates on IsSending; stop cursor on streaming-only path too).",
     "forceUpdate":  true,
     "minSupportedVersion":  "4.9.4",
     "rolloutPercent":  100,
-    "installerSizeBytes":  97916040
+    "installerSizeBytes":  97913800
 }

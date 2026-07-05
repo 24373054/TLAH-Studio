@@ -41,8 +41,16 @@ internal static class ChatBlockRenderer
     {
         // M4.9.4: CommunityToolkit MarkdownTextBlock renders GFM markdown
         // (headings, lists, links, inline code, bold/italic, blockquotes).
-        // Theme-aware: foreground + background pulled from app tokens so the
-        // block honors Dark/Light themes; user messages render in accent color.
+        // Theme-aware: explicitly set every sub-element brush from app tokens —
+        // CommunityToolkit's defaults are light-theme-oriented and render
+        // invisible (dark text on dark bg) under Dark mode if left unset.
+        var res = Application.Current.Resources;
+        var textPrimary = (Brush)res["TextPrimaryBrush"];
+        var textSecondary = (Brush)res["TextSecondaryBrush"];
+        var accent = (Brush)res["AccentBrush"];
+        var surface = (Brush)res["SurfaceBrush"];
+        var borderSubtle = (Brush)res["BorderSubtleBrush"];
+
         var md = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
         {
             Text = block.Content,
@@ -50,9 +58,35 @@ internal static class ChatBlockRenderer
             Padding = new Thickness(0),
             IsTextSelectionEnabled = true,
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
-            Foreground = (Brush)Application.Current.Resources[
-                isUser ? "AccentBrush" : "TextPrimaryBrush"],
-            FontSize = isCompact ? 13 : 14
+            // Body + headings use the primary text color (honors theme).
+            Foreground = isUser ? accent : textPrimary,
+            FontSize = isCompact ? 13 : 14,
+            // Links: accent in both themes.
+            LinkForeground = accent,
+            // Inline code: subtle surface chip with primary text.
+            InlineCodeBackground = surface,
+            InlineCodeBorderBrush = borderSubtle,
+            InlineCodeForeground = textPrimary,
+            // Fenced code (MarkdownTextBlock's own): same as our CodeBlockControl
+            // palette — surface bg, primary text. (Our parser already extracts
+            // fenced code into CodeBlockControl, but inline ``` inside a single
+            // MarkdownText block still routes here.)
+            CodeBackground = surface,
+            CodeBorderBrush = borderSubtle,
+            CodeForeground = textPrimary,
+            // Blockquotes: secondary text, subtle border.
+            QuoteBackground = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            QuoteBorderBrush = accent,
+            QuoteForeground = textSecondary,
+            // Headings: primary (slightly heavier weight is automatic).
+            Header1Foreground = textPrimary,
+            Header2Foreground = textPrimary,
+            Header3Foreground = textPrimary,
+            Header4Foreground = textPrimary,
+            Header5Foreground = textPrimary,
+            Header6Foreground = textSecondary,
+            HorizontalRuleBrush = borderSubtle,
+            TableBorderBrush = borderSubtle
         };
         return md;
     }

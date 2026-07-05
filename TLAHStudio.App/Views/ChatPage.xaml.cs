@@ -248,6 +248,23 @@ public sealed partial class ChatPage : UserControl
 
         if (isStreamingOnly)
         {
+            // M4.9.4: Even on the streaming-only path, stop cursors for messages
+            // that have finished streaming (IsSending went false). Without this,
+            // the cursor keeps blinking after completion when the collection
+            // didn't change (e.g. non-agent single-message responses).
+            foreach (var message in _vm.Messages)
+            {
+                if (!IsStreamingDraft(message) &&
+                    _messageElementCache.TryGetValue(message.Id, out var cached) &&
+                    cached.Element is FrameworkElement fe &&
+                    fe.Tag is LiveStreamBodyVisuals v &&
+                    v.CursorTimer.IsEnabled)
+                {
+                    v.CursorTimer.Stop();
+                    v.CursorText.Visibility = Visibility.Collapsed;
+                }
+            }
+
             // Only refresh streaming drafts in-place — no layout rebuild.
             foreach (var message in _vm.Messages)
             {
@@ -326,7 +343,13 @@ public sealed partial class ChatPage : UserControl
         return element;
     }
 
-    private static bool IsStreamingDraft(Message message) =>
+    // M4.9.4: A message is a "streaming draft" only while a response is
+    // actively being sent. Previously this checked only TurnId==null, but in
+    // non-agent mode TurnId can stay null after completion — leaving the
+    // blinking cursor running forever. Gate on IsSending so the cursor stops
+    // the moment the send completes regardless of TurnId.
+    private bool IsStreamingDraft(Message message) =>
+        _vm?.IsSending == true &&
         string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase) &&
         message.TurnId == null;
 
