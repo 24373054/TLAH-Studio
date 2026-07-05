@@ -21,19 +21,20 @@ namespace TLAHStudio.App.Views.Controls;
 /// </summary>
 internal static class ChatBlockRenderer
 {
-    public static UIElement? Render(ChatMessageBlock block, bool isUser, bool isCompact)
+    /// <param name="isDark">
+    /// M4.9.4: Whether the hosting window is in Dark theme. The app sets theme
+    /// on the window root (root.RequestedTheme), NOT on Application — so
+    /// Application.Current.RequestedTheme is always Light and can't be used.
+    /// Callers (ChatPage) pass their own ActualTheme-derived value.
+    /// </param>
+    public static UIElement? Render(ChatMessageBlock block, bool isUser, bool isCompact, bool isDark)
     {
-        // M4.9.4: CommunityToolkit MarkdownTextBlock picks its internal color
-        // palette from RequestedTheme; if left unset it can default to Light
-        // and render dark-on-dark under Dark mode. Detect the app theme and
-        // pass it down so the markdown control uses the matching palette.
-        var isDark = Application.Current.RequestedTheme == ApplicationTheme.Dark;
         return block.BlockType switch
         {
             ChatBlockType.MarkdownText => RenderMarkdown(block, isUser, isCompact, isDark),
             ChatBlockType.CodeBlock => RenderCode(block, isCompact),
-            ChatBlockType.Table => RenderTable(block, isCompact),
-            ChatBlockType.Quote => RenderQuote(block, isCompact),
+            ChatBlockType.Table => RenderTable(block, isCompact, isDark),
+            ChatBlockType.Quote => RenderQuote(block, isCompact, isDark),
             // Legacy block types are rendered by ChatPage's existing path;
             // returning null signals "caller handles".
             _ => null
@@ -129,11 +130,15 @@ internal static class ChatBlockRenderer
 
     // ── Table ──────────────────────────────────────────────────────
 
-    private static UIElement RenderTable(ChatMessageBlock block, bool isCompact)
+    private static UIElement RenderTable(ChatMessageBlock block, bool isCompact, bool isDark)
     {
         var meta = block.Metadata as TableMetadata;
         if (meta == null || meta.Headers.Count == 0)
             return new TextBlock { Text = block.Content, TextWrapping = TextWrapping.Wrap };
+
+        var headerBg = Solid(isDark ? 0xFF243348 : 0xFFEEF2F8);
+        var headerFg = Solid(isDark ? 0xFFFFFFFF : 0xFF172033);
+        var bodyFg = Solid(isDark ? 0xFFE0E8F4 : 0xFF56657A);
 
         var grid = new Grid { ColumnSpacing = 8, RowSpacing = 2, Margin = new Thickness(0, 4, 0, 4) };
         for (int i = 0; i < meta.Headers.Count; i++)
@@ -145,7 +150,7 @@ internal static class ChatBlockRenderer
             var cell = new Border
             {
                 Padding = new Thickness(6, 3, 6, 3),
-                Background = (Brush)Application.Current.Resources["SurfaceElevatedBrush"],
+                Background = headerBg,
                 CornerRadius = new CornerRadius(4),
                 Child = new TextBlock
                 {
@@ -153,7 +158,7 @@ internal static class ChatBlockRenderer
                     FontSize = isCompact ? 11 : 12,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"]
+                    Foreground = headerFg
                 }
             };
             Grid.SetRow(cell, 0);
@@ -177,7 +182,7 @@ internal static class ChatBlockRenderer
                         Text = row[c],
                         FontSize = isCompact ? 11 : 12,
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground = (Brush)Application.Current.Resources["TextSecondaryBrush"]
+                        Foreground = bodyFg
                     }
                 };
                 Grid.SetRow(cell, r + 1);
@@ -190,7 +195,7 @@ internal static class ChatBlockRenderer
 
     // ── Quote ──────────────────────────────────────────────────────
 
-    private static UIElement RenderQuote(ChatMessageBlock block, bool isCompact)
+    private static UIElement RenderQuote(ChatMessageBlock block, bool isCompact, bool isDark)
     {
         // Strip leading "> " from each line for display.
         var lines = block.Content.Split('\n')
@@ -198,10 +203,13 @@ internal static class ChatBlockRenderer
             .Where(l => l.Length > 0);
         var text = string.Join('\n', lines);
 
+        var accentSoft = Solid(isDark ? 0x9971A7FF : 0xFFBFD2FF);
+        var secondary = Solid(isDark ? 0xFFE0E8F4 : 0xFF56657A);
+
         return new Border
         {
             BorderThickness = new Thickness(3, 0, 0, 0),
-            BorderBrush = (Brush)Application.Current.Resources["AccentSoftBrush"],
+            BorderBrush = accentSoft,
             Padding = new Thickness(10, 2, 0, 2),
             Margin = new Thickness(0, 4, 0, 4),
             Child = new TextBlock
@@ -210,7 +218,7 @@ internal static class ChatBlockRenderer
                 FontSize = isCompact ? 12 : 13,
                 FontStyle = Windows.UI.Text.FontStyle.Italic,
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = (Brush)Application.Current.Resources["TextSecondaryBrush"]
+                Foreground = secondary
             }
         };
     }

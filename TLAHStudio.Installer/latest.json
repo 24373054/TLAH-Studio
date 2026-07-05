@@ -4,11 +4,11 @@
     "platform":  "windows",
     "arch":  "x64",
     "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
-    "sha256":  "",
+    "sha256":  "558721b597cb68146237f840e931a29a5be30d0706319b988d7db180c5cd2163",
     "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "4.9.4: dark-mode markdown root-cause fix — body RichTextBlock Foreground comes from render context seeded by control Foreground, which was pulled from Application.Current.Resources (resolves against APPLICATION theme not window theme). Now derives colors directly from isDark with concrete ARGB brushes, bypassing the resource theme resolution entirely.",
+    "releaseNotes":  "dark-mode markdown concrete-color fix",
     "forceUpdate":  true,
     "minSupportedVersion":  "4.9.4",
     "rolloutPercent":  100,
-    "installerSizeBytes":  97915656
+    "installerSizeBytes":  97917160
 }

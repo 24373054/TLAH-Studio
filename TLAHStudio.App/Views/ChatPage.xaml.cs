@@ -640,9 +640,10 @@ public sealed partial class ChatPage : UserControl
         if (!isDraft && ContentHasMarkdownStructure(content))
         {
             var panel = new StackPanel { Spacing = 6 };
+            var isDark = ActualTheme == Microsoft.UI.Xaml.ElementTheme.Dark;
             foreach (var block in MarkdownBlockParser.Parse(message.Id, message.Role, content))
             {
-                var el = Controls.ChatBlockRenderer.Render(block, isUser, IsCompactDensity());
+                var el = Controls.ChatBlockRenderer.Render(block, isUser, IsCompactDensity(), isDark);
                 if (el != null) panel.Children.Add(el);
                 else
                 {
@@ -766,9 +767,10 @@ public sealed partial class ChatPage : UserControl
             if (ContentHasMarkdownStructure(answer))
             {
                 var answerPanel = new StackPanel { Spacing = 6 };
+                var isDark = ActualTheme == Microsoft.UI.Xaml.ElementTheme.Dark;
                 foreach (var block in MarkdownBlockParser.Parse(Guid.Empty, "assistant", answer))
                 {
-                    var el = Controls.ChatBlockRenderer.Render(block, isUser, IsCompactDensity());
+                    var el = Controls.ChatBlockRenderer.Render(block, isUser, IsCompactDensity(), isDark);
                     if (el != null) answerPanel.Children.Add(el);
                     else answerPanel.Children.Add(new TextBlock
                     {
@@ -865,7 +867,7 @@ public sealed partial class ChatPage : UserControl
         // Completed blocks snap into rich markdown; the in-flight tail streams
         // as plain text. Replaces the old single plain TextBlock.
         var answerPanel = new StackPanel { Spacing = 6 };
-        var answerRenderer = new Controls.StreamingAnswerRenderer(answerPanel, IsCompactDensity(), isUser: false);
+        var answerRenderer = new Controls.StreamingAnswerRenderer(answerPanel, IsCompactDensity(), isUser: false, isDark: ActualTheme == Microsoft.UI.Xaml.ElementTheme.Dark);
         answerRenderer.Update(answer);
         panel.Children.Add(answerPanel);
 

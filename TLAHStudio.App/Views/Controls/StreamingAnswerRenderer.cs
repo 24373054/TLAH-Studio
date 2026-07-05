@@ -33,6 +33,7 @@ internal sealed class StreamingAnswerRenderer
     private readonly Panel _panel;
     private readonly bool _isCompact;
     private readonly bool _isUser;
+    private readonly bool _isDark;
 
     // Cached stable prefix: the elements in _panel[0.._stableElementCount) are
     // the rendered stable blocks; the element at _stableElementCount is the
@@ -40,11 +41,12 @@ internal sealed class StreamingAnswerRenderer
     private int _stableElementCount;
     private int _stableTextLength;   // length of the stable prefix in source chars
 
-    public StreamingAnswerRenderer(Panel panel, bool isCompact, bool isUser)
+    public StreamingAnswerRenderer(Panel panel, bool isCompact, bool isUser, bool isDark)
     {
         _panel = panel;
         _isCompact = isCompact;
         _isUser = isUser;
+        _isDark = isDark;
     }
 
     /// <summary>Update the rendered content for the current answer text.</summary>
@@ -162,7 +164,7 @@ internal sealed class StreamingAnswerRenderer
         var blocks = MarkdownBlockParser.Parse(Guid.Empty, "assistant", stableText);
         foreach (var block in blocks)
         {
-            var el = ChatBlockRenderer.Render(block, _isUser, _isCompact);
+            var el = ChatBlockRenderer.Render(block, _isUser, _isCompact, _isDark);
             if (el != null)
             {
                 _panel.Children.Add(el);
