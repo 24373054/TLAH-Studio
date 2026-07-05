@@ -15,6 +15,8 @@ using Windows.Media.Core;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
+using TLAHStudio.App.Models;
+using TLAHStudio.App.Views.Controls;
 
 namespace TLAHStudio.App.Views;
 
@@ -598,11 +600,41 @@ public sealed partial class ChatPage : UserControl
                 isDraft);
         }
 
+        // M4.9.4: Rich rendering — if the content has markdown structure
+        // (code fences, tables, headings, lists), split into blocks and render
+        // each with its dedicated control (MarkdownTextBlock / CodeBlockControl
+        // / table / quote). Plain text stays on the fast TextBlock path.
+        var content = string.IsNullOrEmpty(message.Content) && isDraft
+            ? "Waiting for the first token..."
+            : message.Content;
+
+        if (!isDraft && ContentHasMarkdownStructure(content))
+        {
+            var panel = new StackPanel { Spacing = 6 };
+            foreach (var block in MarkdownBlockParser.Parse(message.Id, message.Role, content))
+            {
+                var el = Controls.ChatBlockRenderer.Render(block, isUser, IsCompactDensity());
+                if (el != null) panel.Children.Add(el);
+                else
+                {
+                    // Legacy block types (Text/Thinking/etc.) fall back to a TextBlock.
+                    panel.Children.Add(new TextBlock
+                    {
+                        Text = block.Content,
+                        IsTextSelectionEnabled = true,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = isUser ? AccentTextBrush() : TextPrimaryBrush(),
+                        FontSize = IsCompactDensity() ? 13 : 14,
+                        LineHeight = IsCompactDensity() ? 20 : 22
+                    });
+                }
+            }
+            return panel;
+        }
+
         return new TextBlock
         {
-            Text = string.IsNullOrEmpty(message.Content) && isDraft
-                ? "Waiting for the first token..."
-                : message.Content,
+            Text = content,
             IsTextSelectionEnabled = true,
             TextWrapping = TextWrapping.Wrap,
             Foreground = isUser
@@ -613,6 +645,22 @@ public sealed partial class ChatPage : UserControl
             FontSize = IsCompactDensity() ? 13 : 14,
             LineHeight = IsCompactDensity() ? 20 : 22
         };
+    }
+
+    /// <summary>
+    /// M4.9.4: Cheap structural check mirroring ChatRenderer.ContainsMarkdownStructure.
+    /// Kept local to ChatPage so the render path doesn't depend on ChatRenderer internals.
+    /// </summary>
+    private static bool ContentHasMarkdownStructure(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        return text.Contains("```", StringComparison.Ordinal)
+            || text.Contains("\n>", StringComparison.Ordinal)
+            || text.Contains("\n#", StringComparison.Ordinal)
+            || text.Contains("\n- ", StringComparison.Ordinal)
+            || text.Contains("\n* ", StringComparison.Ordinal)
+            || text.Contains("\n| ", StringComparison.Ordinal)
+            || text.Contains("**", StringComparison.Ordinal);
     }
 
     private UIElement BuildLiveStreamBody(

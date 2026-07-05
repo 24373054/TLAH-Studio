@@ -1,0 +1,61 @@
+<UserControl
+    x:Class="TLAHStudio.App.Views.Controls.CodeBlockControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Border
+        CornerRadius="{ThemeResource RadiusCard}"
+        BorderThickness="1"
+        BorderBrush="{ThemeResource BorderSubtleBrush}"
+        Background="{ThemeResource SurfaceBrush}"
+        Padding="0">
+        <StackPanel>
+            <!-- Header: language tag + copy button + fold -->
+            <Grid Padding="10,5,10,5" Background="{ThemeResource SurfaceElevatedBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border
+                    Grid.Column="0"
+                    CornerRadius="{ThemeResource RadiusTag}"
+                    Padding="6,2,6,2"
+                    Background="{ThemeResource AccentSoftBrush}">
+                    <TextBlock
+                        x:Name="LanguageTag"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource AccentBrush}" />
+                </Border>
+                <Button
+                    x:Name="CopyButton"
+                    Grid.Column="2"
+                    Click="CopyButton_Click"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="6,2,6,2"
+                    ToolTipService.ToolTip="Copy code">
+                    <SymbolIcon Symbol="Copy" />
+                </Button>
+            </Grid>
+            <!-- Code body (monospace, TextMate-highlighted) -->
+            <ScrollViewer
+                x:Name="CodeScroll"
+                HorizontalScrollBarVisibility="Auto"
+                VerticalScrollBarVisibility="Disabled"
+                Padding="10,8,10,8">
+                <RichTextBlock
+                    x:Name="CodeText"
+                    FontFamily="{ThemeResource MonoFontFamily}"
+                    FontSize="12.5"
+                    LineHeight="18"
+                    IsTextSelectionEnabled="True"
+                    TextWrapping="NoWrap" />
+            </ScrollViewer>
+        </StackPanel>
+    </Border>
+</UserControl>
