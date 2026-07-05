@@ -113,7 +113,17 @@ public class ChatRenderer
         {
             case "user":
             case "system":
-                blocks.Add(ChatMessageBlock.TextBlock(message.Id, message.Role, message.Content, blocks.Count));
+                // M4.9.4: user/system text also goes through the markdown splitter
+                // so inline code / lists / links render consistently.
+                if (ContainsMarkdownStructure(message.Content))
+                {
+                    foreach (var b in MarkdownBlockParser.Parse(message.Id, message.Role, message.Content))
+                        blocks.Add(b);
+                }
+                else
+                {
+                    blocks.Add(ChatMessageBlock.MarkdownTextBlock(message.Id, message.Role, message.Content, blocks.Count));
+                }
                 break;
 
             case "assistant":
@@ -142,8 +152,21 @@ public class ChatRenderer
 
             if (!string.IsNullOrWhiteSpace(answerText))
             {
-                blocks.Add(ChatMessageBlock.TextBlock(
-                    message.Id, "assistant", answerText, blocks.Count));
+                // M4.9.4: Split the answer into structured blocks (MarkdownText,
+                // CodeBlock, Table, Quote) instead of a single TextBlock. Phase B
+                // produces the structure; Phase C renders each with a dedicated
+                // template. Short single-line answers still render as one
+                // MarkdownText block (the common case stays cheap).
+                if (ContainsMarkdownStructure(answerText))
+                {
+                    foreach (var b in MarkdownBlockParser.Parse(message.Id, "assistant", answerText))
+                        blocks.Add(b);
+                }
+                else
+                {
+                    blocks.Add(ChatMessageBlock.MarkdownTextBlock(
+                        message.Id, "assistant", answerText, blocks.Count));
+                }
             }
         }
         else
@@ -156,7 +179,7 @@ public class ChatRenderer
             }
             else
             {
-                blocks.Add(ChatMessageBlock.TextBlock(
+                blocks.Add(ChatMessageBlock.MarkdownTextBlock(
                     message.Id, "assistant", message.Content, blocks.Count));
             }
         }
@@ -206,5 +229,24 @@ public class ChatRenderer
             Content = $"Approve tool: {toolName}",
             Metadata = effect
         };
+    }
+
+    /// <summary>
+    /// M4.9.4: Cheap check for whether a string has markdown structure worth
+    /// splitting (code fence, table, blockquote, heading, list, bold/italic,
+    /// inline code). Plain single-line answers skip the splitter entirely.
+    /// </summary>
+    private static bool ContainsMarkdownStructure(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return false;
+        // Fenced code, blockquote, heading, table separator, list marker, bold.
+        return text.Contains("```", StringComparison.Ordinal)
+            || text.Contains("\n>", StringComparison.Ordinal)
+            || text.Contains("\n#", StringComparison.Ordinal)
+            || text.Contains("\n- ", StringComparison.Ordinal)
+            || text.Contains("\n* ", StringComparison.Ordinal)
+            || text.Contains("\n| ", StringComparison.Ordinal)
+            || text.Contains("**", StringComparison.Ordinal)
+            || text.Contains('`');
     }
 }

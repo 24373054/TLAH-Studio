@@ -5,6 +5,7 @@ namespace TLAHStudio.App.Models;
 /// <summary>
 /// M2.8.0: Typed content blocks for chat messages.
 /// Replaces the monolithic message string with structured, independently renderable blocks.
+/// M4.9.4: Added MarkdownText/CodeBlock/Table/Quote for rich rendering (Phase B/C).
 /// </summary>
 public enum ChatBlockType
 {
@@ -16,7 +17,12 @@ public enum ChatBlockType
     ImageAttachment,
     Error,
     ApprovalNeeded,
-    SystemNotice
+    SystemNotice,
+    // M4.9.4: rich content blocks produced by Markdown parsing.
+    MarkdownText,
+    CodeBlock,
+    Table,
+    Quote
 }
 
 public partial class ChatMessageBlock : ObservableObject
@@ -125,6 +131,52 @@ public partial class ChatMessageBlock : ObservableObject
         Metadata = new { fileName, sizeBytes, sha256 = hash ?? "" },
         BlockIndex = index
     };
+
+    // ── M4.9.4: Rich content block factories ──────────────────────
+
+    public static ChatMessageBlock MarkdownTextBlock(Guid messageId, string role, string markdown, int index) => new()
+    {
+        Id = Guid.NewGuid(),
+        BlockType = ChatBlockType.MarkdownText,
+        Role = role,
+        MessageId = messageId,
+        Content = markdown,
+        BlockIndex = index
+    };
+
+    public static ChatMessageBlock CodeBlockItem(Guid messageId, string role, string language, string code, int index) => new()
+    {
+        Id = Guid.NewGuid(),
+        BlockType = ChatBlockType.CodeBlock,
+        Role = role,
+        MessageId = messageId,
+        Content = code,
+        Metadata = new CodeBlockMetadata(
+            string.IsNullOrWhiteSpace(language) ? "text" : language,
+            code),
+        BlockIndex = index
+    };
+
+    public static ChatMessageBlock TableBlock(Guid messageId, string role, IReadOnlyList<string> headers, IReadOnlyList<IReadOnlyList<string>> rows, int index) => new()
+    {
+        Id = Guid.NewGuid(),
+        BlockType = ChatBlockType.Table,
+        Role = role,
+        MessageId = messageId,
+        Content = string.Join(" | ", headers),
+        Metadata = new TableMetadata(headers, rows),
+        BlockIndex = index
+    };
+
+    public static ChatMessageBlock QuoteBlock(Guid messageId, string role, string quote, int index) => new()
+    {
+        Id = Guid.NewGuid(),
+        BlockType = ChatBlockType.Quote,
+        Role = role,
+        MessageId = messageId,
+        Content = quote,
+        BlockIndex = index
+    };
 }
 
 /// <summary>
@@ -139,3 +191,21 @@ public sealed record ToolEffectPreview(
     string ToolName,
     string SafetyLevel,
     string SafetySummary);
+
+// ── M4.9.4: Structured metadata for rich content blocks ──────────
+
+/// <summary>Metadata for a CodeBlock — language tag + raw code.</summary>
+public sealed record CodeBlockMetadata(string Language, string Code);
+
+/// <summary>Metadata for a Markdown table — header row + body rows.</summary>
+public sealed record TableMetadata(IReadOnlyList<string> Headers, IReadOnlyList<IReadOnlyList<string>> Rows);
+
+/// <summary>Metadata for a tool-use block — structured params + state.</summary>
+public sealed record ToolUseMetadata(
+    string ToolName,
+    string Status,           // pending | running | done | error | cancelled
+    string? PrimaryPath,
+    IReadOnlyList<KeyValuePair<string, string>>? Params,
+    string? Preview,
+    string? RenderHint,
+    TimeSpan? Elapsed);
