@@ -17,6 +17,20 @@ public sealed partial class MessageInputControl : UserControl
     private bool _loaded;
     private bool _suppressSound;
 
+    // M4.9.5 Phase E1: command history stack + navigation index.
+    // _historyIndex == -1 means "not navigating history" (current draft).
+    private readonly List<string> _history = new();
+    private int _historyIndex = -1;
+    private string _draftBeforeHistory = string.Empty;
+    private const int MaxHistoryEntries = 100;
+
+    // M4.9.5 Phase E2: slash command completion. _allCommands is the cached
+    // full list (refreshed lazily); _slashToken is the /-prefix being typed.
+    private IReadOnlyList<SlashCommand>? _allCommands;
+    private bool _commandsLoading;
+    private DateTime _commandsLoadedAt;
+    private const double CommandsCacheSeconds = 30;
+
     public MessageInputControl()
     {
         App.Log("MessageInputControl ctor entered.");
@@ -49,6 +63,7 @@ public sealed partial class MessageInputControl : UserControl
             UpdateSendingState();
             UpdateAgentModeVisualState();
             UpdatePermissionModeButton();
+            UpdatePlaceholder();
         }
     }
 
@@ -81,17 +96,167 @@ public sealed partial class MessageInputControl : UserControl
             : new Thickness(14, 10, 14, 10);
     }
 
-    private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e) => HandleEnterKey(e);
+    private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        // M4.9.5 Phase E2: when the slash popup is open, intercept navigation
+        // keys (Tab/Enter accept, Up/Down move selection, Esc dismiss).
+        if (SlashPopup.IsOpen && HandleSlashPopupKeys(e))
+            return;
+        // M4.9.5 Phase E1: Up/Down arrow navigates command history when the
+        // caret is on the first/last line of a multi-line input (so plain
+        // arrow movement still works mid-text).
+        if (HandleHistoryNavigation(e))
+            return;
+        HandleEnterKey(e);
+    }
+
+    private bool HandleSlashPopupKeys(KeyRoutedEventArgs e)
+    {
+        if (e.Handled) return false;
+        var key = e.Key;
+        if (key == Windows.System.VirtualKey.Escape)
+        {
+            HideSlashPopup();
+            e.Handled = true;
+            return true;
+        }
+        if (key is Windows.System.VirtualKey.Tab or Windows.System.VirtualKey.Enter)
+        {
+            if (SlashList.SelectedItem is SlashCommand cmd)
+                AcceptSlashCommand(cmd);
+            else
+                HideSlashPopup();
+            e.Handled = true;
+            return true;
+        }
+        if (key == Windows.System.VirtualKey.Up)
+        {
+            MoveSlashSelection(-1);
+            e.Handled = true;
+            return true;
+        }
+        if (key == Windows.System.VirtualKey.Down)
+        {
+            MoveSlashSelection(1);
+            e.Handled = true;
+            return true;
+        }
+        return false;
+    }
+
+    private void MoveSlashSelection(int delta)
+    {
+        var n = SlashList.Items.Count;
+        if (n == 0) return;
+        var cur = SlashList.SelectedIndex;
+        var next = cur < 0 ? (delta > 0 ? 0 : n - 1) : (cur + delta + n) % n;
+        SlashList.SelectedIndex = next;
+        if (SlashList.SelectedItem != null)
+            SlashList.ScrollIntoView(SlashList.SelectedItem);
+    }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e) => HandleEnterKey(e);
 
     private void OnTextChanged(object sender, TextChangedEventArgs e)
     {
-        var len = InputBox.Text?.Length ?? 0;
+        var text = InputBox.Text ?? string.Empty;
+        var len = text.Length;
         CharCounter.Text = $"{len} chars";
         CharCounter.Visibility = len > 0
             ? Microsoft.UI.Xaml.Visibility.Visible
             : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+        // M4.9.5 Phase E2: surface slash completion when the first non-space
+        // token starts with '/' and no whitespace follows the command name yet.
+        UpdateSlashCompletion(text);
+    }
+
+    /// <summary>
+    /// M4.9.5 Phase E2: show/hide the slash command popup based on the current
+    /// input. Shown only when the caret is still typing the command token
+    /// (text starts with / and has no space yet). Filters the cached command
+    /// list by prefix.
+    /// </summary>
+    private async void UpdateSlashCompletion(string text)
+    {
+        var trimmed = text.TrimStart();
+        bool showSlash = trimmed.StartsWith('/') && trimmed.Length > 1
+            && !trimmed.Contains(' ') && !trimmed.Contains('\n');
+        if (!showSlash)
+        {
+            HideSlashPopup();
+            return;
+        }
+        var token = trimmed[1..].ToLowerInvariant();
+        var commands = await EnsureCommandsAsync();
+        var filtered = commands.Where(c => c.Name.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+                               .Take(40)
+                               .ToList();
+        if (filtered.Count == 0)
+        {
+            HideSlashPopup();
+            return;
+        }
+        SlashList.ItemsSource = filtered;
+        SlashList.SelectedIndex = 0;
+        SlashList.ScrollIntoView(filtered[0]);
+        if (!SlashPopup.IsOpen)
+            SlashPopup.IsOpen = true;
+    }
+
+    private async Task<IReadOnlyList<SlashCommand>> EnsureCommandsAsync()
+    {
+        if (_vm == null) return Array.Empty<SlashCommand>();
+        var now = DateTime.UtcNow;
+        if (_allCommands != null && (now - _commandsLoadedAt).TotalSeconds < CommandsCacheSeconds)
+            return _allCommands;
+        if (_commandsLoading)
+            return _allCommands ?? Array.Empty<SlashCommand>();
+        _commandsLoading = true;
+        try
+        {
+            _allCommands = await _vm.GetSlashCommandsAsync();
+            _commandsLoadedAt = now;
+        }
+        catch
+        {
+            _allCommands = Array.Empty<SlashCommand>();
+        }
+        finally { _commandsLoading = false; }
+        return _allCommands;
+    }
+
+    private void HideSlashPopup()
+    {
+        if (SlashPopup.IsOpen)
+            SlashPopup.IsOpen = false;
+    }
+
+    private void SlashList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is SlashCommand cmd)
+            AcceptSlashCommand(cmd);
+    }
+
+    /// <summary>Replace the /-token in the input with the accepted command,
+    /// keep the caret after it so the user can type arguments, then close.</summary>
+    private void AcceptSlashCommand(SlashCommand cmd)
+    {
+        var text = InputBox.Text ?? string.Empty;
+        // Find the leading '/' (skip leading whitespace).
+        int slashIdx = -1;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '/') { slashIdx = i; break; }
+            if (!char.IsWhiteSpace(text[i])) { slashIdx = -1; break; }
+        }
+        if (slashIdx >= 0)
+        {
+            var prefix = text[..slashIdx];
+            InputBox.Text = $"{prefix}/{cmd.Name} ";
+            InputBox.Select(InputBox.Text.Length, 0);
+        }
+        HideSlashPopup();
     }
 
     private void HandleEnterKey(KeyRoutedEventArgs e)
@@ -106,6 +271,90 @@ public sealed partial class MessageInputControl : UserControl
 
         e.Handled = true;
         Send();
+    }
+
+    /// <summary>
+    /// M4.9.5 Phase E1: Up/Down navigates the sent-command history. Up (when
+    /// caret on line 1) walks back; Down (when caret on last line) walks
+    /// forward; reaching the end restores the in-progress draft. Returns true
+    /// if the key was consumed.
+    /// </summary>
+    private bool HandleHistoryNavigation(KeyRoutedEventArgs e)
+    {
+        if (e.Handled)
+            return false;
+        var ctrl = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+        bool up = e.Key == Windows.System.VirtualKey.Up;
+        bool down = e.Key == Windows.System.VirtualKey.Down;
+        if (!up && !down)
+            return false;
+
+        // Require Ctrl+Arrow for history nav inside multi-line so plain arrows
+        // move the caret; single-line input is always history-nav (caret can't
+        // move up/down anyway).
+        bool multiline = InputBox.Text?.Contains('\n') == true;
+        if (multiline && !ctrl)
+            return false;
+
+        if (_history.Count == 0)
+            return false;
+
+        if (up)
+        {
+            if (_historyIndex == -1)
+            {
+                _draftBeforeHistory = InputBox.Text ?? string.Empty;
+                _historyIndex = _history.Count - 1;
+            }
+            else if (_historyIndex > 0)
+            {
+                _historyIndex--;
+            }
+            else
+            {
+                return false; // already at oldest
+            }
+            InputBox.Text = _history[_historyIndex];
+            InputBox.Select(InputBox.Text.Length, 0);
+            e.Handled = true;
+            return true;
+        }
+        else // down
+        {
+            if (_historyIndex == -1)
+                return false; // not navigating
+            if (_historyIndex < _history.Count - 1)
+            {
+                _historyIndex++;
+                InputBox.Text = _history[_historyIndex];
+            }
+            else
+            {
+                // past the newest → restore draft
+                _historyIndex = -1;
+                InputBox.Text = _draftBeforeHistory;
+            }
+            InputBox.Select(InputBox.Text.Length, 0);
+            e.Handled = true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// M4.9.5 Phase E4: dynamic placeholder reflects the current workspace /
+    /// agent mode so the user always knows what context a send will hit.
+    /// </summary>
+    private void UpdatePlaceholder()
+    {
+        if (_vm == null) return;
+        var mode = _vm.IsAgentModeEnabled ? "agent" : "chat";
+        var ws = string.IsNullOrWhiteSpace(_vm.WorkspacePath) ? null
+            : System.IO.Path.GetFileName(_vm.WorkspacePath.TrimEnd('\\', '/'));
+        InputBox.PlaceholderText = ws == null
+            ? $"Type a message ({mode})… (Shift+Enter newline · ↑/↓ history)"
+            : $"Message {mode} @ {ws}… (Shift+Enter newline · ↑/↓ history)";
     }
 
     private void Send_Click(object s, RoutedEventArgs e) => Send();
@@ -228,8 +477,22 @@ public sealed partial class MessageInputControl : UserControl
         if (string.IsNullOrWhiteSpace(InputBox.Text) || _vm == null)
             return;
 
-        _vm.InputText = InputBox.Text;
+        var sentText = InputBox.Text;
+        _vm.InputText = sentText;
         InputBox.Text = string.Empty;
+
+        // M4.9.5 Phase E1: record non-empty sent text in history. Skip if the
+        // latest entry is identical (avoids streaks of duplicates).
+        var trimmed = sentText.TrimEnd();
+        if (trimmed.Length > 0 && (_history.Count == 0 || _history[^1] != trimmed))
+        {
+            _history.Add(trimmed);
+            if (_history.Count > MaxHistoryEntries)
+                _history.RemoveAt(0);
+        }
+        _historyIndex = -1;
+        _draftBeforeHistory = string.Empty;
+
         UpdateSendingState();
         Play(InteractionSound.Send);
         try
@@ -271,6 +534,7 @@ public sealed partial class MessageInputControl : UserControl
             DispatcherQueue.TryEnqueue(() =>
             {
                 UpdateAgentModeVisualState();
+                UpdatePlaceholder();
             });
         if (e.PropertyName == nameof(ChatPageViewModel.SelectedRole))
             DispatcherQueue.TryEnqueue(UpdateRoleButton);
@@ -280,7 +544,10 @@ public sealed partial class MessageInputControl : UserControl
             or nameof(ChatPageViewModel.WorkspacePath)
             or nameof(ChatPageViewModel.IsWorkspaceConfigured)
             or nameof(ChatPageViewModel.WorkspaceToolTip))
+        {
             DispatcherQueue.TryEnqueue(UpdateWorkspaceButton);
+            DispatcherQueue.TryEnqueue(UpdatePlaceholder);
+        }
     }
 
     private void UpdateSendingState()

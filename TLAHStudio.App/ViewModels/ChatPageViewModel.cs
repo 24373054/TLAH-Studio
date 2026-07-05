@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TLAHStudio.Core.Llm;
@@ -126,17 +127,40 @@ public partial class ChatPageViewModel : ObservableObject
         ILlmService llmService,
         ISettingsService settingsService,
         IAppStateService appState,
-        IWorkspaceRootService workspaceRootService)
+        IWorkspaceRootService workspaceRootService,
+        IServiceProvider services)
     {
         _chatService = chatService;
         _llmService = llmService;
         _settingsService = settingsService;
         _appState = appState;
         _workspaceRootService = workspaceRootService;
+        _services = services;
 
         // React to chat selection changes from AppStateService
         _appState.ChatSelected += OnChatSelected;
         _appState.ChatDeselected += OnChatDeselected;
+    }
+
+    private readonly IServiceProvider _services;
+
+    /// <summary>
+    /// M4.9.5 Phase E2: aggregate slash commands for the input-box completion UI.
+    /// Resolves ISlashCommandProvider lazily (scoped) to avoid captive-dependency
+    /// on the singleton VM.
+    /// </summary>
+    public async Task<IReadOnlyList<SlashCommand>> GetSlashCommandsAsync(System.Threading.CancellationToken ct = default)
+    {
+        var chatId = _appState.CurrentChatId ?? Guid.Empty;
+        try
+        {
+            var provider = _services.GetRequiredService<ISlashCommandProvider>();
+            return await provider.GetCommandsAsync(chatId, ct);
+        }
+        catch
+        {
+            return Array.Empty<SlashCommand>();
+        }
     }
 
     partial void OnIsAgentActivityPanelOpenChanged(bool value)
@@ -217,6 +241,15 @@ public partial class ChatPageViewModel : ObservableObject
 
         if (_appState.CurrentChatId == null)
             return;
+
+        // M4.9.5 Phase E2: intercept slash commands before sending to the LLM.
+        // Built-in commands execute locally; skill/tool/mcp commands dispatch
+        // as agent invocations. Returns true if consumed (no LLM send).
+        if (TryHandleSlashCommand(InputText.TrimStart()))
+        {
+            InputText = string.Empty;
+            return;
+        }
 
         var content = InputText;
         var role = SelectedRole == "system" ? "system" : null;
@@ -305,6 +338,115 @@ public partial class ChatPageViewModel : ObservableObject
         _sendCts?.Cancel();
         if (CurrentAgentRunId is { } runId)
             _ = _llmService.CancelAgentRunAsync(runId);
+    }
+
+    /// <summary>
+    /// M4.9.5 Phase E2: raised when a slash command requests UI navigation that
+    /// the VM can't perform itself (e.g. /new, /settings). MainWindow subscribes.
+    /// </summary>
+    public event EventHandler<string>? SlashCommandNavigationRequested;
+
+    /// <summary>
+    /// M4.9.5 Phase E2: dispatch a slash command. Returns true if the input was
+    /// consumed (no LLM send). Built-in commands run locally; skill/tool/mcp
+    /// commands are rewritten to a natural-language agent instruction and sent
+    /// through the normal agent path (so the model invokes the skill/tool).
+    /// </summary>
+    private bool TryHandleSlashCommand(string trimmed)
+    {
+        if (trimmed.Length == 0 || trimmed[0] != '/')
+            return false;
+
+        // Split "/name args..." → name + rest.
+        var space = trimmed.IndexOf(' ');
+        var rawName = (space < 0 ? trimmed[1..] : trimmed[1..space]).TrimEnd(':');
+        var rest = space < 0 ? string.Empty : trimmed[(space + 1)..].Trim();
+        if (rawName.Length == 0)
+            return false;
+        var name = rawName.ToLowerInvariant();
+
+        switch (name)
+        {
+            case "clear":
+                Messages.Clear();
+                ErrorMessage = null;
+                return true;
+            case "new":
+                SlashCommandNavigationRequested?.Invoke(this, "new");
+                return true;
+            case "settings":
+                SlashCommandNavigationRequested?.Invoke(this, "settings");
+                return true;
+            case "stop":
+                StopSending();
+                return true;
+            case "regenerate":
+                var lastAssistant = Messages.LastOrDefault(m =>
+                    string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase));
+                if (lastAssistant != null)
+                    _ = RegenerateMessageAsync(lastAssistant);
+                return true;
+            case "agent":
+                if (string.IsNullOrWhiteSpace(rest))
+                    IsAgentModeEnabled = !IsAgentModeEnabled;
+                else
+                    IsAgentModeEnabled = rest.Equals("on", StringComparison.OrdinalIgnoreCase) ||
+                                         rest.Equals("true", StringComparison.OrdinalIgnoreCase);
+                return true;
+            case "help":
+                AddSystemNotice("Slash commands: /clear /new /agent [on|off] /stop /regenerate /settings /help — plus any skill name (e.g. /code-review) or tool name (e.g. /file_read).");
+                return true;
+        }
+
+        // Non-built-in: resolve against the slash command provider. If it's a
+        // known skill/tool/mcp, rewrite to an agent instruction and send.
+        var cmd = ResolveSlashCommandAsync(name).GetAwaiter().GetResult();
+        if (cmd == null)
+            return false;
+
+        // Force agent mode on (skills/tools require the agent runtime).
+        if (!IsAgentModeEnabled)
+            IsAgentModeEnabled = true;
+
+        var instruction = cmd.Kind switch
+        {
+            SlashCommandKind.Skill => $"Use the `{cmd.Name}` skill{(string.IsNullOrWhiteSpace(rest) ? "" : $" with: {rest}")}.",
+            SlashCommandKind.Tool => $"Call the `{cmd.Name}` tool{(string.IsNullOrWhiteSpace(rest) ? "" : $" with: {rest}")}.",
+            SlashCommandKind.Mcp => $"Call the MCP tool `{cmd.Name}`{(string.IsNullOrWhiteSpace(rest) ? "" : $" with: {rest}")}.",
+            _ => null
+        };
+        if (instruction == null)
+            return false;
+
+        // Send the rewritten instruction through the normal path by setting
+        // InputText and recursing once (without the slash prefix).
+        InputText = instruction;
+        _ = SendMessageAsync();
+        return true;
+    }
+
+    private async Task<SlashCommand?> ResolveSlashCommandAsync(string name)
+    {
+        try
+        {
+            var chatId = _appState.CurrentChatId ?? Guid.Empty;
+            var provider = _services.GetRequiredService<ISlashCommandProvider>();
+            var cmds = await provider.GetCommandsAsync(chatId);
+            return cmds.FirstOrDefault(c =>
+                string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+        catch { return null; }
+    }
+
+    private void AddSystemNotice(string text)
+    {
+        Messages.Add(new Message
+        {
+            Id = Guid.NewGuid(),
+            Role = "system",
+            Content = text,
+            CreatedAt = DateTime.UtcNow
+        });
     }
 
     [RelayCommand]

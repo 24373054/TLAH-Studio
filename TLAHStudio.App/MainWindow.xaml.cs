@@ -87,6 +87,8 @@ public sealed partial class MainWindow : Window
                 DispatcherQueue.TryEnqueue(UpdateAgentActivityPanelLayout);
         };
         ChatVM.AgentApprovalRequested += OnAgentApprovalRequested;
+        // M4.9.5 Phase E2: handle /new and /settings slash commands.
+        ChatVM.SlashCommandNavigationRequested += OnSlashCommandNavigation;
         DebugVM.TurnReplayed += async (_, turnId) =>
         {
             if (ChatVM.CurrentChat != null)
@@ -115,6 +117,40 @@ public sealed partial class MainWindow : Window
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnGlobalKeyDown), true);
         Activated += OnFirst;
         UpdateAgentActivityPanelLayout();
+    }
+
+    /// <summary>
+    /// M4.9.5 Phase E2: handle /new and /settings slash commands from the VM.
+    /// /new creates a chat via the sidebar VM; /settings opens the settings
+    /// dialog (same path as the header settings button).
+    /// </summary>
+    private async void OnSlashCommandNavigation(object? sender, string target)
+    {
+        try
+        {
+            if (target == "new")
+            {
+                await SidebarVM.CreateChatAsync();
+                SoundService.Play(InteractionSound.Navigate);
+            }
+            else if (target == "settings")
+            {
+                SoundService.Play(InteractionSound.Navigate);
+                await SettingsVM.LoadAsync();
+                var dlg = new SettingsContentDialog
+                {
+                    DataContext = SettingsVM,
+                    RequestedTheme = Content is FrameworkElement root
+                        ? root.ActualTheme : Microsoft.UI.Xaml.ElementTheme.Default,
+                    XamlRoot = RootGrid.XamlRoot
+                };
+                await TryShowDialogAsync(dlg);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"Slash navigation ({target}) failed: {ex}");
+        }
     }
 
     private async void OnAgentApprovalRequested(object? sender, AgentApprovalRequest request)

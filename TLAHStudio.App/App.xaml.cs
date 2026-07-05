@@ -146,6 +146,7 @@ public partial class App : Application
             services.AddScoped<IAgentTool, CodeDiagnosticsAgentTool>();
             services.AddScoped<IAgentTool, CodeSymbolsAgentTool>();
             services.AddScoped<IAgentToolRegistry, AgentToolRegistry>();
+            services.AddScoped<ISlashCommandProvider, SlashCommandService>();
             services.AddScoped<IToolHookRegistry>(_ =>
             {
                 var registry = new ToolHookRegistry();

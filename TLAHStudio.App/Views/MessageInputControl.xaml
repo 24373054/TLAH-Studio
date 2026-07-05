@@ -219,5 +219,68 @@
                 <SymbolIcon Symbol="Stop" />
             </Button>
         </Grid>
+
+        <!-- M4.9.5 Phase E2: slash command completion popup.
+             WinUI Popup positions via offsets; we anchor it at the input box's
+             top-left and lift it above the input. Filtered live as the user
+             types a /-prefixed token; Tab/Enter/Up/Down/Esc in code-behind. -->
+        <Popup
+            x:Name="SlashPopup"
+            Grid.Column="4"
+            IsLightDismissEnabled="True"
+            ShouldConstrainToRootBounds="False"
+            VerticalOffset="-290"
+            HorizontalOffset="0">
+            <Border
+                CornerRadius="8"
+                BorderThickness="1"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Padding="0"
+                MinWidth="360"
+                MaxWidth="560">
+                <ListView
+                    x:Name="SlashList"
+                    MaxHeight="280"
+                    IsItemClickEnabled="True"
+                    SelectionMode="Single"
+                    CanReorderItems="False"
+                    Padding="0"
+                    ItemClick="SlashList_ItemClick">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Padding="12,7,12,7" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border
+                                    Grid.Column="0"
+                                    CornerRadius="3"
+                                    Padding="5,1,5,1"
+                                    VerticalAlignment="Center"
+                                    Background="{ThemeResource AccentSoftBrush}">
+                                    <TextBlock
+                                        Text="{Binding SourceLabel}"
+                                        FontSize="10"
+                                        Foreground="{ThemeResource AccentBrush}" />
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="1">
+                                    <TextBlock FontFamily="{ThemeResource MonoFontFamily}" FontSize="13">
+                                        <Run Text="/" /><Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                        <Run Text="{Binding ArgumentHint}" Foreground="{ThemeResource TextMutedBrush}" />
+                                    </TextBlock>
+                                    <TextBlock
+                                        Text="{Binding Description}"
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextSecondaryBrush}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
+        </Popup>
     </Grid>
 </UserControl>
