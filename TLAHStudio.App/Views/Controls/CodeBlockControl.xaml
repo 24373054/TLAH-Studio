@@ -4,7 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    HorizontalContentAlignment="Stretch">
 
     <Border
         CornerRadius="{ThemeResource RadiusCard}"
@@ -13,15 +14,27 @@
         Background="{ThemeResource SurfaceBrush}"
         Padding="0">
         <StackPanel>
-            <!-- Header: language tag + copy button + fold -->
+            <!-- Header: fold chevron + language tag + line count + copy -->
             <Grid Padding="10,5,10,5" Background="{ThemeResource SurfaceElevatedBrush}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Border
+                <Button
+                    x:Name="FoldButton"
                     Grid.Column="0"
+                    Click="FoldButton_Click"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="4,2,4,2"
+                    ToolTipService.ToolTip="Collapse / expand">
+                    <FontIcon x:Name="FoldIcon" Glyph="&#xE70D;" FontFamily="Segoe Fluent Icons" />
+                </Button>
+                <Border
+                    Grid.Column="1"
                     CornerRadius="{ThemeResource RadiusTag}"
                     Padding="6,2,6,2"
                     Background="{ThemeResource AccentSoftBrush}">
@@ -31,9 +44,15 @@
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource AccentBrush}" />
                 </Border>
+                <TextBlock
+                    x:Name="LineCountTag"
+                    Grid.Column="3"
+                    FontSize="10"
+                    Foreground="{ThemeResource TextMutedBrush}"
+                    VerticalAlignment="Center" />
                 <Button
                     x:Name="CopyButton"
-                    Grid.Column="2"
+                    Grid.Column="4"
                     Click="CopyButton_Click"
                     Background="Transparent"
                     BorderThickness="0"
@@ -42,19 +61,40 @@
                     <SymbolIcon Symbol="Copy" />
                 </Button>
             </Grid>
-            <!-- Code body (monospace, TextMate-highlighted) -->
+            <!-- Code body: line-number gutter + highlighted code, horizontal scroll -->
             <ScrollViewer
                 x:Name="CodeScroll"
                 HorizontalScrollBarVisibility="Auto"
-                VerticalScrollBarVisibility="Disabled"
+                VerticalScrollBarVisibility="Auto"
+                HorizontalScrollMode="Enabled"
+                VerticalScrollMode="Auto"
                 Padding="10,8,10,8">
-                <RichTextBlock
-                    x:Name="CodeText"
-                    FontFamily="{ThemeResource MonoFontFamily}"
-                    FontSize="12.5"
-                    LineHeight="18"
-                    IsTextSelectionEnabled="True"
-                    TextWrapping="NoWrap" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        x:Name="LineNumberGutter"
+                        Grid.Column="0"
+                        Margin="0,0,10,0"
+                        FontFamily="{ThemeResource MonoFontFamily}"
+                        FontSize="12.5"
+                        LineHeight="18"
+                        Foreground="{ThemeResource TextMutedBrush}"
+                        TextAlignment="Right"
+                        TextWrapping="NoWrap"
+                        IsTextSelectionEnabled="False" />
+                    <RichTextBlock
+                        x:Name="CodeText"
+                        Grid.Column="1"
+                        FontFamily="{ThemeResource MonoFontFamily}"
+                        FontSize="12.5"
+                        LineHeight="18"
+                        IsTextSelectionEnabled="True"
+                        TextWrapping="NoWrap"
+                        HorizontalAlignment="Left" />
+                </Grid>
             </ScrollViewer>
         </StackPanel>
     </Border>

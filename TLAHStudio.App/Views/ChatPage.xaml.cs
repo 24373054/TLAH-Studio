@@ -723,17 +723,14 @@ public sealed partial class ChatPage : UserControl
         };
         panel.Children.Add(thinkingBox);
 
-        var answerText = new TextBlock
-        {
-            Text = answer,
-            IsTextSelectionEnabled = true,
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = TextPrimaryBrush(),
-            FontSize = IsCompactDensity() ? 13 : 14,
-            LineHeight = IsCompactDensity() ? 20 : 22,
-            Visibility = string.IsNullOrEmpty(answer) ? Visibility.Collapsed : Visibility.Visible
-        };
-        panel.Children.Add(answerText);
+        // M4.9.4: Streaming markdown — the answer renders into a StackPanel
+        // managed by StreamingAnswerRenderer (stable-prefix memoization).
+        // Completed blocks snap into rich markdown; the in-flight tail streams
+        // as plain text. Replaces the old single plain TextBlock.
+        var answerPanel = new StackPanel { Spacing = 6 };
+        var answerRenderer = new Controls.StreamingAnswerRenderer(answerPanel, IsCompactDensity(), isUser: false);
+        answerRenderer.Update(answer);
+        panel.Children.Add(answerPanel);
 
         // M4.7.0: Blinking cursor for streaming feedback.
         var cursorText = new TextBlock
@@ -751,7 +748,7 @@ public sealed partial class ChatPage : UserControl
         cursorTimer.Start();
 
         AddAttachmentCards(panel, attachments, chatId);
-        panel.Tag = new LiveStreamBodyVisuals(thinkingBox, headerText, previewText, thinkingText, answerText, cursorText, cursorTimer);
+        panel.Tag = new LiveStreamBodyVisuals(thinkingBox, headerText, previewText, thinkingText, answerRenderer, cursorText, cursorTimer);
 
         return panel;
     }
@@ -778,10 +775,8 @@ public sealed partial class ChatPage : UserControl
         // string during streaming) would cancel the user's click every ~50ms.
 
         visuals.ThinkingText.Text = thinking;
-        visuals.AnswerText.Text = answer;
-        visuals.AnswerText.Visibility = string.IsNullOrEmpty(answer)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        // M4.9.4: streaming markdown update — stable-prefix re-render.
+        visuals.AnswerRenderer?.Update(answer);
     }
 
     private UIElement BuildMessageBodyWithAttachments(
@@ -1521,7 +1516,7 @@ public sealed partial class ChatPage : UserControl
         TextBlock HeaderText,
         TextBlock PreviewText,
         TextBlock ThinkingText,
-        TextBlock AnswerText,
+        Controls.StreamingAnswerRenderer? AnswerRenderer,
         TextBlock CursorText,
         DispatcherTimer CursorTimer);
 

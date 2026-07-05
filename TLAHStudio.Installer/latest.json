@@ -4,11 +4,11 @@
     "platform":  "windows",
     "arch":  "x64",
     "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
-    "sha256":  "",
+    "sha256":  "63294f8da0a5bd2374749100283380588a8441a2cbe8ba9c1208a064cfb64b9e",
     "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "4.9.4 mid: Phase A-C (style tokens, structured block data flow, Markdown rendering + TextMate syntax highlighting). Phase D-G pending.",
+    "releaseNotes":  "4.9.4 mid2: Phase C redone to spec 鈥?fixed code-block blank rendering (parser rewrite + defensive CodeBlock), streaming markdown (stable-prefix memoization), code block line numbers/fold/copy, markdown theme adaptation.",
     "forceUpdate":  true,
     "minSupportedVersion":  "4.9.4",
     "rolloutPercent":  100,
-    "installerSizeBytes":  97077816
+    "installerSizeBytes":  97916040
 }

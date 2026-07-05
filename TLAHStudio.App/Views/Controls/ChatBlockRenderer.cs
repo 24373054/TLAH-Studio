@@ -41,16 +41,19 @@ internal static class ChatBlockRenderer
     {
         // M4.9.4: CommunityToolkit MarkdownTextBlock renders GFM markdown
         // (headings, lists, links, inline code, bold/italic, blockquotes).
-        // Theme-aware via MarkdownStyle / brushes set on the control.
+        // Theme-aware: foreground + background pulled from app tokens so the
+        // block honors Dark/Light themes; user messages render in accent color.
         var md = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
         {
             Text = block.Content,
-            Margin = new Thickness(0, 0, 0, 0),
-            IsTextSelectionEnabled = true
+            Margin = new Thickness(0),
+            Padding = new Thickness(0),
+            IsTextSelectionEnabled = true,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            Foreground = (Brush)Application.Current.Resources[
+                isUser ? "AccentBrush" : "TextPrimaryBrush"],
+            FontSize = isCompact ? 13 : 14
         };
-        // User messages render in accent color so they stay visually distinct.
-        if (isUser)
-            md.Foreground = (Brush)Application.Current.Resources["AccentBrush"];
         return md;
     }
 
