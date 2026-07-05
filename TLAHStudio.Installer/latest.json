@@ -1,14 +1,14 @@
 {
-    "version":  "4.9.4",
-    "channel":  "stable",
-    "platform":  "windows",
-    "arch":  "x64",
-    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
-    "sha256":  "558721b597cb68146237f840e931a29a5be30d0706319b988d7db180c5cd2163",
-    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "dark-mode markdown concrete-color fix",
-    "forceUpdate":  true,
-    "minSupportedVersion":  "4.9.4",
-    "rolloutPercent":  100,
-    "installerSizeBytes":  97917160
+  "version": "4.9.4",
+  "channel": "stable",
+  "platform": "windows",
+  "arch": "x64",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
+  "sha256": "0c05f5e88fcd869cd3924df8c0e5248851e690d12e1956d2c13fb5512a98d209",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+  "releaseNotes": "4.9.4: UI overhaul Phase A-C — style token foundation (semantic colors, typography/spacing/corner scales, CJK font); structured block data flow (MarkdownBlockParser); Markdown rendering via CommunityToolkit + TextMate syntax highlighting (VS Code grammars bundled); streaming markdown (stable-prefix memoization); code block with line numbers/fold/copy. Fixes: dark-mode markdown invisible, cursor blinking after response, thinking block disappearing.",
+  "forceUpdate": true,
+  "minSupportedVersion": "4.9.4",
+  "rolloutPercent": 100,
+  "installerSizeBytes": 97918288
 }
