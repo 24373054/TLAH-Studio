@@ -315,10 +315,14 @@ try {
         & .\tools\sign-authenticode.ps1 @signInstallerArgs
     }
 
-    # M4.9.3: Use .NET SHA256 directly — Get-FileHash can fail to resolve
-    # under broken PowerShell 7 environments (cmdlet auto-discovery issues).
-    $sha256Bytes = [System.Security.Cryptography.SHA256]::HashData(
-        [System.IO.File]::ReadAllBytes($installer.Path))
+    # M4.9.3/M4.9.4: Compute SHA256 via instance API — the static HashData and
+    # the Get-FileHash cmdlet both fail to resolve under this machine's
+    # PowerShell 7 .NET method binding. ComputeHash on a created instance is
+    # the oldest, most reliably-bound path.
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $sha256Bytes = $sha.ComputeHash([System.IO.File]::ReadAllBytes($installer.Path))
+    } finally { $sha.Dispose() }
     $sha256 = ([BitConverter]::ToString($sha256Bytes) -replace '-', '').ToLowerInvariant()
     $latest = Get-Content -LiteralPath $latestJson -Raw | ConvertFrom-Json
     $latest.sha256 = $sha256

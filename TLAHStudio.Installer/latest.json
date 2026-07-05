@@ -1,14 +1,14 @@
 {
-  "version": "4.9.3",
-  "channel": "stable",
-  "platform": "windows",
-  "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.3.exe",
-  "sha256": "1a8ae2eada081a90c6fd1f045457b58460aa79c5f9412812b3a704cf406de367",
-  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.3: fix Full-access permission button showing as Ask; activity timeline tree depth \u2014 child events indent under parent.",
-  "forceUpdate": true,
-  "minSupportedVersion": "4.9.3",
-  "rolloutPercent": 100,
-  "installerSizeBytes": 97077816
+    "version":  "4.9.4",
+    "channel":  "stable",
+    "platform":  "windows",
+    "arch":  "x64",
+    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.4.exe",
+    "sha256":  "",
+    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+    "releaseNotes":  "4.9.4 mid: Phase A-C (style tokens, structured block data flow, Markdown rendering + TextMate syntax highlighting). Phase D-G pending.",
+    "forceUpdate":  true,
+    "minSupportedVersion":  "4.9.4",
+    "rolloutPercent":  100,
+    "installerSizeBytes":  97077816
 }
