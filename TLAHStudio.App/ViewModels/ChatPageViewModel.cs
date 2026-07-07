@@ -27,6 +27,9 @@ public partial class ChatPageViewModel : ObservableObject
     private IProgress<AgentProgressUpdate>? _activeAgentProgress;
     private AssistantStreamState? _activeStream;
     private string? _activeAgentRequest;
+    // M4.9.6: Prevent infinite recursion when slash commands rewrite InputText
+    // and re-invoke SendMessageAsync. Guards the recursive dispatch path.
+    private bool _isHandlingSlashCommand;
     private const int StreamDrainDelayMs = 32;
     private const string AgentActivityPanelStorageKey = "tlah-agent-activity-panel-open";
     private const string AgentPermissionModeStorageKey = "tlah-agent-permission-mode";
@@ -245,7 +248,9 @@ public partial class ChatPageViewModel : ObservableObject
         // M4.9.5 Phase E2: intercept slash commands before sending to the LLM.
         // Built-in commands execute locally; skill/tool/mcp commands dispatch
         // as agent invocations. Returns true if consumed (no LLM send).
-        if (TryHandleSlashCommand(InputText.TrimStart()))
+        // M4.9.6: skip slash parsing on re-entry (a slash command already
+        // rewrote InputText into a plain instruction and recursed).
+        if (!_isHandlingSlashCommand && TryHandleSlashCommand(InputText.TrimStart()))
         {
             InputText = string.Empty;
             return;
@@ -368,10 +373,21 @@ public partial class ChatPageViewModel : ObservableObject
         switch (name)
         {
             case "clear":
+                // M4.9.6: stop any in-flight stream first — otherwise the drain
+                // loop keeps appending to Messages after we clear it, throwing
+                // on the now-empty collection.
+                StopSending();
+                _activeStream = null;
+                _activeAgentRequest = null;
                 Messages.Clear();
                 ErrorMessage = null;
                 return true;
             case "new":
+                // M4.9.6: stop streaming before navigating away, same reason
+                // as /clear — the drain loop references Messages by index.
+                StopSending();
+                _activeStream = null;
+                _activeAgentRequest = null;
                 SlashCommandNavigationRequested?.Invoke(this, "new");
                 return true;
             case "settings":
@@ -419,9 +435,19 @@ public partial class ChatPageViewModel : ObservableObject
             return false;
 
         // Send the rewritten instruction through the normal path by setting
-        // InputText and recursing once (without the slash prefix).
+        // InputText and recursing once (without the slash prefix). Guard with
+        // _isHandlingSlashCommand so the re-entry doesn't try to re-parse the
+        // rewritten instruction as a slash command (infinite recursion).
         InputText = instruction;
-        _ = SendMessageAsync();
+        _isHandlingSlashCommand = true;
+        try
+        {
+            _ = SendMessageAsync();
+        }
+        finally
+        {
+            _isHandlingSlashCommand = false;
+        }
         return true;
     }
 
