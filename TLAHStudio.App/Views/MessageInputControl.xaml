@@ -243,6 +243,7 @@
                     x:Name="SlashList"
                     MaxHeight="280"
                     IsItemClickEnabled="True"
+                    AutomationProperties.Name="Slash command completion"
                     SelectionMode="Single"
                     CanReorderItems="False"
                     Padding="0"

@@ -64,7 +64,7 @@ public sealed partial class CodeBlockControl : UserControl
             paragraph.Inlines.Add(new Run
             {
                 Text = code,
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xD4, 0xD4, 0xD4))
+                Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"]
             });
             System.Diagnostics.Debug.WriteLine($"[CodeBlockControl] highlight failed: {ex}");
         }
@@ -74,7 +74,7 @@ public sealed partial class CodeBlockControl : UserControl
             paragraph.Inlines.Add(new Run
             {
                 Text = code,
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xD4, 0xD4, 0xD4))
+                Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"]
             });
         }
 

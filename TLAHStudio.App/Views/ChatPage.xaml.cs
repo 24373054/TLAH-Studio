@@ -895,6 +895,9 @@ public sealed partial class ChatPage : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8)
         };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            thinkingBox,
+            isExpanded ? "Thinking (expanded)" : $"Thinking collapsed · {thinking.Length} chars");
         // M4.9.5 Phase D: thinking content renders as markdown (chains/lists/
         // inline code in the model's reasoning stay readable) in a dim tone.
         var thinkingText = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
@@ -1017,6 +1020,9 @@ public sealed partial class ChatPage : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8)
         };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            thinkingBox,
+            isExpanded ? "Thinking (expanded)" : $"Thinking collapsed · {thinking.Length} chars");
         // M4.9.5 Phase D: thinking content renders as markdown (chains/lists/
         // inline code in the model's reasoning stay readable) in a dim tone.
         var thinkingText = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
