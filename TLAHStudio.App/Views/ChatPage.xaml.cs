@@ -568,7 +568,7 @@ public sealed partial class ChatPage : UserControl
                 dp.SetText(error);
                 Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(dp);
             }
-            catch { }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Clipboard copy failed: {ex.Message}"); }
             return Task.CompletedTask;
         });
         actions.Children.Add(copyBtn);

@@ -70,7 +70,7 @@ public sealed class SlashCommandService : ISlashCommandProvider
                 }
             }
         }
-        catch { /* skills are optional; never block completion on them */ }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[SlashCmd] skill load failed: {ex.Message}"); }
 
         // 3. Agent tools.
         try
@@ -92,7 +92,7 @@ public sealed class SlashCommandService : ISlashCommandProvider
                 }
             }
         }
-        catch { }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[SlashCmd] agent tool list failed: {ex.Message}"); }
 
         // 4. MCP tools (lowest priority, namespaced mcp:<server>:<tool>).
         try
@@ -114,7 +114,7 @@ public sealed class SlashCommandService : ISlashCommandProvider
                 }
             }
         }
-        catch { }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[SlashCmd] MCP tool list failed: {ex.Message}"); }
 
         return byName.Values
             .OrderBy(c => CategoryOrder(c.Category))
@@ -162,7 +162,7 @@ public sealed class SlashCommandService : ISlashCommandProvider
                     return "<" + string.Join("> <", names) + ">";
             }
         }
-        catch { }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[SlashCmd] schema hint parse failed: {ex.Message}"); }
         return null;
     }
 

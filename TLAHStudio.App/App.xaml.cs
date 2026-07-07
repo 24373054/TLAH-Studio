@@ -295,6 +295,7 @@ public partial class App : Application
 
     internal static void Log(string msg)
     {
-        try { File.AppendAllText(Path.Combine(LogDir, "startup.log"), $"{DateTime.UtcNow:O} [{Environment.ProcessId}] {msg}\n"); } catch { }
+        try { File.AppendAllText(Path.Combine(LogDir, "startup.log"), $"{DateTime.UtcNow:O} [{Environment.ProcessId}] {msg}\n"); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Startup log write failed: {ex.Message}"); }
     }
 }
