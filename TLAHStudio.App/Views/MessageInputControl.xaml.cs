@@ -526,6 +526,18 @@ public sealed partial class MessageInputControl : UserControl
         InputBox.Select(InputBox.Text.Length, 0);
     }
 
+    /// <summary>
+    /// M4.9.6: Inject a slash command text and trigger completion popup.
+    /// Used by the Ctrl+K command palette to dispatch slash commands.
+    /// </summary>
+    public void InjectSlashCommand(string text)
+    {
+        InputBox.Text = text;
+        InputBox.Select(InputBox.Text.Length, 0);
+        InputBox.Focus(FocusState.Programmatic);
+        UpdateSlashCompletion(text);
+    }
+
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ChatPageViewModel.IsSending))

@@ -6,7 +6,9 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using System.Text.Json;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.App.Views;
+using TLAHStudio.App.Views.Dialogs;
 using TLAHStudio.Core.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Windows.Storage.Streams;
 using Windows.System;
 
@@ -220,17 +222,22 @@ public sealed partial class MainWindow : Window
             });
             content.Children.Add(decisionBox);
 
-            var argumentsText = new TextBlock
+            var argumentsText = new TextBox
             {
                 Text = details,
                 TextWrapping = TextWrapping.Wrap,
                 FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono"),
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"]
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextPrimaryBrush"],
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+                AcceptsReturn = true,
+                MinHeight = 100,
+                IsSpellCheckEnabled = false
             };
             var argumentsViewer = new ScrollViewer
             {
                 Content = argumentsText,
-                MinHeight = 160,
+                MinHeight = 120,
                 MaxHeight = 320,
                 Padding = new Thickness(12),
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -265,6 +272,11 @@ public sealed partial class MainWindow : Window
             SoundService.Play(result is ContentDialogResult.Primary or ContentDialogResult.Secondary
                 ? InteractionSound.Complete
                 : InteractionSound.Error);
+            // M4.9.6: if the user edited the arguments in the TextBox, pass the
+            // edited version back so the agent uses the modified parameters.
+            var editedArgs = argumentsText.Text;
+            if (result == ContentDialogResult.Primary && editedArgs != details)
+                request.UpdatedArgumentsJson = editedArgs;
             request.Completion.TrySetResult(result switch
             {
                 ContentDialogResult.Primary => decisionBox.SelectedIndex switch
@@ -661,6 +673,140 @@ public sealed partial class MainWindow : Window
                 e.Handled = true;
                 DebugVM.CloseDebugCommand.Execute(null);
             }
+        }
+
+        // M4.9.6: Ctrl+K / Ctrl+Shift+P — command palette.
+        if ((ctrl && e.Key == VirtualKey.K) ||
+            (ctrl && IsKeyDown(VirtualKey.Shift) && e.Key == VirtualKey.P))
+        {
+            e.Handled = true;
+            _ = ShowCommandPaletteAsync();
+            return;
+        }
+    }
+
+    /// <summary>
+    /// M4.9.6: Ctrl+K command palette. Aggregates built-in chat actions and
+    /// slash commands from ISlashCommandProvider; shows a searchable dialog;
+    /// dispatches the selected command.
+    /// </summary>
+    private async Task ShowCommandPaletteAsync()
+    {
+        try
+        {
+            var sp = App.Services;
+            var cmds = new List<PaletteCommand>
+            {
+                new("New Chat", "Start a new conversation", "Chat", "new", 0),
+                new("Search Chats", "Focus the sidebar search", "Chat", "focus-search", 0),
+                new("Toggle Theme", "Switch between light and dark", "App", "toggle-theme", 10),
+                new("Open Settings", "Configure provider, model, keys", "App", "settings", 20),
+                new("Clear Conversation", "Remove all messages", "Chat", "clear", 30),
+                new("Toggle Agent Mode", "Enable or disable agent", "Chat", "agent", 30),
+                new("Stop Generation", "Cancel the running request", "Chat", "stop", 30),
+
+                new("Permissions: Full Access", "Allow all tools without prompts", "Permissions", "perm:bypass", 40),
+                new("Permissions: Auto Approve", "Auto-approve safe tools", "Permissions", "perm:auto", 40),
+                new("Permissions: Ask Approval", "Prompt for each tool", "Permissions", "perm:ask", 40),
+                new("Permissions: Plan Mode", "Read-only exploration", "Permissions", "perm:plan", 40),
+            };
+
+            // Append slash-command sources (skills, agent tools, MCP tools).
+            try
+            {
+                var slashProvider = sp.GetService<ISlashCommandProvider>();
+                if (slashProvider != null)
+                {
+                    var chatId = ChatVM.CurrentChat?.Id ?? Guid.Empty;
+                    var slashCmds = await slashProvider.GetCommandsAsync(chatId);
+                    if (slashCmds != null)
+                    {
+                        foreach (var sc in slashCmds)
+                        {
+                            var cat = sc.Category switch { "Skill" => "Skill", "Tool" => "Tool", "MCP" => "MCP", _ => "Slash" };
+                            cmds.Add(new PaletteCommand($"/{sc.Name}", sc.Description, cat, $"slash:{sc.Name}", 50));
+                        }
+                    }
+                }
+            }
+            catch { /* slash provider unavailable — palette works with built-ins only */ }
+
+            SoundService.Play(InteractionSound.Navigate);
+            var palette = new TLAHStudio.App.Views.Dialogs.CommandPalette();
+            palette.SetCommands(cmds);
+            palette.RequestedTheme = Content is FrameworkElement root
+                ? root.ActualTheme : Microsoft.UI.Xaml.ElementTheme.Default;
+            palette.XamlRoot = RootGrid.XamlRoot;
+            var result = await TryShowDialogAsync(palette);
+            var selected = palette.SelectedCommand;
+            if (result != ContentDialogResult.Primary || selected == null)
+                return;
+
+            await DispatchPaletteCommand(selected.Action);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"CommandPalette failed: {ex}");
+        }
+    }
+
+    private async Task DispatchPaletteCommand(string action)
+    {
+        switch (action)
+        {
+            case "new":
+                await SidebarVM.CreateChatAsync();
+                MessageInputView.FocusMessageInput();
+                break;
+            case "focus-search":
+                SidebarView.FocusSearch();
+                break;
+            case "toggle-theme":
+                ThemeService.ToggleTheme();
+                break;
+            case "settings":
+                {
+                    await SettingsVM.LoadAsync();
+                    var dlg = new SettingsContentDialog
+                    {
+                        DataContext = SettingsVM,
+                        RequestedTheme = Content is FrameworkElement root
+                            ? root.ActualTheme : Microsoft.UI.Xaml.ElementTheme.Default,
+                        XamlRoot = RootGrid.XamlRoot
+                    };
+                    await TryShowDialogAsync(dlg);
+                }
+                break;
+            case "clear":
+                ChatVM.Messages.Clear();
+                ChatVM.ErrorMessage = null;
+                break;
+            case "agent":
+                ChatVM.IsAgentModeEnabled = !ChatVM.IsAgentModeEnabled;
+                break;
+            case "stop":
+                ChatVM.StopSendingCommand.Execute(null);
+                break;
+            case "perm:bypass":
+                ChatVM.SelectedAgentPermissionMode = AgentPermissionModes.BypassPermissions;
+                break;
+            case "perm:auto":
+                ChatVM.SelectedAgentPermissionMode = AgentPermissionModes.AutoApprove;
+                break;
+            case "perm:ask":
+                ChatVM.SelectedAgentPermissionMode = AgentPermissionModes.RequestApproval;
+                break;
+            case "perm:plan":
+                ChatVM.SelectedAgentPermissionMode = AgentPermissionModes.Plan;
+                break;
+            default:
+                // Slash command — dispatch through MessageInputControl input.
+                if (action.StartsWith("slash:", StringComparison.Ordinal))
+                {
+                    var slashName = action[6..];
+                    MessageInputView.InjectSlashCommand($"/{slashName}");
+                }
+                break;
         }
     }
 

@@ -55,7 +55,11 @@ public class ChatService : IChatService
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = $"%{search.Trim()}%";
-            query = query.Where(c => EF.Functions.Like(c.Title, term));
+            // M4.9.6: search message content in addition to titles so users can
+            // find chats by what was said, not just by chat name.
+            query = query.Where(c =>
+                EF.Functions.Like(c.Title, term) ||
+                c.Messages.Any(m => EF.Functions.Like(m.Content, term)));
         }
 
         var chats = await query
