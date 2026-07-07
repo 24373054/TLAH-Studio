@@ -3,7 +3,7 @@
   manifestVersion="1.0"
   xmlns="urn:schemas-microsoft-com:asm.v1"
   xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-  <assemblyIdentity version="4.9.5.0" name="TLAHStudio.App"/>
+  <assemblyIdentity version="4.9.6.0" name="TLAHStudio.App"/>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">

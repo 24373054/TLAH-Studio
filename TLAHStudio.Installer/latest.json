@@ -1,14 +1,14 @@
 {
-  "version": "4.9.5",
-  "channel": "stable",
-  "platform": "windows",
-  "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.5.exe",
-  "sha256": "053aa29b31d464c420abbf4260afcfd0d2380a18e4347ca670c8db750c4368b9",
-  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-  "releaseNotes": "4.9.5: UI overhaul Phase D-G. Tool cards: status dots (running blink/done/error) + expandable truncated output. Error card: danger bar + icon + copy/retry. Thinking block: markdown rendering. Slash commands: full system aggregating built-ins + skills + agent tools + MCP tools, with live completion popup (Tab/Enter/Up/Down/Esc). Input: command history (Up/Down), dynamic placeholder. Context gauge: compact warning at >80%. Global CJK font (YaHei UI). Chat bubbles: elevation shadows + hover lift. Day-grouped timeline.",
-  "forceUpdate": true,
-  "minSupportedVersion": "4.9.5",
-  "rolloutPercent": 100,
-  "installerSizeBytes": 97930128
+    "version":  "4.9.6",
+    "channel":  "stable",
+    "platform":  "windows",
+    "arch":  "x64",
+    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.6.exe",
+    "sha256":  "87549b737e2150fc5c43c9d0ada9ff1cbebe9bf243032aad5d0e9caa1687d8c9",
+    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+    "releaseNotes":  "4.9.6: slash cmd crash fix, streaming perf (incremental rebuild + allocation-free boundary scan), Ctrl+K palette + editable approval args + content search, input-size guards, empty-catch logging, accessibility + dark fallback fixes, 287 tests.",
+    "forceUpdate":  true,
+    "minSupportedVersion":  "4.9.6",
+    "rolloutPercent":  100,
+    "installerSizeBytes":  97933824
 }
