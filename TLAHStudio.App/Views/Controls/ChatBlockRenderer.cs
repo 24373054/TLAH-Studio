@@ -67,7 +67,11 @@ internal static class ChatBlockRenderer
 
         var md = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
         {
-            Text = block.Content,
+            // M4.9.6: cap rendered markdown at 50K chars to prevent UI freeze
+            // on very long messages (CommunityToolkit renders synchronously).
+            Text = block.Content.Length > 50_000
+                ? block.Content[..50_000] + "\n\n[content truncated]"
+                : block.Content,
             Margin = new Thickness(0),
             Padding = new Thickness(0),
             IsTextSelectionEnabled = true,
