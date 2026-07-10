@@ -1,8 +1,8 @@
-﻿; TLAH Studio - Inno Setup Installer Script
+; TLAH Studio - Inno Setup Installer Script
 ; Supports: manual install (GUI wizard) and silent update (/VERYSILENT /NORESTART)
 
 #define MyAppName "TLAH Studio"
-#define MyAppVersion "4.9.6"
+#define MyAppVersion "4.9.7"
 #define MyAppPublisher "KeEntropy Technology"
 #define MyAppExeName "TLAHStudio.App.exe"
 #define MyAppUpdaterName "TLAHStudio.Updater.exe"
@@ -71,8 +71,8 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; \
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent; Check: ShouldLaunchAfterInstall
 
 [UninstallRun]
-Filename: "taskkill"; Parameters: "/f /im {#MyAppExeName}"; Flags: runhidden
-Filename: "taskkill"; Parameters: "/f /im {#MyAppUpdaterName}"; Flags: runhidden
+Filename: "taskkill"; Parameters: "/f /im {#MyAppExeName}"; Flags: runhidden; RunOnceId: "StopTLAHStudioApp"
+Filename: "taskkill"; Parameters: "/f /im {#MyAppUpdaterName}"; Flags: runhidden; RunOnceId: "StopTLAHStudioUpdater"
 
 [Code]
 // Create data directories and stop running processes before file copy.

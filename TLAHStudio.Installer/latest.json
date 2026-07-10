@@ -1,14 +1,14 @@
 {
-    "version":  "4.9.6",
-    "channel":  "stable",
-    "platform":  "windows",
-    "arch":  "x64",
-    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.6.exe",
-    "sha256":  "87549b737e2150fc5c43c9d0ada9ff1cbebe9bf243032aad5d0e9caa1687d8c9",
-    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
-    "releaseNotes":  "4.9.6: slash cmd crash fix, streaming perf (incremental rebuild + allocation-free boundary scan), Ctrl+K palette + editable approval args + content search, input-size guards, empty-catch logging, accessibility + dark fallback fixes, 287 tests.",
-    "forceUpdate":  true,
-    "minSupportedVersion":  "4.9.6",
-    "rolloutPercent":  100,
-    "installerSizeBytes":  97933824
+  "version": "4.9.7",
+  "channel": "stable",
+  "platform": "windows",
+  "arch": "x64",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.7.exe",
+  "sha256": "cdc70ed3804dce20ab3f40e478627d387aef7781074a4c9ee06a88e92dc9a107",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest.json.sig",
+  "releaseNotes": "Reliability and security update.\n\nFixes:\n- Background task completion persistence and cleanup\n- Stable rollout identity and deterministic update buckets\n- DPAPI-protected tool arguments and resumable checkpoints\n- Session memory concurrency and secret-redaction fixes\n- Streaming Markdown, scroll cursor, slash completion, and Windows patch reliability\n- High-severity dependency remediation and atomic release deployment",
+  "forceUpdate": true,
+  "minSupportedVersion": "4.9.7",
+  "rolloutPercent": 100,
+  "installerSizeBytes": 98034536
 }
