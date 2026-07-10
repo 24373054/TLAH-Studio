@@ -111,10 +111,11 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
         CancellationToken ct = default)
     {
         var bypassPermissions = AgentPermissionModes.IsBypass(request.PermissionMode);
+        var argumentsJson = request.ExecutionArgumentsJson ?? request.Invocation.ArgumentsJson;
         var preview = await PreviewAsync(
             request.Run.ChatId,
             request.Invocation.ToolName,
-            request.Invocation.ArgumentsJson,
+            argumentsJson,
             ct);
 
         if (preview.Tool == null)
@@ -148,19 +149,21 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
                 request.Run.ChatId,
                 request.Run.Id,
                 request.Invocation.ToolName,
-                request.Invocation.ArgumentsJson,
+                argumentsJson,
                 null,
                 preview.EffectPlan),
             ct);
 
         if (beforeHook.ModifiedArgumentsJson != null &&
-            !preview.Tool.InputsEquivalent(request.Invocation.ArgumentsJson, beforeHook.ModifiedArgumentsJson))
+            !preview.Tool.InputsEquivalent(argumentsJson, beforeHook.ModifiedArgumentsJson))
         {
+            argumentsJson = beforeHook.ModifiedArgumentsJson;
             request.Invocation.ArgumentsJson = SecretRedactor.RedactJson(beforeHook.ModifiedArgumentsJson);
+            request.Invocation.ProtectedArgumentsJson = ProtectedLocalData.Protect(beforeHook.ModifiedArgumentsJson);
             preview = await PreviewAsync(
                 request.Run.ChatId,
                 request.Invocation.ToolName,
-                request.Invocation.ArgumentsJson,
+                argumentsJson,
                 ct);
             if (preview.Tool == null)
             {
@@ -225,7 +228,7 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
         var maxOutputChars = Math.Max(
             1,
             Math.Min(request.MaxOutputChars, preview.Metadata.MaxResultSizeChars));
-        var progress = new Progress<AgentToolProgress>(p => progressEvents.Add(p));
+        var progress = new InlineProgress<AgentToolProgress>(p => progressEvents.Add(p));
         var result = tool is IAgentToolV3 v3Tool
             ? await v3Tool.ExecuteWithProgressAsync(
                 new AgentToolExecutionContext(
@@ -235,7 +238,7 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
                     request.TimeoutSeconds,
                     maxOutputChars,
                     request.PermissionMode),
-                request.Invocation.ArgumentsJson,
+                argumentsJson,
                 progress,
                 ct)
             : await tool.ExecuteAsync(
@@ -246,7 +249,7 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
                     request.TimeoutSeconds,
                     maxOutputChars,
                     request.PermissionMode),
-                request.Invocation.ArgumentsJson,
+                argumentsJson,
                 ct);
 
         result = LimitResult(result, maxOutputChars);
@@ -258,7 +261,7 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
                 request.Run.ChatId,
                 request.Run.Id,
                 request.Invocation.ToolName,
-                request.Invocation.ArgumentsJson,
+                argumentsJson,
                 result,
                 preview.EffectPlan),
             ct);
@@ -274,7 +277,7 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
         if (result.Success && tool is IAgentToolV3 rollbackTool)
         {
             rollbackPlan = await rollbackTool.CreateRollbackPlanAsync(
-                request.Invocation.ArgumentsJson,
+                argumentsJson,
                 result,
                 ct);
         }
@@ -320,6 +323,11 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
         return modifiedArgumentsJson == null
             ? ToolHookResult.Allow()
             : new ToolHookResult(true, ModifiedArgumentsJson: modifiedArgumentsJson);
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 
     private static ToolSafetyAssessment FromV3SafetyClassification(

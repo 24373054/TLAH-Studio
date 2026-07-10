@@ -198,6 +198,7 @@ public class ToolInvocation
     public string ProviderCallId { get; set; } = string.Empty;
 
     public string ArgumentsJson { get; set; } = "{}";
+    public string ProtectedArgumentsJson { get; set; } = string.Empty;
     public string ResultJson { get; set; } = "{}";
 
     [MaxLength(40)]

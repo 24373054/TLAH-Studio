@@ -1,75 +1,106 @@
 <#
 .SYNOPSIS
-    One-command deploy: sign latest.json and upload everything to the server.
+    Verify and atomically upload an already-built release without mutating it.
 
 .PARAMETER Server
-    SSH destination, e.g. user@download.matrixlabs.cn
-
-.PARAMETER RemotePath
-    Server directory, e.g. /var/www/download/tlah/windows/
+    SSH destination, for example user@download.matrixlabs.cn.
 
 .PARAMETER PrivateKeyFile
-    Path to private_key.txt for signing
-
-.EXAMPLE
-    .\deploy.ps1 -Server user@download.matrixlabs.cn -PrivateKeyFile .\private_key.txt
+    Optional ECDSA private key. Used only when latest.json.sig is missing.
 #>
 
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [string]$Server,
 
     [string]$RemotePath = "/var/www/download/tlah/windows/",
 
-    [Parameter(Mandatory=$true)]
     [string]$PrivateKeyFile
 )
 
-$installerDir = "$PSScriptRoot\..\TLAHStudio.Installer"
-$latestJson = "$installerDir\latest.json"
-$outputDir = "$installerDir\output"
+$ErrorActionPreference = "Stop"
 
-Write-Host "=== TLAH Studio Deploy ===" -ForegroundColor Cyan
-Write-Host "Server: $Server"
-Write-Host "Remote: $RemotePath"
-Write-Host ""
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [string[]]$Arguments = @()
+    )
 
-# 1. Find the latest installer
-$installer = Get-ChildItem -Path $outputDir -Filter "TLAHStudioSetup-*.exe" |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-
-if (-not $installer) {
-    Write-Error "No installer found in $outputDir. Build it first: dotnet publish + Inno Setup."
-    exit 1
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FilePath failed with exit code $LASTEXITCODE."
+    }
 }
 
-# 2. Compute SHA256
-$hash = (Get-FileHash -Path $installer.FullName -Algorithm SHA256).Hash.ToLower()
-Write-Host "Installer: $($installer.Name)"
-Write-Host "SHA256:    $hash"
+if ($RemotePath -notmatch '^/[A-Za-z0-9._/-]+/?$') {
+    throw "RemotePath contains unsupported shell characters: $RemotePath"
+}
 
-# 3. Update latest.json with the real SHA256
-$json = Get-Content -Path $latestJson -Raw | ConvertFrom-Json
-$json.sha256 = $hash
-$json.installerUrl = "https://download.matrixlabs.cn/tlah/windows/$($installer.Name)"
-$json.version = ($installer.Name -replace 'TLAHStudioSetup-', '' -replace '\.exe$', '')
-$json | ConvertTo-Json -Depth 10 | Set-Content -Path $latestJson -Encoding UTF8
-Write-Host "Updated latest.json with version $($json.version) and SHA256"
+$repo = Resolve-Path (Join-Path $PSScriptRoot "..")
+Push-Location $repo
+try {
+    $installerDir = ".\TLAHStudio.Installer"
+    $latestJson = Join-Path $installerDir "latest.json"
+    $manifest = Get-Content -LiteralPath $latestJson -Raw | ConvertFrom-Json
+    $version = [string]$manifest.version
+    if ($version -notmatch '^\d+\.\d+\.\d+$') {
+        throw "latest.json has an invalid version: $version"
+    }
 
-# 4. Sign latest.json
-& "$PSScriptRoot\sign-latest.ps1" -LatestJsonPath $latestJson -PrivateKeyFile $PrivateKeyFile
+    $installer = Resolve-Path -LiteralPath (Join-Path $installerDir "output\TLAHStudioSetup-$version.exe")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha.ComputeHash([System.IO.File]::ReadAllBytes($installer.Path))
+    }
+    finally {
+        $sha.Dispose()
+    }
+    $hash = ([BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvariant()
 
-# 5. Upload via SCP
-Write-Host ""
-Write-Host "Uploading to server..." -ForegroundColor Yellow
-scp $latestJson "$($Server):$RemotePath"
-scp "$latestJson.sig" "$($Server):$RemotePath"
-scp $installer.FullName "$($Server):$RemotePath"
+    $expectedUrl = "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-$version.exe"
+    $installerSize = (Get-Item -LiteralPath $installer.Path).Length
+    if ($manifest.sha256 -ne $hash) {
+        throw "latest.json SHA256 does not match the installer. Run build-release.ps1 first."
+    }
+    if ($manifest.installerUrl -ne $expectedUrl) {
+        throw "latest.json installerUrl does not match $expectedUrl."
+    }
+    if ([long]$manifest.installerSizeBytes -ne $installerSize) {
+        throw "latest.json installerSizeBytes does not match the installer."
+    }
 
-Write-Host ""
-Write-Host "=== Deploy Complete ===" -ForegroundColor Green
-Write-Host "Files uploaded to $RemotePath :"
-Write-Host "  $($installer.Name)"
-Write-Host "  latest.json"
-Write-Host "  latest.json.sig"
+    $signaturePath = "$latestJson.sig"
+    if (-not (Test-Path -LiteralPath $signaturePath)) {
+        if ([string]::IsNullOrWhiteSpace($PrivateKeyFile)) {
+            throw "latest.json.sig is missing and no PrivateKeyFile was provided."
+        }
+        & .\tools\sign-latest.ps1 -LatestJsonPath $latestJson -PrivateKeyFile $PrivateKeyFile
+    }
+    & .\tools\verify-release.ps1 `
+        -Version $version `
+        -InstallerPath $installer.Path `
+        -LatestJsonPath $latestJson `
+        -AllowUntrustedAuthenticode `
+        -SkipSmokeInstall
+
+    $remoteBase = $RemotePath.TrimEnd('/')
+    $remoteInstaller = "$remoteBase/TLAHStudioSetup-$version.exe"
+    $remoteSignature = "$remoteBase/latest.json.sig"
+    $remoteManifest = "$remoteBase/latest.json"
+    Invoke-Native scp @($installer.Path, "${Server}:$remoteInstaller.uploading")
+    Invoke-Native scp @("$latestJson.sig", "${Server}:$remoteSignature.uploading")
+    Invoke-Native scp @($latestJson, "${Server}:$remoteManifest.uploading")
+
+    $promote = "mv -- $remoteInstaller.uploading $remoteInstaller && " +
+               "mv -- $remoteSignature.uploading $remoteSignature && " +
+               "mv -- $remoteManifest.uploading $remoteManifest"
+    Invoke-Native ssh @($Server, $promote)
+
+    Write-Host "Release $version uploaded."
+    Write-Host "Installer: $($installer.Path)"
+    Write-Host "SHA256: $hash"
+}
+finally {
+    Pop-Location
+}

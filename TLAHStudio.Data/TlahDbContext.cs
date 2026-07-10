@@ -353,10 +353,23 @@ public class TlahDbContext : DbContext
         if (!Database.IsSqlite())
             return;
 
-        using var connection = Database.GetDbConnection();
-        if (connection.State != System.Data.ConnectionState.Open)
+        var connection = Database.GetDbConnection();
+        var closeWhenDone = connection.State != System.Data.ConnectionState.Open;
+        if (closeWhenDone)
             connection.Open();
+        try
+        {
+            ApplyLightweightMigrations(connection);
+        }
+        finally
+        {
+            if (closeWhenDone)
+                connection.Close();
+        }
+    }
 
+    private static void ApplyLightweightMigrations(DbConnection connection)
+    {
         AddColumnIfMissing(connection, "Chats", "IsPinned", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "Chats", "IsArchived", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(connection, "Chats", "DeletedAt", "TEXT NULL");
@@ -495,6 +508,7 @@ public class TlahDbContext : DbContext
         AddColumnIfMissing(connection, "ToolInvocations", "SafetyLevel", "TEXT NOT NULL DEFAULT 'unknown'");
         AddColumnIfMissing(connection, "ToolInvocations", "SafetySummary", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "ToolInvocations", "SafetyJson", "TEXT NOT NULL DEFAULT '{}'");
+        AddColumnIfMissing(connection, "ToolInvocations", "ProtectedArgumentsJson", "TEXT NOT NULL DEFAULT ''");
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "AgentCheckpoints" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_AgentCheckpoints" PRIMARY KEY,

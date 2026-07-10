@@ -42,6 +42,34 @@ public class UpdateServiceTests
         Assert.EndsWith("version.json", state.SourcePath, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void GetOrCreateInstallId_PersistsAcrossInstallerVersionFileChanges()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "tlah-install-id", Guid.NewGuid().ToString("N"));
+        var statePath = Path.Combine(root, "install-id.txt");
+        try
+        {
+            var first = UpdateService.GetOrCreateInstallId("first-installer-id", statePath);
+            var second = UpdateService.GetOrCreateInstallId("replacement-installer-id", statePath);
+
+            Assert.Equal("first-installer-id", first);
+            Assert.Equal(first, second);
+            Assert.Equal(first, File.ReadAllText(statePath));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void GetRolloutBucket_IsStableAndBounded()
+    {
+        Assert.Equal(76, UpdateService.GetRolloutBucket("test-install-id"));
+        Assert.InRange(UpdateService.GetRolloutBucket("another-install"), 0, 99);
+    }
+
     [Theory]
     [InlineData("1.0.11", "1.0.10", true)]
     [InlineData("1.0.10", "1.0.10", false)]

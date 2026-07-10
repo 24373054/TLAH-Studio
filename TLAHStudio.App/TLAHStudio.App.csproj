@@ -33,6 +33,10 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="CommunityToolkit.WinUI.UI.Controls.Markdown" Version="7.1.2" />
+    <!-- Override the Markdown control's 2.0.13 minimum. ColorCode 2.0.15
+         supplies a dependency-free netstandard2.0 asset instead of the
+         vulnerable NETStandard.Library 1.6.1 graph. -->
+    <PackageReference Include="ColorCode.WinUI" Version="2.0.15" />
     <PackageReference Include="TextMateSharp" Version="2.0.4" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />

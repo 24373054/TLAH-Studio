@@ -2,7 +2,8 @@ param(
     [string]$Configuration = "Release",
     [string]$Platform = "x64",
     [switch]$SkipRestore,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$SkipVulnerabilityAudit
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +55,24 @@ try {
 
     if (-not $SkipRestore) {
         Invoke-Native dotnet @("restore", ".\TLAHStudio.sln")
+    }
+
+    if (-not $SkipVulnerabilityAudit) {
+        $auditOutput = & dotnet list ".\TLAHStudio.sln" package `
+            --vulnerable --include-transitive --format json --output-version 1 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "NuGet vulnerability audit failed:`n$($auditOutput -join [Environment]::NewLine)"
+        }
+
+        $auditText = $auditOutput -join [Environment]::NewLine
+        $audit = $auditText | ConvertFrom-Json
+        if ($audit.problems) {
+            throw "NuGet vulnerability audit reported project errors:`n$($audit.problems | ConvertTo-Json -Depth 10)"
+        }
+        if (($audit | ConvertTo-Json -Depth 30) -match '"vulnerabilities"\s*:') {
+            throw "NuGet vulnerability audit found one or more vulnerable packages:`n$auditText"
+        }
+        Write-Host "NuGet vulnerability audit passed."
     }
 
     Invoke-Native dotnet @(

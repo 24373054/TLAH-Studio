@@ -201,18 +201,24 @@ public sealed class CheckpointStore : ICheckpointStore
         {
             AgentRunId = run.Id,
             StepNumber = stepNumber,
-            StateJson = stateJson
+            StateJson = ProtectedLocalData.Protect(stateJson)
         });
         await _db.SaveChangesAsync(ct);
     }
 
-    public Task<AgentCheckpoint?> GetLatestAsync(
+    public async Task<AgentCheckpoint?> GetLatestAsync(
         Guid agentRunId,
-        CancellationToken ct = default) =>
-        _db.Set<AgentCheckpoint>()
+        CancellationToken ct = default)
+    {
+        var checkpoint = await _db.Set<AgentCheckpoint>()
+            .AsNoTracking()
             .Where(c => c.AgentRunId == agentRunId)
             .OrderByDescending(c => c.CreatedAt)
             .FirstOrDefaultAsync(ct);
+        if (checkpoint != null)
+            checkpoint.StateJson = ProtectedLocalData.Reveal(checkpoint.StateJson);
+        return checkpoint;
+    }
 }
 
 public sealed record ProviderStreamRequest(
@@ -280,7 +286,8 @@ public sealed record ToolExecutionRequest(
     ToolInvocation Invocation,
     int TimeoutSeconds,
     int MaxOutputChars,
-    string PermissionMode = AgentPermissionModes.RequestApproval);
+    string PermissionMode = AgentPermissionModes.RequestApproval,
+    string? ExecutionArgumentsJson = null);
 
 public sealed record ToolExecutionOutcome
 {

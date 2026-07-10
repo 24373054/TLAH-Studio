@@ -33,6 +33,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Version must use strict semantic versioning (for example 4.9.7): $Version"
+}
+if ($RemotePath -notmatch '^/[A-Za-z0-9._/-]+/?$') {
+    throw "RemotePath contains unsupported shell characters: $RemotePath"
+}
+
 function Invoke-Native {
     param(
         [Parameter(Mandatory = $true)]
@@ -347,9 +354,21 @@ try {
     Copy-Item -LiteralPath $installer.Path -Destination "C:\Users\23157\CODE\00TLAH\TLAHStudioSetup-$Version.exe" -Force
 
     if ($Upload) {
-        Invoke-Native scp @($installer.Path, "$($Server):$RemotePath")
-        Invoke-Native scp @($latestJson, "$($Server):$RemotePath")
-        Invoke-Native scp @("$latestJson.sig", "$($Server):$RemotePath")
+        # Stage every file under a temporary name first. Promote the versioned
+        # installer, signature, and finally latest.json in one remote command;
+        # latest.json is the release commit point observed by update clients.
+        $remoteBase = $RemotePath.TrimEnd('/')
+        $installerName = Split-Path -Leaf $installer.Path
+        $remoteInstaller = "$remoteBase/$installerName"
+        $remoteSignature = "$remoteBase/latest.json.sig"
+        $remoteManifest = "$remoteBase/latest.json"
+        Invoke-Native scp @($installer.Path, "${Server}:$remoteInstaller.uploading")
+        Invoke-Native scp @("$latestJson.sig", "${Server}:$remoteSignature.uploading")
+        Invoke-Native scp @($latestJson, "${Server}:$remoteManifest.uploading")
+        $promote = "mv -- $remoteInstaller.uploading $remoteInstaller && " +
+                   "mv -- $remoteSignature.uploading $remoteSignature && " +
+                   "mv -- $remoteManifest.uploading $remoteManifest"
+        Invoke-Native ssh @($Server, $promote)
     }
 
     Write-Host "Release $Version ready."

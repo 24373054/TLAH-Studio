@@ -87,7 +87,17 @@ public sealed partial class ChatPage : UserControl
 
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.StreamingMessageUpdated += (_, _) => RequestRender();
-        _vm.MessageIdMutated += oldId => _messageElementCache.Remove(oldId); // M4.4.6: evict stale cache entry
+        _vm.MessageIdMutated += oldId =>
+        {
+            if (_messageElementCache.TryGetValue(oldId, out var cached) &&
+                TryGetLiveStreamVisuals(cached.Element, out var visuals) &&
+                visuals.CursorTimer.IsEnabled)
+            {
+                visuals.CursorTimer.Stop();
+            }
+
+            _messageElementCache.Remove(oldId);
+        }; // M4.4.6: evict stale cache entry
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
@@ -157,7 +167,16 @@ public sealed partial class ChatPage : UserControl
         if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems != null)
         {
             foreach (Message msg in e.OldItems)
+            {
+                if (_messageElementCache.TryGetValue(msg.Id, out var cached) &&
+                    TryGetLiveStreamVisuals(cached.Element, out var visuals) &&
+                    visuals.CursorTimer.IsEnabled)
+                {
+                    visuals.CursorTimer.Stop();
+                }
+
                 _messageElementCache.Remove(msg.Id);
+            }
         }
         if (e.Action == NotifyCollectionChangedAction.Reset)
         {
@@ -200,6 +219,7 @@ public sealed partial class ChatPage : UserControl
 
     private void InvalidateMessageCache()
     {
+        StopAllCachedStreamTimers();
         _messageElementCache.Clear();
         _lastLayoutSignature = string.Empty;
     }
@@ -220,13 +240,10 @@ public sealed partial class ChatPage : UserControl
 
         MessagesScrollViewer.ChangeView(null, target, null, false);
 
-        // M4.4.6: Track manual scroll direction. Scrolling up disables
-        // auto-scroll-to-bottom so the user can read older context without
-        // the render loop fighting them. Scrolling back to bottom re-enables it.
-        if (delta > 0)
-            _userScrolledUp = false; // scrolling toward bottom
-        else if (delta < 0 && target < MessagesScrollViewer.ScrollableHeight - 16)
-            _userScrolledUp = true;  // scrolling away from bottom
+        // Track the actual target offset. Wheel delta polarity differs from the
+        // visual direction: the reliable signal is whether the target remains
+        // away from the bottom after applying the wheel movement.
+        _userScrolledUp = target < MessagesScrollViewer.ScrollableHeight - 16;
 
         e.Handled = true;
     }
@@ -256,8 +273,7 @@ public sealed partial class ChatPage : UserControl
             {
                 if (!IsStreamingDraft(message) &&
                     _messageElementCache.TryGetValue(message.Id, out var cached) &&
-                    cached.Element is FrameworkElement fe &&
-                    fe.Tag is LiveStreamBodyVisuals v &&
+                    TryGetLiveStreamVisuals(cached.Element, out var v) &&
                     v.CursorTimer.IsEnabled)
                 {
                     v.CursorTimer.Stop();
@@ -279,8 +295,7 @@ public sealed partial class ChatPage : UserControl
             {
                 if (!IsStreamingDraft(message) &&
                     _messageElementCache.TryGetValue(message.Id, out var cached) &&
-                    cached.Element is FrameworkElement fe &&
-                    fe.Tag is LiveStreamBodyVisuals v &&
+                    TryGetLiveStreamVisuals(cached.Element, out var v) &&
                     v.CursorTimer.IsEnabled)
                 {
                     v.CursorTimer.Stop();
@@ -427,6 +442,37 @@ public sealed partial class ChatPage : UserControl
 
         stack = messageStack;
         return true;
+    }
+
+    private static bool TryGetLiveStreamVisuals(UIElement element, out LiveStreamBodyVisuals visuals)
+    {
+        visuals = null!;
+        if (!TryGetMessageContentStack(element, out var stack))
+            return false;
+
+        foreach (var child in stack.Children)
+        {
+            if (child is FrameworkElement { Tag: LiveStreamBodyVisuals live })
+            {
+                visuals = live;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void StopAllCachedStreamTimers()
+    {
+        foreach (var cached in _messageElementCache.Values)
+        {
+            if (TryGetLiveStreamVisuals(cached.Element, out var visuals) &&
+                visuals.CursorTimer.IsEnabled)
+            {
+                visuals.CursorTimer.Stop();
+                visuals.CursorText.Visibility = Visibility.Collapsed;
+            }
+        }
     }
 
     private void SyncMessageChildren(IReadOnlyList<UIElement> elements, string signature)

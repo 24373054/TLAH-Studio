@@ -2,36 +2,29 @@
 
 ## Project Structure & Module Organization
 
-TLAH Studio is a .NET 8 Windows desktop solution rooted at `TLAHStudio.sln`.
-`TLAHStudio.App/` contains the WinUI 3 shell, XAML views, view models, DI setup, and `Assets/`.
-`TLAHStudio.Core/` holds business logic: LLM providers, agent runtime, tool safety, settings, update, privacy, and workspace services.
-`TLAHStudio.Data/` contains the EF Core SQLite context and lightweight schema evolution.
-`TLAHStudio.Updater/` is the standalone updater, `TLAHStudio.Installer/` holds installer metadata, and `TLAHStudio.Core.Tests/` contains xUnit tests.
-Use `tools/` for build, signing, verification, and deployment scripts; keep release outputs in `artifacts/`.
+`TLAHStudio.sln` is a .NET 8 Windows solution. `TLAHStudio.App/` contains the WinUI 3 UI, with views, view models, and runtime assets under `Assets/`. `TLAHStudio.Core/` owns agent orchestration, LLM providers, tools, security, updates, and workspace logic; `TLAHStudio.Data/` contains the EF Core SQLite context. Tests live in `TLAHStudio.Core.Tests/`. The standalone updater and Inno Setup files are in `TLAHStudio.Updater/` and `TLAHStudio.Installer/`. Use `tools/` for CI and release scripts, `docs/` for architecture plans, and `artifacts/` only for generated output.
 
 ## Build, Test, and Development Commands
 
-- `dotnet restore .\TLAHStudio.sln` restores packages using the SDK pinned in `global.json`.
-- `dotnet build .\TLAHStudio.App\TLAHStudio.App.csproj -c Release -p:Platform=x64` builds the desktop app.
-- `dotnet test .\TLAHStudio.Core.Tests\TLAHStudio.Core.Tests.csproj -c Release` runs the xUnit suite.
-- `.\tools\ci.ps1` runs the local quality gate: restore, tests, app build, and updater build.
-- `dotnet publish .\TLAHStudio.App\TLAHStudio.App.csproj -c Release -r win-x64 --self-contained true` creates a self-contained app publish.
-- `.\tools\verify-release.ps1 -Version 3.0.0 -AllowUntrustedAuthenticode` verifies installer metadata, hashes, signatures, and payloads.
+- `dotnet restore .\TLAHStudio.sln` restores packages with the SDK selected by `global.json`.
+- `dotnet build .\TLAHStudio.sln -c Debug` performs a normal development build.
+- `dotnet test .\TLAHStudio.Core.Tests\TLAHStudio.Core.Tests.csproj -c Release` runs all xUnit tests.
+- `.\tools\ci.ps1 -Configuration Release -Platform x64` runs the full gate: restore, dependency audit, tests, and App/Updater builds.
 
-For UI work, open `TLAHStudio.sln` in Visual Studio 2022+ with Windows App SDK workloads enabled.
+For UI debugging and XAML Hot Reload, open `TLAHStudio.sln` in Visual Studio 2022 with the Windows App SDK/WinUI workload and launch `TLAHStudio.App`.
 
 ## Coding Style & Naming Conventions
 
-Use C# with nullable reference types and implicit usings enabled. Keep four-space indentation and file-scoped namespaces. Prefer clear service interfaces (`ISettingsService`), async method names ending in `Async`, and immutable DTOs/records where the surrounding code does. Pair WinUI views and view models by name, for example `ChatPage.xaml` with `ChatPageViewModel`. Keep LLM providers on direct `HttpClient` calls so raw HTTP capture remains intact.
+Use four-space indentation, file-scoped namespaces, nullable reference types, and implicit usings. Name types and public members in PascalCase, locals and parameters in camelCase, private fields `_camelCase`, and interfaces with an `I` prefix. Suffix asynchronous methods with `Async`; prefer records for immutable DTOs. Pair UI types by feature, such as `ChatPage.xaml`, `ChatPage.xaml.cs`, and `ChatPageViewModel.cs`. No repository-wide formatter or linter is configured, so match neighboring code and keep builds warning-free.
 
 ## Testing Guidelines
 
-Tests use xUnit and live in `TLAHStudio.Core.Tests/` as `*Tests.cs`. Name tests with the pattern `MethodOrFeature_Condition_ExpectedResult`. Add focused tests for changes to agent runtime, persistence, tool safety, LLM formatting, privacy redaction, and update verification. Guard Windows-only behavior with `OperatingSystem.IsWindows()` as existing tests do.
+Tests use xUnit and coverlet. Add focused `*Tests.cs` files and descriptive underscore-separated methods such as `VerifySignature_TamperedData_ReturnsFalse`. Run a subset with `dotnet test ... --filter "FullyQualifiedName~UpdateCryptoTests"`. There is no numeric coverage threshold; cover new branches and regressions, especially in agent runtime, persistence, privacy, tool safety, and update verification.
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses short release or feature messages such as `Release 3.0.0 agent GA` and `@ feat(2.10.0-3.0.0): ...`. Keep commits concise, scoped, and version-aware when touching release flow. Pull requests should describe the change, list test results such as `.\tools\ci.ps1`, link related issues, and include screenshots for visible WinUI changes.
+History favors concise, scoped subjects such as `4.9.6 P1-c: Core-layer regression tests`, `fix(build-release): ...`, and `release 4.9.6`. Use version/phase prefixes for release work and a clear scope for focused fixes. Pull requests should summarize behavior changes, link relevant issues, report `.\tools\ci.ps1` results, identify known gaps, and include before/after screenshots for visible WinUI changes.
 
 ## Security & Configuration Tips
 
-Do not commit API keys, user databases, private signing keys, or installer binaries. Runtime user data lives under `%LOCALAPPDATA%\TLAH Studio\data\tlah.db`; app defaults live in `TLAHStudio.App/appsettings.json`. When changing versions, keep project files, installer JSON, `latest.json`, and Inno Setup metadata in sync.
+Never commit API keys, private signing keys, local `.db` files, or generated installers. Keep defaults in `TLAHStudio.App/appsettings.json`; user data belongs under `%LOCALAPPDATA%\TLAH Studio\`. Version changes must keep project files, manifests, installer metadata, and `latest.json` synchronized.

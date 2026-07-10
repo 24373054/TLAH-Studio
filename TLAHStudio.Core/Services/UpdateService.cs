@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -37,7 +38,7 @@ public class UpdateService : IUpdateService
         var state = ReadVersionState(_installPath, AppContext.BaseDirectory);
         CurrentVersion = state.CurrentVersion;
         _updateCheckUrl = state.UpdateCheckUrl;
-        _installId = state.InstallId;
+        _installId = GetOrCreateInstallId(state.InstallId);
     }
 
     internal UpdateService(
@@ -59,6 +60,82 @@ public class UpdateService : IUpdateService
     private static string GenerateInstallId()
     {
         return Guid.NewGuid().ToString("D");
+    }
+
+    internal static string DefaultInstallIdPath
+    {
+        get
+        {
+            var appDataRoot = Environment.GetEnvironmentVariable("TLAH_STUDIO_APPDATA_ROOT");
+            if (string.IsNullOrWhiteSpace(appDataRoot))
+            {
+                appDataRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "TLAH Studio");
+            }
+
+            return Path.Combine(appDataRoot, "config", "install-id.txt");
+        }
+    }
+
+    internal static string GetOrCreateInstallId(string? preferredInstallId, string? statePath = null)
+    {
+        statePath ??= DefaultInstallIdPath;
+        try
+        {
+            if (File.Exists(statePath))
+            {
+                var existing = File.ReadAllText(statePath).Trim();
+                if (!string.IsNullOrWhiteSpace(existing))
+                    return existing;
+            }
+        }
+        catch
+        {
+            // Fall through to a usable in-memory ID when local state is unreadable.
+        }
+
+        var installId = string.IsNullOrWhiteSpace(preferredInstallId)
+            ? GenerateInstallId()
+            : preferredInstallId.Trim();
+        var tempPath = statePath + $".{Guid.NewGuid():N}.tmp";
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+            File.WriteAllText(tempPath, installId, new UTF8Encoding(false));
+            try
+            {
+                File.Move(tempPath, statePath, overwrite: false);
+            }
+            catch (IOException)
+            {
+                // Another process may have won the first-start race. Its ID is
+                // authoritative so every process remains in the same rollout bucket.
+                var winner = File.Exists(statePath) ? File.ReadAllText(statePath).Trim() : string.Empty;
+                if (!string.IsNullOrWhiteSpace(winner))
+                    return winner;
+
+                File.Move(tempPath, statePath, overwrite: true);
+            }
+        }
+        catch
+        {
+            // Updates still work when the config directory is temporarily read-only;
+            // the generated ID simply cannot be guaranteed across this restart.
+        }
+        finally
+        {
+            try { File.Delete(tempPath); } catch { }
+        }
+
+        return installId;
+    }
+
+    internal static int GetRolloutBucket(string installId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(installId ?? string.Empty));
+        return (int)(BinaryPrimitives.ReadUInt32BigEndian(hash) % 100);
     }
 
     internal sealed record VersionState(
@@ -211,11 +288,12 @@ public class UpdateService : IUpdateService
             // 6. Gray release: check rollout percentage against installId hash
             if (root.TryGetProperty("rolloutPercent", out var rp) && rp.ValueKind == JsonValueKind.Number)
             {
-                var rolloutPercent = rp.GetInt32();
+                var rolloutPercent = Math.Clamp(rp.GetInt32(), 0, 100);
+                if (rolloutPercent == 0)
+                    return null;
                 if (rolloutPercent < 100)
                 {
-                    var hash = (uint)_installId.GetHashCode();
-                    var bucket = hash % 100;
+                    var bucket = GetRolloutBucket(_installId);
                     if (bucket >= rolloutPercent)
                     {
                         // This install is not in the rollout group — skip update

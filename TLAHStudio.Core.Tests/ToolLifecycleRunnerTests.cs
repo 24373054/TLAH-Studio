@@ -72,6 +72,24 @@ public class ToolLifecycleRunnerTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ExecutionArguments_UsesUnredactedRuntimeValue()
+    {
+        var tool = new RecordingV3Tool([]);
+        var runner = Runner(tool, Hooks());
+        var request = Request("""{"value":"[REDACTED]"}""") with
+        {
+            ExecutionArgumentsJson = """{"value":"runtime-secret"}"""
+        };
+
+        var outcome = await runner.ExecuteAsync(request);
+
+        Assert.True(outcome.Result.Success);
+        Assert.Equal("executed:runtime-secret", outcome.Result.Output);
+        Assert.Equal(["runtime-secret"], tool.PlannedValues);
+        Assert.True(JsonEquivalent("""{"value":"[REDACTED]"}""", request.Invocation.ArgumentsJson));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_LegacyTool_UsesCompatibilityPath()
     {
         var legacy = new LegacyRecordingTool();

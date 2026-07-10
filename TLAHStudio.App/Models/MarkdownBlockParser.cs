@@ -22,6 +22,12 @@ namespace TLAHStudio.App.Models;
 /// </summary>
 internal static class MarkdownBlockParser
 {
+    private const int MaxMarkdownTextBlockChars = 50_000;
+    private const int MarkdownTextBlockCutTarget = 49_500;
+    private const int MaxCodeBlockChars = 50_000;
+    private const int MaxCodeBlockLines = 3_000;
+    private const int MaxMarkdownLines = 10_000;
+
     private static readonly Regex TableSeparatorRegex = new(
         @"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$",
         RegexOptions.Compiled);
@@ -52,7 +58,7 @@ internal static class MarkdownBlockParser
         }
 
         int i = 0;
-        while (i < lines.Length && i < 10_000)
+        while (i < lines.Length && i < MaxMarkdownLines)
         {
             var line = lines[i];
 
@@ -66,10 +72,12 @@ internal static class MarkdownBlockParser
                 i++;
                 // Consume until the closing fence (a line that is ``` optionally
                 // preceded by whitespace). If no closing fence, the rest is code.
-                // M4.9.6: cap code block at 50K chars / 3000 lines to prevent
-                // runaway StringBuilder or UI freeze on huge code blocks.
+                // Cap code blocks to prevent runaway rendering. Once the cap is
+                // reached, consume through the closing fence so discarded code
+                // is not parsed a second time as ordinary Markdown.
                 var codeStartLine = i;
-                while (i < lines.Length && i - codeStartLine < 3000)
+                var truncated = false;
+                while (i < lines.Length)
                 {
                     var bodyLine = lines[i];
                     if (Regex.IsMatch(bodyLine, @"^\s*```\s*$"))
@@ -77,11 +85,25 @@ internal static class MarkdownBlockParser
                         i++;
                         break;
                     }
+
+                    var separatorChars = code.Length > 0 ? 1 : 0;
+                    if (i - codeStartLine >= MaxCodeBlockLines ||
+                        code.Length + separatorChars + bodyLine.Length > MaxCodeBlockChars)
+                    {
+                        truncated = true;
+                        while (i < lines.Length && !Regex.IsMatch(lines[i], @"^\s*```\s*$"))
+                            i++;
+                        if (i < lines.Length)
+                            i++;
+                        break;
+                    }
+
                     if (code.Length > 0) code.Append('\n');
                     code.Append(bodyLine);
-                    if (code.Length > 50_000) { code.Append("\n[code block truncated]"); break; }
                     i++;
                 }
+                if (truncated)
+                    code.Append("\n[code block truncated for rendering]");
                 blocks.Add(ChatMessageBlock.CodeBlockItem(messageId, role, lang, code.ToString(), idx++));
                 continue;
             }
@@ -123,6 +145,8 @@ internal static class MarkdownBlockParser
             i++;
         }
 
+        if (i < lines.Length)
+            textBuf.AppendLine("[content truncated for rendering]");
         FlushText();
         return blocks;
     }
@@ -138,10 +162,12 @@ internal static class MarkdownBlockParser
 
     private static string TruncateLines(string text)
     {
-        if (text.Length <= 4096) return text;
-        // Find the last newline before 4096 and cut there to keep lines intact.
-        var cut = text.LastIndexOf('\n', 4048);
-        return cut > 0 ? text[..cut] + "\n[text truncated]" : text[..4048] + "…";
+        if (text.Length <= MaxMarkdownTextBlockChars) return text;
+        // Keep the UI responsive on runaway model output while preserving normal long answers.
+        var cut = text.LastIndexOf('\n', MarkdownTextBlockCutTarget);
+        return cut > 0
+            ? text[..cut] + "\n[text truncated for rendering]"
+            : text[..MarkdownTextBlockCutTarget] + "...";
     }
 
     private static List<string> SplitRow(string line)

@@ -183,7 +183,7 @@ Phase 3.1(SDK 升级) ─→ Phase 3.8(可观测回放,经 SDK 暴露)
 3. **CI**:`.\tools\ci.ps1 -Configuration Release -Platform x64` 通过。
 4. **版本同步**:`appsettings.json`、各 `.csproj`、`TLAHStudio.Installer/version.json`、`setup.iss` 的版本号一致。
 5. **文档**:CLAUDE.md 更新新增的架构性子系统;本路线图对应阶段任务标记完成。
-6. **发布**:tag → `build-release.ps1` → 验证 → SCP 上传到 `download.matrixlabs.cn`。
+6. **发布**:`build-release.ps1` → 验证 → commit/tag/push → `deploy.ps1` 原子上传到 `download.matrixlabs.cn`。
 
 ---
 

@@ -1050,6 +1050,7 @@ public sealed class CodeMultiEditAgentTool : IAgentTool
 
 public sealed class CodeApplyPatchAgentTool : IAgentTool
 {
+    private static readonly Lazy<string> GitExecutable = new(ResolveGitExecutable);
     private readonly ISandboxCommandService _sandbox;
 
     public CodeApplyPatchAgentTool(ISandboxCommandService sandbox)
@@ -1107,13 +1108,19 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
                     return new AgentToolResult(false, string.Empty, $"{relative}: {conflict}");
             }
 
-            var check = await RunGitApplyAsync(rootPath, patch, "apply --check --whitespace=nowarn -", ct);
+            foreach (var path in paths)
+            {
+                _ = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, path);
+            }
+
+            var check = await RunGitApplyAsync(rootPath, patch, checkOnly: true, ct);
             if (check.ExitCode != 0)
             {
+                var detail = FirstNonEmpty(check.Stderr, check.Stdout, "git apply --check failed.");
                 return new AgentToolResult(
                     false,
                     AgentToolSupport.Limit($"Patch check failed.\nstdout:\n{check.Stdout}\n\nstderr:\n{check.Stderr}", context.MaxOutputChars),
-                    "git apply --check failed.");
+                    detail);
             }
 
             if (previewOnly)
@@ -1137,7 +1144,7 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
                 backups.Add(await WorkspaceBackupStore.CreateAsync(_sandbox, context.ChatId, full, ct));
             }
 
-            var apply = await RunGitApplyAsync(rootPath, patch, "apply --whitespace=nowarn -", ct);
+            var apply = await RunGitApplyAsync(rootPath, patch, checkOnly: false, ct);
             if (apply.ExitCode != 0)
                 await RestoreBackupsAsync(rootPath, backups, ct);
 
@@ -1182,17 +1189,21 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitApplyAsync(
         string rootPath,
         string patch,
-        string arguments,
+        bool checkOnly,
         CancellationToken ct)
     {
+        var normalizedPatch = patch.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        if (!normalizedPatch.EndsWith('\n'))
+            normalizedPatch += "\n";
+
+        var patchFile = Path.Combine(Path.GetTempPath(), $"tlah-patch-{Guid.NewGuid():N}.patch");
+        await File.WriteAllTextAsync(patchFile, normalizedPatch, new UTF8Encoding(false), ct);
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "git",
-                Arguments = arguments,
+                FileName = GitExecutable.Value,
                 WorkingDirectory = rootPath,
-                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -1201,13 +1212,73 @@ public sealed class CodeApplyPatchAgentTool : IAgentTool
                 StandardErrorEncoding = Encoding.UTF8
             }
         };
-        process.Start();
-        await process.StandardInput.WriteAsync(patch.AsMemory(), ct);
-        process.StandardInput.Close();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        return (process.ExitCode, await stdoutTask, await stderrTask);
+        process.StartInfo.ArgumentList.Add("apply");
+        if (checkOnly)
+            process.StartInfo.ArgumentList.Add("--check");
+        process.StartInfo.ArgumentList.Add("--whitespace=nowarn");
+        process.StartInfo.ArgumentList.Add(patchFile);
+        try
+        {
+            process.Start();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            return (process.ExitCode, await stdoutTask, await stderrTask);
+        }
+        finally
+        {
+            try { File.Delete(patchFile); } catch { }
+        }
+    }
+
+    private static string ResolveGitExecutable()
+    {
+        if (!OperatingSystem.IsWindows())
+            return "git";
+
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return "git";
+
+        foreach (var rawDirectory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var expandedDirectory = Environment.ExpandEnvironmentVariables(rawDirectory.Trim().Trim('"'));
+            var directory = Path.TrimEndingDirectorySeparator(expandedDirectory);
+            if (string.IsNullOrWhiteSpace(directory) || !Path.IsPathRooted(directory))
+                continue;
+
+            var candidate = Path.Combine(directory, "git.exe");
+            if (!File.Exists(candidate))
+                continue;
+
+            var parent = Directory.GetParent(directory);
+            if (parent is not null &&
+                (Path.GetFileName(directory).Equals("cmd", StringComparison.OrdinalIgnoreCase) ||
+                 Path.GetFileName(directory).Equals("bin", StringComparison.OrdinalIgnoreCase)))
+            {
+                foreach (var architecture in new[] { "mingw64", "mingw32" })
+                {
+                    var nativeGit = Path.Combine(parent.FullName, architecture, "bin", "git.exe");
+                    if (File.Exists(nativeGit))
+                        return nativeGit;
+                }
+            }
+
+            return candidate;
+        }
+
+        return "git";
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return string.Empty;
     }
 
     private static async Task RestoreBackupsAsync(

@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
+using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
@@ -122,6 +123,8 @@ public class AgentServiceTests
         if (!OperatingSystem.IsWindows())
             return;
 
+        const string toolToken = "abcdefghijklmnopqrstuvwxyz123456";
+
         await using var db = TestDb.Create();
         var chatService = new ChatService(db);
         var settingsService = new SettingsService(db);
@@ -142,7 +145,7 @@ public class AgentServiceTests
                     "type": "function",
                     "function": {
                       "name": "sandbox_exec",
-                      "arguments": "{\"command\":\"Set-Content approved.txt 'ok'; Get-Content approved.txt\",\"reason\":\"Verify approval resume.\"}"
+                      "arguments": "{\"command\":\"Set-Content approved.txt 'Bearer abcdefghijklmnopqrstuvwxyz123456'; Get-Content approved.txt\",\"reason\":\"Verify approval resume.\"}"
                     }
                   }]
                 }
@@ -168,6 +171,11 @@ public class AgentServiceTests
         Assert.Equal(AgentRunStatuses.AwaitingApproval, pending.AgentRun!.Status);
         Assert.NotNull(pending.AgentRun.PendingApproval);
         Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "approved.txt")));
+        Assert.DoesNotContain(toolToken, pending.AgentRun.PendingApproval!.ArgumentsJson, StringComparison.Ordinal);
+        Assert.Contains(SecretRedactor.Redacted, pending.AgentRun.PendingApproval.ArgumentsJson, StringComparison.Ordinal);
+        var storedInvocation = await db.Set<ToolInvocation>().SingleAsync();
+        Assert.DoesNotContain(toolToken, storedInvocation.ArgumentsJson, StringComparison.Ordinal);
+        Assert.True(ProtectedSecret.IsProtected(storedInvocation.ProtectedArgumentsJson));
 
         await service.SetAgentToolApprovalAsync(
             pending.AgentRun.PendingApproval!.Id,
@@ -181,6 +189,8 @@ public class AgentServiceTests
         // Tool should have been executed (file exists) — V2 engine executes on resume
         Assert.True(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "approved.txt")),
             "Tool should have been executed after approval and resume");
+        Assert.Contains(toolToken, await File.ReadAllTextAsync(
+            Path.Combine(sandbox.GetSandboxRoot(chat.Id), "approved.txt")));
         Assert.True(await db.Set<ToolPolicyRule>().AnyAsync(
             p => p.ChatId == chat.Id &&
                  p.ToolName == "sandbox_exec" &&

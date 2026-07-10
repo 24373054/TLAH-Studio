@@ -111,6 +111,16 @@ internal sealed class StreamingAnswerRenderer
                 }
             }
         }
+        else if (appendOnly && blocks.Count == _lastBlockCount && blocks.Count > 0)
+        {
+            // The stable prefix grew within the same Markdown block (for example
+            // a streaming paragraph or heading). Reusing the old element would
+            // leave the UI stuck on the earlier text, so replace just the final
+            // stable element and keep the suffix slot intact.
+            var replacement = ChatBlockRenderer.Render(blocks[^1], _isUser, _isCompact, _isDark);
+            if (replacement != null && _stableElementCount > 0)
+                _panel.Children[_stableElementCount - 1] = replacement;
+        }
         else if (!appendOnly)
         {
             // Full rebuild path.
@@ -124,9 +134,6 @@ internal sealed class StreamingAnswerRenderer
                 }
             }
         }
-        // else: appendOnly but no new blocks (stableText grew but same block
-        // count) — nothing to do, existing elements remain valid.
-
         _lastStableText = newStableText;
         _lastBlockCount = blocks.Count;
     }

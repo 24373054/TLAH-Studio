@@ -189,6 +189,22 @@ public sealed partial class MessageInputControl : UserControl
         }
         var token = trimmed[1..].ToLowerInvariant();
         var commands = await EnsureCommandsAsync();
+
+        var current = InputBox.Text ?? string.Empty;
+        if (!string.Equals(current, text, StringComparison.Ordinal))
+        {
+            var currentTrimmed = current.TrimStart();
+            if (!currentTrimmed.StartsWith('/') ||
+                currentTrimmed.Contains(' ') ||
+                currentTrimmed.Contains('\n'))
+            {
+                HideSlashPopup();
+                return;
+            }
+
+            token = currentTrimmed[1..].ToLowerInvariant();
+        }
+
         var filtered = commands.Where(c => c.Name.StartsWith(token, StringComparison.OrdinalIgnoreCase))
                                .Take(40)
                                .ToList();

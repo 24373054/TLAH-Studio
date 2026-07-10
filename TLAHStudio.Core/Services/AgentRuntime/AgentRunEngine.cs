@@ -575,6 +575,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             AgentRunId = state.RunId, AgentStepId = step.Id,
                             ToolName = matchingCall.Name, ProviderCallId = matchingCall.Id,
                             ArgumentsJson = SecretRedactor.RedactJson(matchingCall.ArgumentsJson),
+                            ProtectedArgumentsJson = ProtectedLocalData.Protect(matchingCall.ArgumentsJson),
                             SafetyLevel = safety.Level, SafetySummary = safety.Summary,
                             SafetyJson = SecretRedactor.RedactJson(safety.PreviewJson),
                             RequiresApproval = tool.Metadata.RequiresApproval
@@ -728,11 +729,17 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 {
                     var stepMeta = await BuildRuntimeContextMetadataAsync(state.ChatId, state.RunId, ct);
                     var stepSandbox = _sandboxCommandService.GetSandboxRoot(state.ChatId);
-                    _ = Task.Run(() =>
-                        _sessionMemory.ExtractAsync(state.ChatId, state.RunId, state.Messages,
-                            stepSandbox, stepMeta.FilesChanged, stepMeta.CommandsRun,
-                            stepMeta.RecentFailures, stepMeta.OpenQuestions, stepMeta.NextActions,
-                            CancellationToken.None), CancellationToken.None);
+                    var messageSnapshot = state.Messages.ToArray();
+                    _ = Task.Run(() => ExtractSessionMemorySafelyAsync(
+                        state.ChatId,
+                        state.RunId,
+                        messageSnapshot,
+                        stepSandbox,
+                        stepMeta.FilesChanged.ToArray(),
+                        stepMeta.CommandsRun.ToArray(),
+                        stepMeta.RecentFailures.ToArray(),
+                        stepMeta.OpenQuestions.ToArray(),
+                        stepMeta.NextActions.ToArray()), CancellationToken.None);
                     _sessionMemoryLastWriteEstimate = currentTokens;
                     _sessionMemoryCallCount = 0;
                 }
@@ -1398,6 +1405,37 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         return evt;
     }
 
+    private async Task ExtractSessionMemorySafelyAsync(
+        Guid chatId,
+        Guid runId,
+        IReadOnlyList<MessagePayload> messages,
+        string sandboxRoot,
+        IReadOnlyList<string> filesChanged,
+        IReadOnlyList<string> commandsRun,
+        IReadOnlyList<string> recentFailures,
+        IReadOnlyList<string> openQuestions,
+        IReadOnlyList<string> nextActions)
+    {
+        try
+        {
+            await _sessionMemory.ExtractAsync(
+                chatId,
+                runId,
+                messages,
+                sandboxRoot,
+                filesChanged,
+                commandsRun,
+                recentFailures,
+                openQuestions,
+                nextActions,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Session memory extraction failed: {ex}");
+        }
+    }
+
     private async Task<AgentRunSnapshot> BuildSnapshotAsync(AgentRunState state, CancellationToken ct)
     {
         var pending = await _db.Set<ToolInvocation>()
@@ -1568,13 +1606,26 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     {
         var events = new List<AgentEvent>();
         var step = await _db.Set<AgentStep>().FirstAsync(s => s.Id == invocation.AgentStepId, ct);
+        var executionArguments = ProtectedLocalData.Reveal(invocation.ProtectedArgumentsJson);
+        if (string.IsNullOrWhiteSpace(executionArguments))
+        {
+            executionArguments = state.Messages
+                .SelectMany(m => m.ToolCalls ?? [])
+                .LastOrDefault(call => string.Equals(
+                    call.Id,
+                    invocation.ProviderCallId,
+                    StringComparison.Ordinal))
+                ?.ArgumentsJson;
+        }
+        if (string.IsNullOrWhiteSpace(executionArguments))
+            executionArguments = invocation.ArgumentsJson;
 
         if (!_agentTools.TryGet(invocation.ToolName, out var tool))
         {
             invocation.Status = ToolInvocationStatuses.Failed;
             step.Status = AgentStepStatuses.Failed;
             await CompleteInvocationWithResultAsync(state, new ToolBatchItem(
-                new LlmToolCall(invocation.ProviderCallId, invocation.ToolName, invocation.ArgumentsJson),
+                new LlmToolCall(invocation.ProviderCallId, invocation.ToolName, executionArguments),
                 new PlaceholderTool(), invocation, ToolSafetyAssessment.LowRead("fallback", "fallback")),
                 step, new AgentToolResult(false, string.Empty, $"Tool unavailable: {invocation.ToolName}"), options, events, ct);
             return (null, events);
@@ -1583,10 +1634,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         var preview = await _toolLifecycleRunner.PreviewAsync(
             state.ChatId,
             invocation.ToolName,
-            invocation.ArgumentsJson,
+            executionArguments,
             ct);
         var item = new ToolBatchItem(
-            new LlmToolCall(invocation.ProviderCallId, invocation.ToolName, invocation.ArgumentsJson),
+            new LlmToolCall(invocation.ProviderCallId, invocation.ToolName, executionArguments),
             tool,
             invocation,
             preview.Safety,
@@ -1629,7 +1680,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             new ToolExecutionRequest(CreateRunShell(state), item.Invocation,
                 options.CommandTimeoutSeconds,
                 options.MaxCommandOutputChars,
-                AgentPermissionModes.Normalize(options.PermissionMode)), ct);
+                AgentPermissionModes.Normalize(options.PermissionMode),
+                item.ToolCall.ArgumentsJson), ct);
 
         item.Invocation.SafetyLevel = scheduled.Safety.Level;
         item.Invocation.SafetySummary = scheduled.Safety.Summary;

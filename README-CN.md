@@ -4,7 +4,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue?logo=windows)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-4.7.0-brightgreen)](https://download.matrixlabs.cn/tlah/windows/latest.json)
+[![Version](https://img.shields.io/badge/version-4.9.7-brightgreen)](https://download.matrixlabs.cn/tlah/windows/latest.json)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](./LICENSE)
 
 TLAH Studio 是一款 Windows 原生 AI 智能体（Agent）工作台，使用 C#、WinUI 3 和 Windows App SDK 构建。它将聊天对话、工具执行、MCP 集成、提示词调试和持久化活动时间线融于一个桌面应用中。
@@ -47,7 +47,7 @@ TLAH Studio 是一款 Windows 原生 AI 智能体（Agent）工作台，使用 C
 - 帮助排查提供商兼容性问题
 
 ### 🔄 自动更新
-- RSA 数字签名保证更新包完整性
+- ECDSA P-256 数字签名保证更新元数据完整性
 - SHA256 校验防止下载损坏
 - 支持灰度发布（按安装 ID 哈希分桶，0-100% 可控）
 - 支持强制更新（最低版本检查）
@@ -182,9 +182,9 @@ dotnet publish TLAHStudio.App\TLAHStudio.App.csproj `
 | `dotnet build TLAHStudio.App\TLAHStudio.App.csproj -c Release -p:Platform=x64` | App 项目 Release 构建 |
 | `dotnet test TLAHStudio.Core.Tests\TLAHStudio.Core.Tests.csproj -c Release` | 运行测试 |
 | `dotnet publish ... -r win-x64 --self-contained true` | 独立发布 |
-| `.\tools\ci.ps1 -Configuration Release -Platform x64` | CI 质量门 |
+| `.\tools\ci.ps1 -Configuration Release -Platform x64` | 依赖漏洞、测试和 Release 构建质量门 |
 | `cd TLAHStudio.Installer && iscc setup.iss` | 编译安装包 |
-| `.\tools\verify-release.ps1 -Version 4.7.0 -AllowUntrustedAuthenticode` | 验证发布包 |
+| `.\tools\verify-release.ps1 -Version 4.9.7 -AllowUntrustedAuthenticode` | 验证发布包 |
 
 ### 架构概览
 
@@ -251,15 +251,14 @@ TLAH Studio 采用分层架构，核心业务流程如下：
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version 4.7.0 `
+  -Version 4.9.7 `
   -ReleaseNotes "<发布说明>" `
   -CertificateThumbprint F6DC173C746447A05FF83B9F7162121344CC09F0 `
   -AllowUntrustedCertificate `
-  -ForceSmokeTest `
-  -Upload
+  -ForceSmokeTest
 ```
 
-此脚本自动完成：构建 → Authenticode 签名 → 打包 Inno Setup → 计算 SHA256 → 更新 `latest.json` → RSA 签名 → 冒烟测试 → 上传到服务器。
+此脚本自动完成：漏洞审计与 CI → publish → Authenticode 签名 → Inno Setup → SHA256 → 更新 `latest.json` → ECDSA P-256 签名 → 安装和启动烟测。确认产物后提交并创建 `v4.9.7` 标签，推送 Git，再运行 `.\tools\deploy.ps1 -Server <ssh-user>@download.matrixlabs.cn` 原子上传该组已验证文件。
 
 ### 版本同步清单
 
@@ -273,16 +272,16 @@ TLAH Studio 采用分层架构，核心业务流程如下：
 | `TLAHStudio.Installer/latest.json` | `version` |
 | `TLAHStudio.Installer/setup.iss` | `#define MyAppVersion` |
 
-当前版本：**4.7.0**，语义化版本号 (`Major.Minor.Patch`)。
+当前版本：**4.9.7**，语义化版本号 (`Major.Minor.Patch`)。
 
 ### 更新机制
 
 ```
-客户端启动 (3s 后)
+客户端启动
     ↓
 获取 latest.json ← https://download.matrixlabs.cn/tlah/windows/
     ↓
-验证 RSA 数字签名
+验证 ECDSA P-256 数字签名
     ↓
 检查版本 > 当前版本？(考虑 rolloutPercent 灰度分桶)
     ↓ 是
@@ -375,7 +374,8 @@ BackgroundTaskRecord
 
 ### 版本历史
 
-- **v4.7.0** — 当前版本
+- **v4.9.7** — 当前版本：可靠性、安全依赖、后台任务、更新灰度与发布原子性修复
+- **v4.9.4–v4.9.6** — WinUI 消息渲染、输入交互和回归加固
 - **v4.0** — 智能体平台：任务层、上下文恢复、后台智能体、SDK
 - **v3.3** — 稳定性：统一工具生命周期、安全预览、效果规划、钩子系统
 - **v3.0** — 智能体 GA：运行时提取、UI 虚拟化、工具调度器、MCP 集成
@@ -390,13 +390,13 @@ BackgroundTaskRecord
 
 | 脚本 | 用途 |
 |---|---|
-| `ci.ps1` | 本地 CI：还原 → 测试 → Release 构建 |
-| `build-release.ps1` | 全量发布：构建 → 签名 → 打包 → 验证 → 冒烟测试 → 上传 |
+| `ci.ps1` | 本地 CI：还原 → NuGet 漏洞审计 → 测试 → Release 构建 |
+| `build-release.ps1` | 全量发布构建：版本同步 → CI → 签名 → 打包 → 验证 → 冒烟测试 |
 | `verify-release.ps1` | 验证发布：`latest.json` 签名检查、SHA256 校验、Authenticode 验证、可选冒烟安装 |
-| `deploy.ps1` | 通过 SCP 上传安装包和元数据到更新服务器 |
-| `sign-latest.ps1` | 用 RSA 私钥对 `latest.json` 进行数字签名 |
+| `deploy.ps1` | 验证后暂存上传，并以 `latest.json` 为最后提交点提升线上文件 |
+| `sign-latest.ps1` | 用 ECDSA P-256 私钥对 `latest.json` 进行数字签名 |
 | `sign-authenticode.ps1` | 对安装包应用 Authenticode 数字签名 |
-| `generate-keys.ps1` | 生成 RSA 密钥对用于更新签名 |
+| `generate-keys.ps1` | 生成 ECDSA P-256 密钥对用于更新签名 |
 
 ---
 

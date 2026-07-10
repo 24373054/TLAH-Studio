@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 
@@ -131,17 +132,16 @@ public sealed class SessionMemoryService : ISessionMemoryService
         if (age > StaleThreshold)
             return; // abandoned — don't wait
 
+        var acquired = false;
         try
         {
-            await _lock.WaitAsync(timeout, ct);
+            acquired = await _lock.WaitAsync(timeout, ct);
         }
         catch (OperationCanceledException) { }
         finally
         {
-            if (_lock.CurrentCount == 0)
-            {
-                try { _lock.Release(); } catch { }
-            }
+            if (acquired)
+                _lock.Release();
         }
     }
 
@@ -193,7 +193,7 @@ public sealed class SessionMemoryService : ISessionMemoryService
 
         sb.AppendLine("# Workflow");
         foreach (var c in commandsRun.Take(10))
-            sb.AppendLine($"- `{Truncate(c, 200)}`");
+            sb.AppendLine($"- `{Truncate(SecretRedactor.RedactText(c), 200)}`");
         if (commandsRun.Count == 0)
             sb.AppendLine("_(none yet)_");
         sb.AppendLine();
@@ -293,7 +293,7 @@ public sealed class SessionMemoryService : ISessionMemoryService
             foreach (var key in keys)
             {
                 if (root.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String)
-                    return $"{key}={Truncate(val.GetString() ?? "", 60)}";
+                    return $"{key}={Truncate(SecretRedactor.RedactText(val.GetString() ?? ""), 60)}";
             }
             return null;
         }

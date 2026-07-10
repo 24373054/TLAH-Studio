@@ -84,35 +84,45 @@ public class BackgroundTaskService : IBackgroundTaskService
 
         _ = Task.Run(async () =>
         {
+            BackgroundTask finalState;
             try
             {
                 await action(cts.Token);
-                var completed = task with
+                finalState = task with
                 {
                     Status = "completed", CompletedAt = DateTime.UtcNow, ResultSummary = "Task completed successfully."
                 };
-                _running[task.Id] = (cts, completed);
-                await UpdateRecordAsync(completed);
             }
             catch (OperationCanceledException)
             {
-                var cancelled = task with
+                finalState = task with
                 {
                     Status = "cancelled", CompletedAt = DateTime.UtcNow, Error = "Cancelled by user."
                 };
-                _running[task.Id] = (cts, cancelled);
-                await UpdateRecordAsync(cancelled);
             }
             catch (Exception ex)
             {
-                var failed = task with
+                finalState = task with
                 {
                     Status = "failed", CompletedAt = DateTime.UtcNow, Error = ex.Message
                 };
-                _running[task.Id] = (cts, failed);
-                await UpdateRecordAsync(failed);
             }
-        }, ct);
+
+            _running[task.Id] = (cts, finalState);
+            try
+            {
+                await UpdateRecordAsync(finalState);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Background task persistence failed: {ex}");
+            }
+            finally
+            {
+                _running.TryRemove(task.Id, out _);
+                cts.Dispose();
+            }
+        }, CancellationToken.None);
 
         return task;
     }
@@ -122,7 +132,7 @@ public class BackgroundTaskService : IBackgroundTaskService
         await _dbGate.WaitAsync(ct);
         try
         {
-            var query = _db.Set<BackgroundTaskRecord>().AsQueryable();
+            var query = _db.Set<BackgroundTaskRecord>().AsNoTracking();
             if (chatId.HasValue)
                 query = query.Where(r => r.ChatId == chatId.Value);
 
@@ -147,7 +157,9 @@ public class BackgroundTaskService : IBackgroundTaskService
         await _dbGate.WaitAsync(ct);
         try
         {
-            var record = await _db.Set<BackgroundTaskRecord>().FirstOrDefaultAsync(r => r.Id == taskId, ct);
+            var record = await _db.Set<BackgroundTaskRecord>()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == taskId, ct);
             if (record == null) return null;
 
             return new BackgroundTask(
@@ -224,7 +236,11 @@ public class BackgroundTaskService : IBackgroundTaskService
         var builderType = typeof(DbContextOptionsBuilder<>).MakeGenericType(_dbContextType);
         var builder = (DbContextOptionsBuilder)Activator.CreateInstance(builderType)!;
         builder.UseSqlite(_connectionString);
-        var options = builderType.GetProperty(nameof(DbContextOptionsBuilder.Options))!.GetValue(builder);
+        var options = builderType.GetProperty(
+            nameof(DbContextOptionsBuilder.Options),
+            System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.DeclaredOnly)!.GetValue(builder);
         return (DbContext)Activator.CreateInstance(_dbContextType, options!)!;
     }
 }

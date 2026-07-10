@@ -771,7 +771,10 @@ public class LlmService : ILlmService
         invocation.ApprovedAt = DateTime.UtcNow;
         // M4.9.0: Update arguments with user-provided answers (AskUserQuestion).
         if (!string.IsNullOrWhiteSpace(updatedArgumentsJson))
-            invocation.ArgumentsJson = updatedArgumentsJson;
+        {
+            invocation.ArgumentsJson = SecretRedactor.RedactJson(updatedArgumentsJson);
+            invocation.ProtectedArgumentsJson = ProtectedLocalData.Protect(updatedArgumentsJson);
+        }
         invocation.Status = approved
             ? ToolInvocationStatuses.Approved
             : ToolInvocationStatuses.Denied;
@@ -1221,6 +1224,7 @@ public class LlmService : ILlmService
                     ToolName = toolCall.Name,
                     ProviderCallId = toolCall.Id,
                     ArgumentsJson = SecretRedactor.RedactJson(toolCall.ArgumentsJson),
+                    ProtectedArgumentsJson = ProtectedLocalData.Protect(toolCall.ArgumentsJson),
                     SafetyLevel = safety.Level,
                     SafetySummary = safety.Summary,
                     SafetyJson = SecretRedactor.RedactJson(safety.PreviewJson),
@@ -1652,11 +1656,24 @@ public class LlmService : ILlmService
         }
         else
         {
+            var executionArguments = ProtectedLocalData.Reveal(invocation.ProtectedArgumentsJson);
+            if (string.IsNullOrWhiteSpace(executionArguments))
+            {
+                executionArguments = state.Messages
+                    .SelectMany(m => m.ToolCalls ?? [])
+                    .LastOrDefault(call => string.Equals(
+                        call.Id,
+                        invocation.ProviderCallId,
+                        StringComparison.Ordinal))
+                    ?.ArgumentsJson;
+            }
+            if (string.IsNullOrWhiteSpace(executionArguments))
+                executionArguments = invocation.ArgumentsJson;
             var safety = ToolSafetyKernel.Assess(
                 _sandboxCommandService,
                 run.ChatId,
                 invocation.ToolName,
-                invocation.ArgumentsJson);
+                executionArguments);
             invocation.SafetyLevel = safety.Level;
             invocation.SafetySummary = safety.Summary;
             invocation.SafetyJson = SecretRedactor.RedactJson(safety.PreviewJson);
@@ -1701,7 +1718,7 @@ public class LlmService : ILlmService
                     safety.Category,
                     safety.IsReadOnly,
                     safety.IsWriteOperation,
-                    render = tool.RenderToolUse(invocation.ArgumentsJson, safety)
+                    render = tool.RenderToolUse(executionArguments, safety)
                 },
                 step.Id,
                 invocation.Id,
@@ -1712,7 +1729,8 @@ public class LlmService : ILlmService
                     invocation,
                     options.CommandTimeoutSeconds,
                     options.MaxCommandOutputChars,
-                    AgentPermissionModes.Normalize(options.PermissionMode)),
+                    AgentPermissionModes.Normalize(options.PermissionMode),
+                    executionArguments),
                 ct);
             safety = scheduled.Safety;
             invocation.SafetyLevel = safety.Level;

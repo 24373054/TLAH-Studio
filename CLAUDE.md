@@ -41,10 +41,10 @@ dotnet publish TLAHStudio.App/TLAHStudio.App.csproj -c Release -r win-x64 --self
 .\tools\ci.ps1 -Configuration Release -Platform x64
 
 # Release build + sign + verify + upload
-.\tools\build-release.ps1 -Version 4.9.3 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest -Upload
+.\tools\build-release.ps1 -Version 4.9.7 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest
 
 # Verify an existing release
-.\tools\verify-release.ps1 -Version 4.9.3 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version 4.9.7 -AllowUntrustedAuthenticode
 
 # Run a single test (filter by name)
 dotnet test TLAHStudio.Core.Tests/TLAHStudio.Core.Tests.csproj -c Release --filter "FullyQualifiedName~SkillLoaderV2Tests"
@@ -65,7 +65,7 @@ Requires Visual Studio 2022+ with Windows App SDK / WinUI workloads. Open `TLAHS
 | **TLAHStudio.Data** | net8.0 | classlib | EF Core `TlahDbContext` — single-file data layer with 20+ entity sets and lightweight SQLite migrations |
 | **TLAHStudio.App** | net8.0-windows | WinUI 3 | Desktop app shell: XAML Views, ViewModels (MVVM with CommunityToolkit.Mvvm), DI via `Microsoft.Extensions.Hosting` |
 | **TLAHStudio.Updater** | net8.0-windows | console | Standalone updater (single-file published): waits for main app exit → runs Inno Setup installer silently → relaunches |
-| **TLAHStudio.Core.Tests** | net8.0 | xUnit | ~25 test classes / 258 tests covering LLM, agent runtime, tools, safety, persistence, update, privacy, release, foundation v2, permission modes |
+| **TLAHStudio.Core.Tests** | net8.0 | xUnit | 295 tests covering LLM, agent runtime, tools, safety, persistence, update, privacy, release, foundation v2, permission modes |
 
 **Platform targets:** x86, x64, ARM64 (App). Updater publishes as single-file with native self-extract + compression.
 
@@ -74,7 +74,7 @@ Requires Visual Studio 2022+ with Windows App SDK / WinUI workloads. Open `TLAHS
 
 ### Key NuGet packages
 - **App**: `Microsoft.WindowsAppSDK` 2.1.3, `CommunityToolkit.Mvvm` 8.4.0, `Microsoft.Extensions.Hosting` 8.0.1
-- **Core**: `Microsoft.EntityFrameworkCore.Sqlite` 8.0.14, `Microsoft.Extensions.Http` 8.0.1, `System.Security.Cryptography.ProtectedData` 8.0.0
+- **Core**: `Microsoft.EntityFrameworkCore.Sqlite` 8.0.28, `SQLitePCLRaw.bundle_e_sqlite3` 3.0.3, `Microsoft.Extensions.Http` 8.0.1, `System.Security.Cryptography.ProtectedData` 8.0.0
 - **Tests**: xUnit 2.5.3, `Microsoft.NET.Test.Sdk` 17.8.0, `coverlet.collector` 6.0.0
 
 ## Core Layer — Key Namespaces
@@ -254,7 +254,7 @@ Key entities: `Chat` → `Message` + `Turn` + `AgentRun` + `ProjectSpace` + `Con
 - `.tlah_context/session-memory.md` persisted by `ISessionMemoryService` at each step.
 - `.tlah_context/tool-results/` — persisted large tool outputs inside a workspace/sandbox
 - `%LOCALAPPDATA%\TLAH Studio\skills\` — user-level skills (created on first skill install)
-- `%LOCALAPPDATA%\TLAH Studio\.tlah\skills\` & `.tlah/output-styles\` — per-workspace directories, auto-created when `WorkspaceRootService.SetRootAsync` is called.
+- `<workspace>/.tlah/skills/` and `<workspace>/.tlah/output-styles/` — per-workspace directories, auto-created when `WorkspaceRootService.SetRootAsync` is called.
 - `appsettings.Development.json` — gitignored; local overrides only
 
 ## Update & Deployment Architecture
@@ -265,7 +265,7 @@ Updates are delivered through `https://download.matrixlabs.cn/tlah/windows/`. Th
 2. **Metadata**: `latest.json` contains version, channel, `installerUrl`, SHA256, `forceUpdate`, `minSupportedVersion`, `rolloutPercent` (0-100 for canary)
 3. **Sign**: `latest.json` is ECDSA P-256 + SHA-256 signed → detached Base64 `latest.json.sig` (keys via `tools/generate-keys.ps1`)
 4. **Upload**: installer, `latest.json`, `latest.json.sig` to update server
-5. **Client**: On startup (3s delay), fetches `latest.json` → verifies RSA signature → checks version → downloads installer → SHA256 verify → launches `TLAHStudio.Updater.exe` → main app exits → silent Inno Setup install → relaunches new version
+5. **Client**: On startup, fetches `latest.json` → verifies its ECDSA P-256 signature → checks version → downloads installer → SHA256 verify → launches `TLAHStudio.Updater.exe` → main app exits → silent Inno Setup install → relaunches new version
 
 Rollout uses install-ID-based hashing for canary percentages. Force-update when `forceUpdate: true` or `minSupportedVersion` exceeds client version.
 
@@ -277,9 +277,9 @@ Rollout uses install-ID-based hashing for canary percentages. Force-update when 
 | `tools/verify-release.ps1` | Validate installer: `latest.json` signature, SHA256, Authenticode, optional smoke install |
 | `tools/build-release.ps1` | Full release pipeline: build, sign, verify, smoke test, upload |
 | `tools/deploy.ps1` | Deploy to update server via SCP |
-| `tools/sign-latest.ps1` | Sign `latest.json` with RSA private key |
+| `tools/sign-latest.ps1` | Sign `latest.json` with an ECDSA P-256 private key |
 | `tools/sign-authenticode.ps1` | Apply Authenticode signature to installer |
-| `tools/generate-keys.ps1` | Generate RSA key pair for update signing |
+| `tools/generate-keys.ps1` | Generate an ECDSA P-256 key pair for update signing |
 
 ## Version Conventions
 
@@ -289,7 +289,7 @@ Version is stored in multiple places and must be kept in sync:
 - `TLAHStudio.Installer/version.json` and `TLAHStudio.Installer/latest.json`
 - `setup.iss` → `#define MyAppVersion`
 
-Semantic versioning (`Major.Minor.Patch`). Current: **4.9.3**. Release history this cycle: 4.8.0 (foundation fixes), 4.9.0 (agent autonomy), 4.9.1 (skill/UI/CRLF fixes + de-Claude text), 4.9.2 (5.x predecessor — post-compact skill/MCP/plan re-injection, Plugin end-to-end activation, OutputStyles & Skill priority fix project>user>built-in, managed skill layer, AskUserQuestion preview, CompactionSkipped event + reset, YAML array frontmatter, AgentToolRegistry dynamic registration), 4.9.3 (fix: Full-access permission button displayed as Ask; activity timeline tree depth so child events indent under parent). The 5.0.0 Phase 2 (multi-agent orchestration) and 5.1+ Phase 3 (platform & differentiation) plans are the next milestones — see `docs/TLAH_5_0_PHASE2_ORCHESTRATION.md` and `docs/TLAH_5_1_PHASE3_PLATFORM.md`.
+Semantic versioning (`Major.Minor.Patch`). Current: **4.9.7**. Releases 4.9.4-4.9.6 rebuilt the WinUI rendering/input experience and added regression hardening; 4.9.7 fixes background-task persistence, stable rollout identity, protected resumable tool arguments/checkpoints, SessionMemory races, Windows patch application, vulnerable dependencies, and atomic deployment. The 5.0.0 Phase 2 (multi-agent orchestration) and 5.1+ Phase 3 (platform & differentiation) plans are the next milestones — see `docs/TLAH_5_0_PHASE2_ORCHESTRATION.md` and `docs/TLAH_5_1_PHASE3_PLATFORM.md`.
 
 ## Key Architectural Patterns
 

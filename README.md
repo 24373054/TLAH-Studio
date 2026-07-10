@@ -50,17 +50,31 @@ Open `TLAHStudio.sln` in Visual Studio for XAML Hot Reload and desktop debugging
 
 ## Release
 
-Build, sign, verify, and upload a release:
+Build, sign, and smoke-test the release locally first:
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version 4.3.1 `
-  -ReleaseNotes "<release notes>" `
+  -Version 4.9.7 `
+  -ReleaseNotes "Reliability, security, and release-pipeline fixes." `
   -CertificateThumbprint F6DC173C746447A05FF83B9F7162121344CC09F0 `
   -AllowUntrustedCertificate `
-  -ForceSmokeTest `
-  -Upload
+  -ForceSmokeTest
 ```
+
+After reviewing the generated metadata, commit and tag that exact state, push it,
+then atomically upload the already-verified files:
+
+```powershell
+git add -A
+git commit -m "release 4.9.7"
+git tag -a v4.9.7 -m "TLAH Studio 4.9.7"
+git push origin main
+git push origin v4.9.7
+.\tools\deploy.ps1 -Server <ssh-user>@download.matrixlabs.cn
+```
+
+`tools\ci.ps1` is part of the release build and rejects known vulnerable NuGet
+dependencies before running tests and Release builds.
 
 The current self-signed Authenticode certificate is:
 
@@ -72,7 +86,7 @@ Thumbprint: F6DC173C746447A05FF83B9F7162121344CC09F0
 Verify an existing release:
 
 ```powershell
-.\tools\verify-release.ps1 -Version 4.3.1 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version 4.9.7 -AllowUntrustedAuthenticode
 ```
 
 Generated files:
