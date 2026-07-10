@@ -154,6 +154,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
         try
         {
+            options = ApplyPersistedPermissionOptions(state, options);
+            contextOptions = BuildContextOptions(options);
             // Build system prompt with memory
             var systemPrompt = await BuildSystemPromptAsync(state, options.PermissionMode, ct);
             var effective = await _settingsService.GetEffectiveSettingsAsync(state.ChatId, ct);
@@ -179,6 +181,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 events.AddRange(pendingResult.Events);
                 if (pendingResult.Frame != null)
                     frameProgress?.Report(pendingResult.Frame);
+
+                options = ApplyPersistedPermissionOptions(state, options);
+                systemPrompt = await BuildSystemPromptAsync(state, options.PermissionMode, ct);
             }
 
             // Main agent loop
@@ -620,8 +625,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         var policy = await _toolPlatform.EvaluatePolicyAsync(
                             state.ChatId, item.ToolCall.Name, item.ToolCall.ArgumentsJson, item.Safety, ct);
 
-                        var bypassPermissions = AgentPermissionModes.IsBypass(options.PermissionMode);
-                        if (!bypassPermissions && (policy.IsDenied || item.Safety.IsBlocked))
+                        if (policy.IsDenied || item.Safety.IsBlocked)
                         {
                             await HandleDeniedInvocationAsync(state, item, step, policy.IsDenied ? "denied_by_policy" : "blocked_by_safety", options, events, ct);
                             continue;
@@ -641,10 +645,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             safetyRequiresApproval = true;
                         }
 
-                        var needsApproval = !options.AutoApproveTools
-                            ? ((item.Tool.Metadata.RequiresApproval && !policy.IsAllowed) ||
-                               (safetyRequiresApproval && !policy.IsAllowed))
-                            : (item.Safety.BypassImmune && !policy.IsAllowed);
+                        var needsApproval = item.Tool.RequiresUserInteraction ||
+                            (state.IsPlanMode &&
+                             (item.Safety.IsWriteOperation || item.Tool.Metadata.IsDestructive ||
+                              !item.Safety.IsReadOnly)) ||
+                            (!options.AutoApproveTools
+                                ? ((item.Tool.Metadata.RequiresApproval && !policy.IsAllowed) ||
+                                   (safetyRequiresApproval && !policy.IsAllowed))
+                                : (item.Safety.BypassImmune && !policy.IsAllowed));
 
                         if (needsApproval)
                         {
@@ -687,22 +695,12 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         var execResult = await ExecuteSingleInvocationAsync(state, item, step, options, events, ct);
                         frameProgress?.Report(execResult.Frame ?? AgentRunFrame.Empty(stepNumber, AgentRunFrameKinds.ToolResult));
 
-                        // M4.9.0: Plan mode state transitions.
-                        if (string.Equals(item.ToolCall.Name, AgentToolNames.EnterPlanMode, StringComparison.OrdinalIgnoreCase))
-                        {
-                            state.IsPlanMode = true;
-                            state.PrePlanMode = options.PermissionMode;
-                        }
-                        else if (string.Equals(item.ToolCall.Name, AgentToolNames.ExitPlanMode, StringComparison.OrdinalIgnoreCase))
-                        {
-                            state.IsPlanMode = false;
-                            // Restore pre-plan mode, with circuit breaker: never
-                            // restore to Plan (shouldn't happen, but guard).
-                            var restored = state.PrePlanMode ?? AgentPermissionModes.RequestApproval;
-                            if (restored == AgentPermissionModes.Plan)
-                                restored = AgentPermissionModes.RequestApproval;
-                            options = options with { PermissionMode = restored };
-                        }
+                        var priorPermissionMode = options.PermissionMode;
+                        var priorAutoApprove = options.AutoApproveTools;
+                        options = ApplyPersistedPermissionOptions(state, options);
+                        if (!string.Equals(priorPermissionMode, options.PermissionMode, StringComparison.Ordinal) ||
+                            priorAutoApprove != options.AutoApproveTools)
+                            systemPrompt = await BuildSystemPromptAsync(state, options.PermissionMode, ct);
                     }
 
                     if (approvalNeeded) break;
@@ -1659,6 +1657,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             return (new AgentRunFrame(step.StepNumber, AgentRunFrameKinds.ToolResult, events.ToArray()), events);
         }
 
+        // Re-check at the execution boundary. An invocation may have been
+        // approved before a policy changed or before the process was resumed.
+        var policy = await _toolPlatform.EvaluatePolicyAsync(
+            state.ChatId, item.ToolCall.Name, item.ToolCall.ArgumentsJson, item.Safety, ct);
+        if (policy.IsDenied || item.Safety.IsBlocked)
+        {
+            await HandleDeniedInvocationAsync(
+                state, item, step,
+                policy.IsDenied ? "denied_by_policy" : "blocked_by_safety",
+                options, events, ct);
+            return (new AgentRunFrame(step.StepNumber, AgentRunFrameKinds.ToolResult, events.ToArray()), events);
+        }
+
         item.Invocation.Status = ToolInvocationStatuses.Running;
         item.Invocation.StartedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
@@ -1787,6 +1798,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
         state.Messages.Add(new MessagePayload("tool", contextResult.ToJson(),
             item.Invocation.ProviderCallId));
+        ApplyPlanModeTransition(state, item.ToolCall.Name, result.Success, options);
         await SaveCheckpointAsync(state, ct);
         await _db.SaveChangesAsync(ct);
 
@@ -1827,6 +1839,71 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 },
                 step.Id,
                 item.Invocation.Id), events, ct);
+        }
+    }
+
+    private static AgentEngineOptions ApplyPersistedPermissionOptions(
+        AgentRunState state,
+        AgentEngineOptions options)
+    {
+        var permissionMode = string.IsNullOrWhiteSpace(state.EffectivePermissionMode)
+            ? AgentPermissionModes.Normalize(options.PermissionMode)
+            : AgentPermissionModes.Normalize(state.EffectivePermissionMode);
+        var autoApproveTools = state.EffectiveAutoApproveTools ?? options.AutoApproveTools;
+
+        if (state.IsPlanMode)
+        {
+            permissionMode = AgentPermissionModes.Plan;
+            autoApproveTools = false;
+        }
+
+        state.EffectivePermissionMode = permissionMode;
+        state.EffectiveAutoApproveTools = autoApproveTools;
+        return options with
+        {
+            PermissionMode = permissionMode,
+            AutoApproveTools = autoApproveTools
+        };
+    }
+
+    private static void ApplyPlanModeTransition(
+        AgentRunState state,
+        string toolName,
+        bool succeeded,
+        AgentEngineOptions options)
+    {
+        if (!succeeded)
+            return;
+
+        var normalizedToolName = AgentToolNames.Normalize(toolName);
+        if (string.Equals(normalizedToolName, AgentToolNames.EnterPlanMode, StringComparison.OrdinalIgnoreCase))
+        {
+            if (state.IsPlanMode)
+                return;
+
+            var previousMode = AgentPermissionModes.Normalize(
+                state.EffectivePermissionMode ?? options.PermissionMode);
+            state.PrePlanMode = previousMode == AgentPermissionModes.Plan
+                ? AgentPermissionModes.RequestApproval
+                : previousMode;
+            state.PrePlanAutoApproveTools = state.EffectiveAutoApproveTools ?? options.AutoApproveTools;
+            state.IsPlanMode = true;
+            state.EffectivePermissionMode = AgentPermissionModes.Plan;
+            state.EffectiveAutoApproveTools = false;
+        }
+        else if (string.Equals(normalizedToolName, AgentToolNames.ExitPlanMode, StringComparison.OrdinalIgnoreCase))
+        {
+            var restoredMode = AgentPermissionModes.Normalize(
+                state.PrePlanMode ?? AgentPermissionModes.RequestApproval);
+            if (restoredMode == AgentPermissionModes.Plan)
+                restoredMode = AgentPermissionModes.RequestApproval;
+
+            state.IsPlanMode = false;
+            state.PrePlanMode = null;
+            state.EffectivePermissionMode = restoredMode;
+            state.EffectiveAutoApproveTools = state.PrePlanAutoApproveTools ??
+                AgentPermissionModes.IsAutoApprove(restoredMode);
+            state.PrePlanAutoApproveTools = null;
         }
     }
 

@@ -54,7 +54,7 @@ Build, sign, and smoke-test the release locally first:
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version 4.9.7 `
+  -Version 4.9.8 `
   -ReleaseNotes "Reliability, security, and release-pipeline fixes." `
   -CertificateThumbprint F6DC173C746447A05FF83B9F7162121344CC09F0 `
   -AllowUntrustedCertificate `
@@ -66,10 +66,10 @@ then atomically upload the already-verified files:
 
 ```powershell
 git add -A
-git commit -m "release 4.9.7"
-git tag -a v4.9.7 -m "TLAH Studio 4.9.7"
+git commit -m "release 4.9.8"
+git tag -a v4.9.8 -m "TLAH Studio 4.9.8"
 git push origin main
-git push origin v4.9.7
+git push origin v4.9.8
 .\tools\deploy.ps1 -Server <ssh-user>@download.matrixlabs.cn
 ```
 
@@ -86,7 +86,7 @@ Thumbprint: F6DC173C746447A05FF83B9F7162121344CC09F0
 Verify an existing release:
 
 ```powershell
-.\tools\verify-release.ps1 -Version 4.9.7 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version 4.9.8 -AllowUntrustedAuthenticode
 ```
 
 Generated files:

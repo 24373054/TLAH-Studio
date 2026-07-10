@@ -120,7 +120,8 @@ public sealed record AgentToolMetadata(
     bool IsOpenWorld = false,
     string UserFacingName = "",
     string ActivityDescription = "",
-    string InterruptBehavior = AgentToolInterruptBehaviors.AllowCancel)
+    string InterruptBehavior = AgentToolInterruptBehaviors.AllowCancel,
+    bool RequiresUserInteraction = false)
 {
     public string DisplayName =>
         string.IsNullOrWhiteSpace(UserFacingName)
@@ -135,7 +136,7 @@ public sealed record AgentToolMetadata(
     public static AgentToolMetadata For(string name, bool requiresApproval)
     {
         var normalized = AgentToolNames.Normalize(name);
-        return normalized switch
+        AgentToolMetadata metadata = normalized switch
         {
             AgentToolNames.FileList or
             AgentToolNames.FileRead or
@@ -180,7 +181,7 @@ public sealed record AgentToolMetadata(
 
             AgentToolNames.ExitPlanMode => new(
                 normalized, requiresApproval,
-                IsReadOnly: true, IsConcurrencySafe: false,
+                IsReadOnly: false, IsConcurrencySafe: false,
                 IsDestructive: false,
                 AgentToolRenderHints.File, 100_000,
                 AgentToolResultPersistenceModes.PersistLargeOutputs),
@@ -335,6 +336,11 @@ public sealed record AgentToolMetadata(
                 12_000,
                 AgentToolResultPersistenceModes.PersistLargeOutputs,
                 IsOpenWorld: true)
+        };
+
+        return metadata with
+        {
+            RequiresUserInteraction = normalized is AgentToolNames.AskUserQuestion or AgentToolNames.ExitPlanMode
         };
     }
 }
@@ -569,6 +575,7 @@ public interface IAgentTool
     string UserFacingName => Metadata.DisplayName;
     string ActivityDescription => Metadata.DefaultActivityDescription;
     string InterruptBehavior => Metadata.InterruptBehavior;
+    bool RequiresUserInteraction => Metadata.RequiresUserInteraction;
 
     AgentToolValidationResult ValidateInput(string argumentsJson)
     {

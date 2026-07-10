@@ -427,6 +427,151 @@ public class AgentServiceTests
         Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.EventType == AgentEventTypes.ApprovalRequested);
     }
 
+    [Theory]
+    [InlineData(AgentPermissionModes.AutoApprove)]
+    [InlineData(AgentPermissionModes.BypassPermissions)]
+    public async Task RunAgentTaskAsync_UserInteractionToolAlwaysWaitsForApproval(string permissionMode)
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Interaction approval");
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
+        { "choices": [{ "message": { "content": null, "tool_calls": [{
+          "id": "call-question", "type": "function", "function": {
+            "name": "ask_user_question",
+            "arguments": "{\"questions\":[{\"question\":\"Continue?\",\"header\":\"Confirm\",\"options\":[{\"label\":\"Yes\",\"description\":\"Proceed.\"},{\"label\":\"No\",\"description\":\"Stop.\"}]}]}"
+          }
+        }] } }] }
+        """));
+        using var client = new HttpClient(handler);
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client),
+            new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N"))));
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id, "Ask for confirmation.",
+            options: new AgentRunOptions(MaxSteps: 1, PermissionMode: permissionMode));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.AskUserQuestion, result.AgentRun.PendingApproval!.ToolName);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_PlanModeBlocksAllowedFileWriteUntilApproval()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Plan write approval");
+        await new ToolPlatformService(db).SavePolicyAsync(
+            chat.Id, AgentToolNames.FileWrite, ToolPolicyScopes.Chat, ToolPolicyDecisions.Allow);
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
+        { "choices": [{ "message": { "content": null, "tool_calls": [{
+          "id": "call-write", "type": "function", "function": {
+            "name": "file_write", "arguments": "{\"path\":\"plan-blocked.txt\",\"content\":\"blocked\",\"reason\":\"Test plan guard.\"}"
+          }
+        }] } }] }
+        """));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id, "Plan the change.",
+            options: new AgentRunOptions(MaxSteps: 1, PermissionMode: AgentPermissionModes.Plan));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.FileWrite, result.AgentRun.PendingApproval!.ToolName);
+        Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "plan-blocked.txt")));
+    }
+
+    [Fact]
+    public async Task ResumeAgentTaskAsync_ApprovedPlanExitRestoresRequestApprovalMode()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Plan exit");
+        var requestBodies = new List<string>();
+        var responses = new Queue<string>([
+            """
+            { "choices": [{ "message": { "content": null, "tool_calls": [{
+              "id": "call-exit-plan", "type": "function", "function": {
+                "name": "exit_plan_mode", "arguments": "{\"plan\":\"1. Inspect.\\n2. Implement.\"}"
+              }
+            }] } }] }
+            """,
+            """{ "choices": [{ "message": { "content": "Plan approved and execution can continue." } }] }"""
+        ]);
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            using var reader = new StreamReader(request.Content!.ReadAsStream());
+            requestBodies.Add(reader.ReadToEnd());
+            return MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue());
+        });
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var pending = await service.RunAgentTaskAsync(
+            chat.Id, "Prepare a plan.",
+            options: new AgentRunOptions(MaxSteps: 3, PermissionMode: AgentPermissionModes.Plan));
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, pending.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.ExitPlanMode, pending.AgentRun.PendingApproval!.ToolName);
+
+        await service.SetAgentToolApprovalAsync(pending.AgentRun.PendingApproval.Id, approved: true);
+        var completed = await service.ResumeAgentTaskAsync(
+            pending.AgentRun.Id,
+            options: new AgentRunOptions(MaxSteps: 3, PermissionMode: AgentPermissionModes.Plan));
+
+        Assert.Equal(AgentRunStatuses.Completed, completed.AgentRun!.Status);
+        Assert.Contains("Permission mode: Ask approval", requestBodies.Last());
+        var planPath = Path.Combine(sandbox.GetSandboxRoot(chat.Id), ".tlah_context", "plans", $"{chat.Id:D}-plan.md");
+        Assert.Equal("1. Inspect.\n2. Implement.", await File.ReadAllTextAsync(planPath));
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_BypassModeCannotOverrideDeniedPolicy()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Denied bypass");
+        await new ToolPlatformService(db).SavePolicyAsync(
+            chat.Id, AgentToolNames.FileWrite, ToolPolicyScopes.Chat, ToolPolicyDecisions.Deny);
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
+        { "choices": [{ "message": { "content": null, "tool_calls": [{
+          "id": "call-denied", "type": "function", "function": {
+            "name": "file_write", "arguments": "{\"path\":\"policy-blocked.txt\",\"content\":\"blocked\",\"reason\":\"Test policy guard.\"}"
+          }
+        }] } }] }
+        """));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        await service.RunAgentTaskAsync(
+            chat.Id, "Write despite the deny rule.",
+            options: new AgentRunOptions(MaxSteps: 1, PermissionMode: AgentPermissionModes.BypassPermissions));
+
+        Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "policy-blocked.txt")));
+        Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.Summary.Contains("denied_by_policy", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task CancelAgentRunAsync_PreservesLatestPersistedStep()
     {

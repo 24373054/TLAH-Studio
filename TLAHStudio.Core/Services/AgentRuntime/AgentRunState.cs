@@ -29,6 +29,11 @@ public sealed record AgentRunState
     // M4.9.0: Plan mode — read-only exploration, write tools intercepted.
     public bool IsPlanMode { get; set; }
     public string? PrePlanMode { get; set; }
+    // M4.9.8: Persist the active permission mode so a resumed run cannot lose
+    // its Plan/approval transition after a checkpoint boundary.
+    public string? EffectivePermissionMode { get; set; }
+    public bool? EffectiveAutoApproveTools { get; set; }
+    public bool? PrePlanAutoApproveTools { get; set; }
     // M4.9.0: Track sent skill names so they survive compaction/resume.
     public HashSet<string> SentSkillNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;

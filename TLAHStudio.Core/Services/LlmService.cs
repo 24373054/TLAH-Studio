@@ -373,21 +373,29 @@ public class LlmService : ILlmService
         await SaveCheckpointAsync(run, state, ct);
 
         // M2.7.0: Agent loop owned by V2 engine (no fallback)
+        var permissionMode = AgentPermissionModes.Normalize(options.PermissionMode);
+        var autoApproveTools = options.AutoApproveTools || AgentPermissionModes.IsAutoApprove(permissionMode);
+        var isPlanMode = AgentPermissionModes.IsPlan(permissionMode);
         var runState = new AgentRunState
         {
             RunId = run.Id, ChatId = chatId, TurnId = turn.Id,
             Status = AgentRunStatuses.Running, MaxSteps = maxSteps,
             UserRequest = userContent,
-            Messages = state.Messages.ToList(), SequenceNum = state.SequenceNum
+            Messages = state.Messages.ToList(), SequenceNum = state.SequenceNum,
+            IsPlanMode = isPlanMode,
+            PrePlanMode = isPlanMode ? AgentPermissionModes.RequestApproval : null,
+            EffectivePermissionMode = permissionMode,
+            EffectiveAutoApproveTools = isPlanMode ? false : autoApproveTools,
+            PrePlanAutoApproveTools = isPlanMode ? false : null
         };
         var engineOptions = new AgentEngineOptions(
             maxSteps, options.CommandTimeoutSeconds, options.MaxCommandOutputChars,
-            options.AutoApproveTools || AgentPermissionModes.IsAutoApprove(options.PermissionMode),
+            autoApproveTools,
             options.ContextBudgetTokens,
             options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
             options.OutputStream,
             options.Progress,
-            AgentPermissionModes.Normalize(options.PermissionMode));
+            permissionMode);
 
         AgentRunResult result;
         try

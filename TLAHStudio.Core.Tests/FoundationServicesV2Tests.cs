@@ -326,7 +326,7 @@ public class FoundationServicesV2Tests : IDisposable
     }
 
     [Fact]
-    public async Task ExitPlanMode_NoPlanFile_ReturnsFallback()
+    public async Task ExitPlanMode_NoPlanFile_RequiresPlanText()
     {
         var root = Path.Combine(_tempDir, "sandbox-exit");
         var sandbox = new SandboxCommandService(root);
@@ -335,8 +335,8 @@ public class FoundationServicesV2Tests : IDisposable
         var ctx = new AgentToolExecutionContext(chatId, Guid.NewGuid(), Guid.NewGuid(), 10, 12_000);
 
         var result = await tool.ExecuteAsync(ctx, "{}");
-        Assert.True(result.Success);
-        Assert.Contains("No plan file found", result.Output);
+        Assert.False(result.Success);
+        Assert.Contains("plan is required", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -355,6 +355,23 @@ public class FoundationServicesV2Tests : IDisposable
         var result = await tool.ExecuteAsync(ctx, "{}");
         Assert.True(result.Success);
         Assert.Contains("Test plan content", result.Output);
+    }
+
+    [Fact]
+    public async Task ExitPlanMode_PersistsSuppliedPlan()
+    {
+        var root = Path.Combine(_tempDir, "sandbox-supplied-plan");
+        var sandbox = new SandboxCommandService(root);
+        var chatId = Guid.NewGuid();
+        var tool = new ExitPlanModeAgentTool(sandbox);
+        var ctx = new AgentToolExecutionContext(chatId, Guid.NewGuid(), Guid.NewGuid(), 10, 12_000);
+
+        var result = await tool.ExecuteAsync(ctx, "{\"plan\":\"1. Inspect the change.\\n2. Implement it.\"}");
+
+        var planPath = Path.Combine(sandbox.GetSandboxRoot(chatId), ".tlah_context", "plans", $"{chatId:D}-plan.md");
+        Assert.True(result.Success);
+        Assert.Contains("Inspect the change", result.Output);
+        Assert.Equal("1. Inspect the change.\n2. Implement it.", await File.ReadAllTextAsync(planPath));
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -698,7 +715,7 @@ public class FoundationServicesV2Tests : IDisposable
     }
 
     [Fact]
-    public void AgentTools_Metadata_PlanModeTools_AreReadOnly()
+    public void AgentTools_Metadata_PlanModeTools_DescribeTheirEffects()
     {
         var enter = AgentToolMetadata.For(AgentToolNames.EnterPlanMode, false);
         var exit = AgentToolMetadata.For(AgentToolNames.ExitPlanMode, true);
@@ -706,8 +723,9 @@ public class FoundationServicesV2Tests : IDisposable
         Assert.True(enter.IsReadOnly);
         Assert.True(enter.IsConcurrencySafe);
         Assert.False(enter.IsDestructive);
-        Assert.True(exit.IsReadOnly);
+        Assert.False(exit.IsReadOnly);
         Assert.False(exit.IsConcurrencySafe); // needs user approval
+        Assert.True(exit.RequiresUserInteraction);
     }
 
     [Fact]

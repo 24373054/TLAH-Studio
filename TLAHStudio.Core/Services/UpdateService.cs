@@ -253,11 +253,21 @@ public class UpdateService : IUpdateService
             using var json = JsonDocument.Parse(jsonText);
             var root = json.RootElement;
 
+            var signatureUrl = root.TryGetProperty("signatureUrl", out var signatureUrlElement)
+                ? signatureUrlElement.GetString()
+                : null;
+            if (!string.IsNullOrWhiteSpace(signatureUrl) &&
+                (!Uri.TryCreate(signatureUrl, UriKind.Absolute, out var signatureUri) ||
+                 signatureUri.Scheme != Uri.UriSchemeHttps ||
+                 !Uri.TryCreate(_updateCheckUrl, UriKind.Absolute, out var manifestUri) ||
+                 !string.Equals(signatureUri.Host, manifestUri.Host, StringComparison.OrdinalIgnoreCase)))
+                return null;
+
             // 2. Verify latest.json signature
             if (_manifestPublicKeyBase64 != "REPLACE_WITH_YOUR_PUBLIC_KEY")
             {
                 var sigValid = await UpdateCrypto.VerifyLatestJsonAsync(
-                    client, _updateCheckUrl, jsonText, _manifestPublicKeyBase64, ct);
+                    client, _updateCheckUrl, jsonText, _manifestPublicKeyBase64, ct, signatureUrl);
                 if (!sigValid)
                     return null; // Signature invalid — possible tampering, silently ignore
             }

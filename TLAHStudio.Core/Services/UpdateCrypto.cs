@@ -5,7 +5,7 @@ namespace TLAHStudio.Core.Services;
 
 /// <summary>
 /// Cryptographic utilities for update security.
-/// Supports Ed25519 signature verification of latest.json.
+/// Supports ECDSA P-256 signature verification of latest.json.
 /// </summary>
 public static class UpdateCrypto
 {
@@ -21,7 +21,7 @@ public static class UpdateCrypto
     public const string PublicKeyBase64 = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEyAQ+B5T5Vw1+QcH0Ekcdk/9HG/+joSsb/cW8QIpLDVw5oKO7EqJfXPg0gXEDP5bZfrzQ49s5jo7CMVfxDD62lA==";
 
     /// <summary>
-    /// Generate a new Ed25519 key pair for signing latest.json.
+    /// Generate a new ECDSA P-256 key pair for signing latest.json.
     /// Run this ONCE, save the private key securely, and embed the public key.
     /// </summary>
     public static (string publicKey, string privateKey) GenerateKeyPair()
@@ -72,13 +72,20 @@ public static class UpdateCrypto
     /// Fetches the .sig file from the URL and verifies.
     /// </summary>
     public static async Task<bool> VerifyLatestJsonAsync(
-        HttpClient client, string jsonUrl, string jsonContent, string publicKeyBase64, CancellationToken ct)
+        HttpClient client,
+        string jsonUrl,
+        string jsonContent,
+        string publicKeyBase64,
+        CancellationToken ct,
+        string? signatureUrl = null)
     {
         try
         {
-            var sigUrl = jsonUrl.EndsWith(".json")
+            var sigUrl = string.IsNullOrWhiteSpace(signatureUrl)
+                ? jsonUrl.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
                 ? jsonUrl + ".sig"
-                : jsonUrl + "/latest.json.sig";
+                : jsonUrl + "/latest.json.sig"
+                : signatureUrl;
 
             var sigResponse = await client.GetAsync(sigUrl, ct);
             if (!sigResponse.IsSuccessStatusCode)

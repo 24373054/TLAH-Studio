@@ -4,6 +4,10 @@ param(
 
     [string]$ReleaseNotes,
 
+    [switch]$ForceUpdate,
+
+    [string]$MinSupportedVersion,
+
     [string]$CertificatePath,
 
     [securestring]$CertificatePassword,
@@ -122,9 +126,21 @@ try {
     $latest = Get-Content -LiteralPath $latestJson -Raw | ConvertFrom-Json
     $latest.version = $Version
     $latest.installerUrl = "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-$Version.exe"
+    $latest.signatureUrl = "https://download.matrixlabs.cn/tlah/windows/latest-$Version.json.sig"
     $latest.sha256 = ""
-    $latest.forceUpdate = $true
-    $latest.minSupportedVersion = $Version
+    $latest.forceUpdate = $ForceUpdate.IsPresent
+    if (-not [string]::IsNullOrWhiteSpace($MinSupportedVersion)) {
+        $latest.minSupportedVersion = $MinSupportedVersion
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$latest.minSupportedVersion)) {
+        $latest.minSupportedVersion = $Version
+    }
+    if ($latest.minSupportedVersion -notmatch '^\d+\.\d+\.\d+$') {
+        throw "MinSupportedVersion must use strict semantic versioning: $($latest.minSupportedVersion)"
+    }
+    if ([version]$latest.minSupportedVersion -gt [version]$Version) {
+        throw "MinSupportedVersion cannot be newer than the release version."
+    }
     if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
         $ReleaseNotes = "Trust hardening release.`n`nFixes:`n- Release builds no longer ship PDB debug symbols`n- App and updater carry company/product version metadata`n- Authenticode signing is supported for app binaries, updater, and installer when a code signing certificate is provided"
     }
@@ -340,6 +356,8 @@ try {
     [System.IO.File]::WriteAllText($latestJson, $latestJsonText2, (New-Object System.Text.UTF8Encoding $false))
 
     & .\tools\sign-latest.ps1 -LatestJsonPath $latestJson -PrivateKeyFile $PrivateKeyFile
+    $versionedSignature = ".\TLAHStudio.Installer\latest-$Version.json.sig"
+    Copy-Item -LiteralPath "$latestJson.sig" -Destination $versionedSignature -Force
 
     $verifyArgs = @{
         Version = $Version
@@ -360,13 +378,16 @@ try {
         $remoteBase = $RemotePath.TrimEnd('/')
         $installerName = Split-Path -Leaf $installer.Path
         $remoteInstaller = "$remoteBase/$installerName"
-        $remoteSignature = "$remoteBase/latest.json.sig"
+        $remoteVersionedSignature = "$remoteBase/latest-$Version.json.sig"
+        $remoteLegacySignature = "$remoteBase/latest.json.sig"
         $remoteManifest = "$remoteBase/latest.json"
         Invoke-Native scp @($installer.Path, "${Server}:$remoteInstaller.uploading")
-        Invoke-Native scp @("$latestJson.sig", "${Server}:$remoteSignature.uploading")
+        Invoke-Native scp @($versionedSignature, "${Server}:$remoteVersionedSignature.uploading")
+        Invoke-Native scp @("$latestJson.sig", "${Server}:$remoteLegacySignature.uploading")
         Invoke-Native scp @($latestJson, "${Server}:$remoteManifest.uploading")
         $promote = "mv -- $remoteInstaller.uploading $remoteInstaller && " +
-                   "mv -- $remoteSignature.uploading $remoteSignature && " +
+                   "mv -- $remoteVersionedSignature.uploading $remoteVersionedSignature && " +
+                   "mv -- $remoteLegacySignature.uploading $remoteLegacySignature && " +
                    "mv -- $remoteManifest.uploading $remoteManifest"
         Invoke-Native ssh @($Server, $promote)
     }

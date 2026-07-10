@@ -134,6 +134,13 @@ public class AgentRunStateV2Tests
         Assert.Equal(AgentPermissionModes.Plan, options.PermissionMode);
     }
 
+    [Fact]
+    public void AgentRunOptions_PermissionMode_DefaultsToRequestApproval()
+    {
+        var options = new AgentRunOptions();
+        Assert.Equal(AgentPermissionModes.RequestApproval, options.PermissionMode);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // 4.8.0: AgentRunState defaults completeness
     // ═══════════════════════════════════════════════════════════════
@@ -145,6 +152,9 @@ public class AgentRunStateV2Tests
         Assert.False(state.CompactionDisabled);
         Assert.False(state.IsPlanMode);
         Assert.Null(state.PrePlanMode);
+        Assert.Null(state.EffectivePermissionMode);
+        Assert.Null(state.EffectiveAutoApproveTools);
+        Assert.Null(state.PrePlanAutoApproveTools);
         Assert.NotNull(state.SentSkillNames);
         Assert.Empty(state.SentSkillNames);
     }
@@ -265,6 +275,9 @@ public class AgentRunStateV2Tests
             CompactionDisabled = true,
             IsPlanMode = true,
             PrePlanMode = AgentPermissionModes.BypassPermissions,
+            EffectivePermissionMode = AgentPermissionModes.Plan,
+            EffectiveAutoApproveTools = false,
+            PrePlanAutoApproveTools = true,
             Messages = [new("user", "test")]
         };
         state.SentSkillNames.Add("init");
@@ -274,6 +287,9 @@ public class AgentRunStateV2Tests
         Assert.True(clone.CompactionDisabled);
         Assert.True(clone.IsPlanMode);
         Assert.Equal(AgentPermissionModes.BypassPermissions, clone.PrePlanMode);
+        Assert.Equal(AgentPermissionModes.Plan, clone.EffectivePermissionMode);
+        Assert.False(clone.EffectiveAutoApproveTools);
+        Assert.True(clone.PrePlanAutoApproveTools);
         Assert.Contains("init", clone.SentSkillNames);
         Assert.Single(clone.Messages);
     }

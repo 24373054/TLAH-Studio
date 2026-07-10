@@ -30,7 +30,7 @@ public sealed class EnterPlanModeAgentTool : IAgentTool
             4. Use ask_user_question if you need to clarify the approach
             5. Design a concrete implementation strategy
             6. When ready, use exit_plan_mode to present your plan for approval
-            7. Write the plan to .tlah_context/plans/{chatId}-plan.md
+            7. Call exit_plan_mode with the complete plan text
 
             Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase.
             """));
@@ -52,24 +52,49 @@ public sealed class ExitPlanModeAgentTool : IAgentTool
 
     public LlmToolDefinition Definition { get; } = new(
         AgentToolNames.ExitPlanMode,
-        "Exit plan mode and present your plan for user approval. Reads the plan from .tlah_context/plans/{chatId}-plan.md. Requires explicit user approval.",
-        new Dictionary<string, object> { ["type"] = "object" });
+        "Exit plan mode and present your complete plan for user approval. Requires explicit user approval.",
+        new Dictionary<string, object>
+        {
+            ["type"] = "object",
+            ["properties"] = new Dictionary<string, object>
+            {
+                ["plan"] = new Dictionary<string, object>
+                {
+                    ["type"] = "string",
+                    ["description"] = "The complete implementation plan to present for approval."
+                }
+            },
+            ["required"] = new[] { "plan" }
+        });
 
     public bool RequiresApproval => true;
 
     public async Task<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, string argumentsJson, CancellationToken ct = default)
     {
-        // Read the plan from the standard path.
+        if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var parseError))
+            return new AgentToolResult(false, string.Empty, parseError);
+
+        var suppliedPlan = root.TryGetProperty("plan", out var planElement) &&
+            planElement.ValueKind == System.Text.Json.JsonValueKind.String
+            ? planElement.GetString()?.Trim()
+            : null;
+
         var sandboxRoot = _sandbox.GetSandboxRoot(context.ChatId);
         var planPath = Path.Combine(sandboxRoot, ".tlah_context", "plans", $"{context.ChatId:D}-plan.md");
         string plan;
-        if (File.Exists(planPath))
+        if (!string.IsNullOrWhiteSpace(suppliedPlan))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(planPath)!);
+            await File.WriteAllTextAsync(planPath, suppliedPlan, ct);
+            plan = suppliedPlan;
+        }
+        else if (File.Exists(planPath))
         {
             plan = await File.ReadAllTextAsync(planPath, ct);
         }
         else
         {
-            plan = "[No plan file found. The model should have written a plan before calling exit_plan_mode.]";
+            return new AgentToolResult(false, string.Empty, "A non-empty plan is required before leaving plan mode.");
         }
 
         return new AgentToolResult(true, $"""

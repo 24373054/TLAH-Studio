@@ -120,6 +120,23 @@ public class ToolLifecycleRunnerTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_SafetyBlocked_InBypassMode_DoesNotExecute()
+    {
+        var order = new List<string>();
+        var tool = new RecordingV3Tool(order) { SafetyBlocked = true };
+        var runner = Runner(tool, Hooks());
+
+        var outcome = await runner.ExecuteAsync(Request("""{"value":"blocked"}""") with
+        {
+            PermissionMode = AgentPermissionModes.BypassPermissions
+        });
+
+        Assert.False(outcome.Result.Success);
+        Assert.True(outcome.Safety.IsBlocked);
+        Assert.DoesNotContain("ExecuteWithProgressAsync", order);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CollectsProgressEvents()
     {
         var runner = Runner(new RecordingV3Tool([]), Hooks());

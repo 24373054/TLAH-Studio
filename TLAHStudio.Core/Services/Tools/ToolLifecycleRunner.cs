@@ -110,7 +110,6 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
         ToolExecutionRequest request,
         CancellationToken ct = default)
     {
-        var bypassPermissions = AgentPermissionModes.IsBypass(request.PermissionMode);
         var argumentsJson = request.ExecutionArgumentsJson ?? request.Invocation.ArgumentsJson;
         var preview = await PreviewAsync(
             request.Run.ChatId,
@@ -209,7 +208,7 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
                 progressEvents);
         }
 
-        if (!bypassPermissions && preview.Safety.IsBlocked)
+        if (preview.Safety.IsBlocked)
         {
             return new ToolExecutionOutcome(
                 request,

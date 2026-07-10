@@ -113,7 +113,7 @@ public sealed record AgentRunOptions(
     int ContextBudgetTokens = 32_000,
     int AutoCompactTriggerTokens = 24_000,
     int MaxToolResultCharsInContext = 6_000,
-    string PermissionMode = AgentPermissionModes.BypassPermissions);
+    string PermissionMode = AgentPermissionModes.RequestApproval);
 
 public sealed record ContextUsageSnapshot(
     int TotalTokens,

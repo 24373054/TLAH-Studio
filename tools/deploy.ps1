@@ -69,6 +69,10 @@ try {
     if ([long]$manifest.installerSizeBytes -ne $installerSize) {
         throw "latest.json installerSizeBytes does not match the installer."
     }
+    $expectedSignatureUrl = "https://download.matrixlabs.cn/tlah/windows/latest-$version.json.sig"
+    if ($manifest.signatureUrl -ne $expectedSignatureUrl) {
+        throw "latest.json signatureUrl does not match $expectedSignatureUrl."
+    }
 
     $signaturePath = "$latestJson.sig"
     if (-not (Test-Path -LiteralPath $signaturePath)) {
@@ -86,14 +90,21 @@ try {
 
     $remoteBase = $RemotePath.TrimEnd('/')
     $remoteInstaller = "$remoteBase/TLAHStudioSetup-$version.exe"
-    $remoteSignature = "$remoteBase/latest.json.sig"
+    $versionedSignaturePath = ".\TLAHStudio.Installer\latest-$version.json.sig"
+    if (-not (Test-Path -LiteralPath $versionedSignaturePath)) {
+        Copy-Item -LiteralPath $signaturePath -Destination $versionedSignaturePath -Force
+    }
+    $remoteVersionedSignature = "$remoteBase/latest-$version.json.sig"
+    $remoteLegacySignature = "$remoteBase/latest.json.sig"
     $remoteManifest = "$remoteBase/latest.json"
     Invoke-Native scp @($installer.Path, "${Server}:$remoteInstaller.uploading")
-    Invoke-Native scp @("$latestJson.sig", "${Server}:$remoteSignature.uploading")
+    Invoke-Native scp @($versionedSignaturePath, "${Server}:$remoteVersionedSignature.uploading")
+    Invoke-Native scp @($signaturePath, "${Server}:$remoteLegacySignature.uploading")
     Invoke-Native scp @($latestJson, "${Server}:$remoteManifest.uploading")
 
     $promote = "mv -- $remoteInstaller.uploading $remoteInstaller && " +
-               "mv -- $remoteSignature.uploading $remoteSignature && " +
+               "mv -- $remoteVersionedSignature.uploading $remoteVersionedSignature && " +
+               "mv -- $remoteLegacySignature.uploading $remoteLegacySignature && " +
                "mv -- $remoteManifest.uploading $remoteManifest"
     Invoke-Native ssh @($Server, $promote)
 

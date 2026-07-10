@@ -44,6 +44,30 @@ public class UpdateCryptoTests
     }
 
     [Fact]
+    public async Task VerifyLatestJsonAsync_UsesVersionedSignatureUrl()
+    {
+        var (publicKey, privateKey) = UpdateCrypto.GenerateKeyPair();
+        const string json = "{\"version\":\"1.0.12\",\"sha256\":\"def\"}";
+        var signature = UpdateCrypto.SignData(json, privateKey);
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            Assert.Equal("https://updates.example/latest-1.0.12.json.sig", request.RequestUri!.ToString());
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(signature) };
+        });
+        using var client = new HttpClient(handler);
+
+        var valid = await UpdateCrypto.VerifyLatestJsonAsync(
+            client,
+            "https://updates.example/latest.json",
+            json,
+            publicKey,
+            CancellationToken.None,
+            "https://updates.example/latest-1.0.12.json.sig");
+
+        Assert.True(valid);
+    }
+
+    [Fact]
     public async Task VerifyLatestJsonAsync_ReturnsFalse_WhenSignatureIsUnavailable()
     {
         using var client = new HttpClient(new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));

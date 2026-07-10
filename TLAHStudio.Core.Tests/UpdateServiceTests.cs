@@ -89,6 +89,7 @@ public class UpdateServiceTests
           "version": "1.0.11",
           "channel": "stable",
           "installerUrl": "https://updates.example/TLAHStudioSetup-1.0.11.exe",
+          "signatureUrl": "https://updates.example/latest-1.0.11.json.sig",
           "sha256": "abc123",
           "releaseNotes": "Release quality update.",
           "forceUpdate": true,
@@ -119,6 +120,27 @@ public class UpdateServiceTests
         Assert.True(result.ForceUpdate);
         Assert.Equal(12345, result.InstallerSizeBytes);
         Assert.Equal("abc123", result.Sha256);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_ReturnsNull_WhenSignatureUrlUsesAnotherHost()
+    {
+        var (publicKey, privateKey) = UpdateCrypto.GenerateKeyPair();
+        const string latestJson = "{\"version\":\"1.0.11\",\"installerUrl\":\"https://updates.example/setup.exe\",\"signatureUrl\":\"https://unexpected.example/latest.json.sig\"}";
+        var signature = UpdateCrypto.SignData(latestJson, privateKey);
+        using var client = new HttpClient(new MapHttpMessageHandler(request =>
+            request.RequestUri!.AbsolutePath.EndsWith(".sig", StringComparison.Ordinal)
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(signature) }
+                : MapHttpMessageHandler.Json(HttpStatusCode.OK, latestJson)));
+        var service = new UpdateService(
+            new StaticHttpClientFactory(client),
+            Path.Combine(Path.GetTempPath(), "tlah-test-install"),
+            "1.0.10",
+            "https://updates.example/latest.json",
+            "test-install-id",
+            publicKey);
+
+        Assert.Null(await service.CheckForUpdateAsync());
     }
 
     [Fact]

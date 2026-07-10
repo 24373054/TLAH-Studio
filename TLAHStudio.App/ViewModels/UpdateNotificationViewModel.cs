@@ -38,7 +38,7 @@ public partial class UpdateNotificationViewModel : ObservableObject
         VersionText = $"Version {info.Version} is available (current: {AppUpdateService.CurrentVersion})";
         PackageInfoText = BuildPackageInfo(info);
         ReleaseNotes = info.ReleaseNotes ?? "No release notes available.";
-        IsForceUpdate = true;
+        IsForceUpdate = info.ForceUpdate;
         DownloadProgress = 0;
         IsDownloading = false;
         DownloadStatus = string.Empty;

@@ -102,11 +102,16 @@ try {
     if ($latest.installerUrl -notmatch [regex]::Escape("TLAHStudioSetup-$Version.exe")) {
         throw "latest.json installerUrl does not point at TLAHStudioSetup-$Version.exe."
     }
-    if ($latest.forceUpdate -ne $true) {
-        throw "latest.json forceUpdate must be true for required desktop updates."
+    $expectedSignatureUrl = "https://download.matrixlabs.cn/tlah/windows/latest-$Version.json.sig"
+    if ($latest.signatureUrl -ne $expectedSignatureUrl) {
+        throw "latest.json signatureUrl must point to the immutable versioned signature: $expectedSignatureUrl"
     }
-    if ($latest.minSupportedVersion -ne $Version) {
-        throw "latest.json minSupportedVersion must match the release version."
+    if ($latest.platform -ne "windows" -or $latest.arch -ne "x64") {
+        throw "latest.json platform and arch must be windows/x64."
+    }
+    if ($latest.minSupportedVersion -notmatch '^\d+\.\d+\.\d+$' -or
+        [version]$latest.minSupportedVersion -gt [version]$Version) {
+        throw "latest.json minSupportedVersion must be a semantic version no newer than the release."
     }
 
     $actualHash = (Get-FileHash -LiteralPath $installer.Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -114,7 +119,10 @@ try {
         throw "Installer SHA256 mismatch. latest.json=$($latest.sha256), actual=$actualHash"
     }
     $actualSize = (Get-Item -LiteralPath $installer.Path).Length
-    if ($latest.installerSizeBytes -and [long]$latest.installerSizeBytes -ne $actualSize) {
+    if (-not $latest.PSObject.Properties.Name.Contains("installerSizeBytes")) {
+        throw "latest.json must include installerSizeBytes."
+    }
+    if ([long]$latest.installerSizeBytes -ne $actualSize) {
         throw "Installer size mismatch. latest.json=$($latest.installerSizeBytes), actual=$actualSize"
     }
 
@@ -145,16 +153,14 @@ try {
     }
 
     $authenticode = Get-AuthenticodeSignature -FilePath $installer.Path
+    if (-not $authenticode.SignerCertificate) {
+        throw "Installer is not Authenticode signed."
+    }
     if ($authenticode.Status -ne "Valid") {
         if (-not $AllowUntrustedAuthenticode) {
             throw "Installer Authenticode status is $($authenticode.Status)."
         }
-        if ($authenticode.SignerCertificate) {
-            Write-Warning "Installer is signed but not trusted by this machine: $($authenticode.Status)."
-        }
-        else {
-            Write-Warning "Installer is not Authenticode signed; continuing because -AllowUntrustedAuthenticode was provided."
-        }
+        Write-Warning "Installer is signed but not trusted by this machine: $($authenticode.Status)."
     }
 
     if (-not $SkipSmokeInstall) {
