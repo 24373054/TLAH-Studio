@@ -23,9 +23,14 @@ public sealed partial class CodeBlockControl : UserControl
 {
     private const int CollapseThreshold = 20;       // lines before auto-collapse
     private const double CollapsedMaxHeight = 320;  // ~18 lines * 18px
+    private const int DeferredHighlightThreshold = 300;
+    private const int MaxHighlightLines = 2_000;
 
     private string _code = string.Empty;
+    private string _language = "text";
     private bool _isCollapsed;
+    private bool _needsDeferredHighlight;
+    private bool _highlighting;
 
     public CodeBlockControl(string language, string code, bool isCompact)
     {
@@ -41,7 +46,8 @@ public sealed partial class CodeBlockControl : UserControl
         }
 
         _code = code ?? string.Empty;
-        RenderCode(language, _code);
+        _language = language;
+        RenderCode(_language, _code);
         ConfigureFold();
     }
 
@@ -52,6 +58,29 @@ public sealed partial class CodeBlockControl : UserControl
             : code.Replace("\r\n", "\n").TrimEnd('\n').Split('\n').Length;
         LineCountTag.Text = lineCount == 1 ? "1 line" : $"{lineCount} lines";
         LineNumberGutter.Text = BuildLineNumbers(lineCount);
+
+        _needsDeferredHighlight = lineCount >= DeferredHighlightThreshold && lineCount <= MaxHighlightLines;
+        if (lineCount > MaxHighlightLines)
+        {
+            LineCountTag.Text += " · plain";
+            RenderPlainCode(code);
+            return;
+        }
+
+        if (_needsDeferredHighlight)
+        {
+            // Long code remains immediately selectable and copyable, but skips
+            // synchronous TextMate tokenization until the user expands it.
+            RenderPlainCode(code);
+            return;
+        }
+
+        RenderHighlightedCode(language, code);
+    }
+
+    private void RenderHighlightedCode(string language, string code)
+    {
+        CodeText.Blocks.Clear();
 
         var paragraph = new Paragraph();
         try
@@ -78,6 +107,18 @@ public sealed partial class CodeBlockControl : UserControl
             });
         }
 
+        CodeText.Blocks.Add(paragraph);
+    }
+
+    private void RenderPlainCode(string code)
+    {
+        CodeText.Blocks.Clear();
+        var paragraph = new Paragraph();
+        paragraph.Inlines.Add(new Run
+        {
+            Text = code,
+            Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"]
+        });
         CodeText.Blocks.Add(paragraph);
     }
 
@@ -126,6 +167,30 @@ public sealed partial class CodeBlockControl : UserControl
     {
         _isCollapsed = !_isCollapsed;
         ApplyFoldState();
+        if (!_isCollapsed && _needsDeferredHighlight)
+            _ = HighlightWhenIdleAsync();
+    }
+
+    private async Task HighlightWhenIdleAsync()
+    {
+        if (_highlighting || !_needsDeferredHighlight)
+            return;
+
+        _highlighting = true;
+        try
+        {
+            // Yield a frame first so expanding the block never feels blocked.
+            await Task.Delay(16);
+            if (!_isCollapsed && _needsDeferredHighlight)
+            {
+                RenderHighlightedCode(_language, _code);
+                _needsDeferredHighlight = false;
+            }
+        }
+        finally
+        {
+            _highlighting = false;
+        }
     }
 
     private void CopyButton_Click(object sender, RoutedEventArgs e)

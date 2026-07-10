@@ -78,6 +78,7 @@ public sealed partial class MessageInputControl : UserControl
     private void OnInputRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         var compact = e.NewSize.Width < 620;
+        var showStateLabels = e.NewSize.Width >= 780;
         InputRoot.Padding = compact
             ? new Thickness(12, 10, 12, 10)
             : new Thickness(20, 14, 20, 14);
@@ -94,6 +95,9 @@ public sealed partial class MessageInputControl : UserControl
         InputBox.Padding = compact
             ? new Thickness(12, 10, 12, 10)
             : new Thickness(14, 10, 14, 10);
+        AgentModeLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
+        WorkspaceLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
+        PermissionModeLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e)
@@ -605,6 +609,8 @@ public sealed partial class MessageInputControl : UserControl
             enabled
                 ? "Agent: On. Multi-step tool use is enabled."
                 : "Agent: Off. Send a normal chat message.");
+        AgentModeLabel.Text = enabled ? "Agent" : "Chat";
+        AutomationProperties.SetName(AgentModeButton, enabled ? "Agent mode: on" : "Agent mode: off");
     }
 
     private void Play(InteractionSound sound)
@@ -653,6 +659,7 @@ public sealed partial class MessageInputControl : UserControl
     private void UpdatePermissionModeButton()
     {
         var item = GetPermissionModeItem(_vm?.SelectedAgentPermissionMode);
+        PermissionModeLabel.Text = item.Label;
         ToolTipService.SetToolTip(PermissionModeButton, $"Access: {item.Label}. {item.Description}");
         AutomationProperties.SetName(PermissionModeButton, $"Agent permission mode: {item.Label}");
     }
@@ -662,6 +669,7 @@ public sealed partial class MessageInputControl : UserControl
         var label = string.IsNullOrWhiteSpace(_vm?.WorkspaceDisplayName)
             ? "Sandbox"
             : _vm.WorkspaceDisplayName;
+        WorkspaceLabel.Text = label;
         ToolTipService.SetToolTip(WorkspaceButton, $"Workspace: {label}\n{_vm?.WorkspaceToolTip ?? "Using this chat's private sandbox."}");
         AutomationProperties.SetName(WorkspaceButton, $"Workspace: {label}");
         OpenWorkspaceItem.IsEnabled = !string.IsNullOrWhiteSpace(_vm?.WorkspacePath) &&

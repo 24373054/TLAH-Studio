@@ -30,18 +30,12 @@ public sealed partial class ChatPage : UserControl
     private IInteractionSoundService? _sound;
     private bool _bound;
     private double _chatBubbleOpacity = 1;
-    private int _lastMessageCount;
     private bool _isNarrow;
     private bool _renderQueued;
-    private DateTimeOffset _lastRenderAt = DateTimeOffset.MinValue;
-    private string _lastLayoutSignature = string.Empty;
     private readonly Dictionary<Guid, CachedMessageElement> _messageElementCache = new();
-    private const int RenderThrottleMs = 50;
-    // M4.4.6: Track user scroll to prevent auto-scroll from fighting manual scrolling.
     private bool _userScrolledUp;
-    // M4.4.6: Generation counter to skip full layout sync during streaming-only renders.
-    private int _renderGeneration;
-    private int _lastRenderGeneration = -1;
+    private bool _scrollToBottomQueued;
+    private bool _loadingOlderMessages;
 
     public ChatPage()
     {
@@ -50,11 +44,10 @@ public sealed partial class ChatPage : UserControl
         App.Log("ChatPage XAML initialized.");
         ActualThemeChanged += (_, _) =>
         {
-            InvalidateMessageCache();
-            RequestRender(immediate: true);
+            RefreshTimeline();
         };
         SizeChanged += OnChatSizeChanged;
-        AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnPointerWheelChanged), true);
+        MessagesRepeater.ItemTemplate = new ChatMessageElementFactory(this);
     }
 
     private void OnChatSizeChanged(object sender, SizeChangedEventArgs e)
@@ -85,6 +78,7 @@ public sealed partial class ChatPage : UserControl
         _sandbox = sandbox;
         _sound = sound;
 
+        MessagesRepeater.ItemsSource = _vm.Messages;
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.StreamingMessageUpdated += (_, _) => RequestRender();
         _vm.MessageIdMutated += oldId =>
@@ -103,7 +97,14 @@ public sealed partial class ChatPage : UserControl
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
                 or nameof(ChatPageViewModel.ErrorMessage)
                 or nameof(ChatPageViewModel.IsLoading))
-                RequestRender();
+                DispatcherQueue.TryEnqueue(UpdateConversationState);
+            if (args.PropertyName == nameof(ChatPageViewModel.IsSending))
+            {
+                if (_vm.IsSending)
+                    RequestRender();
+                else
+                    RefreshTimeline();
+            }
             if (args.PropertyName is nameof(ChatPageViewModel.AgentStatusText)
                 or nameof(ChatPageViewModel.IsAgentStatusVisible)
                 or nameof(ChatPageViewModel.CurrentAgentRunStatus))
@@ -114,20 +115,18 @@ public sealed partial class ChatPage : UserControl
         _backgroundService.ConfigChanged += (_, config) => DispatcherQueue.TryEnqueue(() =>
         {
             ApplyBackgroundConfig(config);
-            InvalidateMessageCache();
-            RequestRender(immediate: true);
+            RefreshTimeline();
         });
 
         _densityService.DensityChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
             ApplyDensity();
-            InvalidateMessageCache();
-            RequestRender(immediate: true);
+            RefreshTimeline();
         });
 
         ApplyDensity();
         UpdateAgentStatus();
-        RequestRender(immediate: true);
+        UpdateConversationState();
     }
 
     private void UpdateAgentStatus()
@@ -154,8 +153,12 @@ public sealed partial class ChatPage : UserControl
 
     private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        var messageCount = _vm?.Messages.Count ?? 0;
+        var isAppend = e.NewItems != null &&
+                       e.NewStartingIndex >= messageCount - e.NewItems.Count;
         if (_vm?.IsLoading != true &&
             e.Action == NotifyCollectionChangedAction.Add &&
+            isAppend &&
             e.NewItems?.OfType<Message>().Any(m =>
                 string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(m.Role, "tool", StringComparison.OrdinalIgnoreCase)) == true)
@@ -184,36 +187,41 @@ public sealed partial class ChatPage : UserControl
             _userScrolledUp = false;
         }
 
-        // M4.4.6: Bump generation on structural changes so RenderMessages
-        // knows to do a full layout recalculation instead of the streaming fast-path.
-        _renderGeneration++;
-        RequestRender(immediate: e.Action is NotifyCollectionChangedAction.Reset);
+        UpdateConversationState();
+        if (e.Action == NotifyCollectionChangedAction.Add && isAppend && !_userScrolledUp)
+            RequestScrollToBottom();
     }
 
     private void RequestRender(bool immediate = false)
     {
-        if (immediate)
-        {
-            DispatcherQueue.TryEnqueue(RenderMessages);
-            return;
-        }
-
         if (_renderQueued)
             return;
 
         _renderQueued = true;
-        var delayMs = Math.Max(
-            0,
-            RenderThrottleMs - (int)(DateTimeOffset.UtcNow - _lastRenderAt).TotalMilliseconds);
-        _ = Task.Run(async () =>
+        DispatcherQueue.TryEnqueue(() =>
         {
-            if (delayMs > 0)
-                await Task.Delay(delayMs);
-            DispatcherQueue.TryEnqueue(() =>
+            _renderQueued = false;
+            if (_vm == null)
+                return;
+
+            // Only realized visuals are cached by the repeater's element
+            // factory. Streaming therefore updates the visible draft in place
+            // without scanning, measuring, or rebuilding historic content.
+            foreach (var message in _vm.Messages)
             {
-                _renderQueued = false;
-                RenderMessages();
-            });
+                if (!_messageElementCache.TryGetValue(message.Id, out var cached))
+                    continue;
+
+                if (IsStreamingDraft(message))
+                {
+                    UpdateCachedStreamingMessage(cached.Element, message);
+                }
+                else if (TryGetLiveStreamVisuals(cached.Element, out var visuals) && visuals.CursorTimer.IsEnabled)
+                {
+                    visuals.CursorTimer.Stop();
+                    visuals.CursorText.Visibility = Visibility.Collapsed;
+                }
+            }
         });
     }
 
@@ -221,134 +229,103 @@ public sealed partial class ChatPage : UserControl
     {
         StopAllCachedStreamTimers();
         _messageElementCache.Clear();
-        _lastLayoutSignature = string.Empty;
     }
 
-    private void OnPointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    private void RefreshTimeline()
     {
-        if (MessagesScrollViewer.ScrollableHeight <= 0)
-            return;
-
-        var delta = e.GetCurrentPoint(MessagesScrollViewer).Properties.MouseWheelDelta;
-        if (delta == 0)
-            return;
-
-        var target = Math.Clamp(
-            MessagesScrollViewer.VerticalOffset - delta * 0.34,
-            0,
-            MessagesScrollViewer.ScrollableHeight);
-
-        MessagesScrollViewer.ChangeView(null, target, null, false);
-
-        // Track the actual target offset. Wheel delta polarity differs from the
-        // visual direction: the reliable signal is whether the target remains
-        // away from the bottom after applying the wheel movement.
-        _userScrolledUp = target < MessagesScrollViewer.ScrollableHeight - 16;
-
-        e.Handled = true;
+        InvalidateMessageCache();
+        MessagesRepeater.ItemsSource = null;
+        if (_vm != null)
+            MessagesRepeater.ItemsSource = _vm.Messages;
+        UpdateConversationState();
     }
 
-    private void RenderMessages()
+    private void UpdateConversationState()
     {
-        if (_vm == null) return;
-        _lastRenderAt = DateTimeOffset.UtcNow;
+        if (_vm == null)
+            return;
 
-        // M4.4.6: Streaming-only render — skip full layout recalculation.
-        // When only a streaming draft was updated (no collection change),
-        // UpdateCachedStreamingMessage already mutates the UI in-place.
-        // We can skip the O(n) signature build and SyncMessageChildren.
-        var generation = _renderGeneration;
-        var isStreamingOnly = generation == _lastRenderGeneration &&
-                              !string.IsNullOrEmpty(_lastLayoutSignature) &&
-                              _vm.Messages.Count == _lastMessageCount;
-        _lastRenderGeneration = generation;
+        UIElement? state = null;
+        if (_vm.CurrentChat == null)
+            state = BuildNoChatState();
+        else if (!string.IsNullOrWhiteSpace(_vm.ErrorMessage) && _vm.Messages.Count == 0)
+            state = BuildErrorState(_vm.ErrorMessage);
+        else if (!_vm.IsLoading && _vm.Messages.Count == 0)
+            state = BuildEmptyState();
 
-        if (isStreamingOnly)
+        ConversationStateHost.Content = state;
+        ConversationStateHost.Visibility = state == null ? Visibility.Collapsed : Visibility.Visible;
+        MessagesScrollViewer.Visibility = state == null ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private UIElement CreateTimelineElement(Message message, int index)
+    {
+        var messageElement = GetCachedMessageElement(message);
+        var showsDay = index == 0 ||
+                       _vm == null ||
+                       _vm.Messages[index - 1].CreatedAt.ToLocalTime().Date != message.CreatedAt.ToLocalTime().Date;
+        if (!showsDay)
         {
-            // M4.9.4: Even on the streaming-only path, stop cursors for messages
-            // that have finished streaming (IsSending went false). Without this,
-            // the cursor keeps blinking after completion when the collection
-            // didn't change (e.g. non-agent single-message responses).
-            foreach (var message in _vm.Messages)
-            {
-                if (!IsStreamingDraft(message) &&
-                    _messageElementCache.TryGetValue(message.Id, out var cached) &&
-                    TryGetLiveStreamVisuals(cached.Element, out var v) &&
-                    v.CursorTimer.IsEnabled)
-                {
-                    v.CursorTimer.Stop();
-                    v.CursorText.Visibility = Visibility.Collapsed;
-                }
-            }
-
-            // Only refresh streaming drafts in-place — no layout rebuild.
-            foreach (var message in _vm.Messages)
-            {
-                if (IsStreamingDraft(message))
-                    GetCachedMessageElement(message);
-            }
+            if (messageElement is FrameworkElement element)
+                element.Tag = new TimelineElementToken(message.Id, messageElement);
+            return messageElement;
         }
-        else
+
+        var wrapper = new StackPanel { Spacing = IsCompactDensity() ? 8 : 12 };
+        wrapper.Children.Add(BuildDaySeparator(message.CreatedAt, index == 0));
+        wrapper.Children.Add(messageElement);
+        wrapper.Tag = new TimelineElementToken(message.Id, messageElement);
+        return wrapper;
+    }
+
+    private void RecycleTimelineElement(UIElement element)
+    {
+        if (element is not FrameworkElement { Tag: TimelineElementToken token })
+            return;
+
+        if (_messageElementCache.TryGetValue(token.MessageId, out var cached) &&
+            ReferenceEquals(cached.Element, token.MessageElement))
         {
-            // M4.7.0: Stop cursor timers for finalized messages.
-            foreach (var message in _vm.Messages)
+            if (TryGetLiveStreamVisuals(cached.Element, out var visuals))
+                visuals.CursorTimer.Stop();
+            _messageElementCache.Remove(token.MessageId);
+        }
+    }
+
+    private void RequestScrollToBottom()
+    {
+        if (_scrollToBottomQueued)
+            return;
+
+        _scrollToBottomQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _scrollToBottomQueued = false;
+            MessagesScrollViewer.ChangeView(null, MessagesScrollViewer.ScrollableHeight, null, false);
+        });
+    }
+
+    private async void MessagesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        _userScrolledUp = MessagesScrollViewer.VerticalOffset < MessagesScrollViewer.ScrollableHeight - 16;
+        if (_loadingOlderMessages || _vm?.HasOlderMessages != true || MessagesScrollViewer.VerticalOffset > 96)
+            return;
+
+        _loadingOlderMessages = true;
+        var previousExtent = MessagesScrollViewer.ExtentHeight;
+        var previousOffset = MessagesScrollViewer.VerticalOffset;
+        try
+        {
+            await _vm.LoadOlderMessagesAsync();
+        }
+        finally
+        {
+            DispatcherQueue.TryEnqueue(() =>
             {
-                if (!IsStreamingDraft(message) &&
-                    _messageElementCache.TryGetValue(message.Id, out var cached) &&
-                    TryGetLiveStreamVisuals(cached.Element, out var v) &&
-                    v.CursorTimer.IsEnabled)
-                {
-                    v.CursorTimer.Stop();
-                    v.CursorText.Visibility = Visibility.Collapsed;
-                }
-            }
-
-            var shouldScrollToBottom =
-                !_userScrolledUp && (_vm.Messages.Count != _lastMessageCount || IsNearBottom());
-            _lastMessageCount = _vm.Messages.Count;
-
-            var elements = new List<UIElement>();
-            if (!string.IsNullOrWhiteSpace(_vm.ErrorMessage))
-                elements.Add(BuildErrorState(_vm.ErrorMessage));
-
-            if (_vm.CurrentChat == null)
-            {
-                SyncMessageChildren(elements.Append(BuildNoChatState()).ToList(), "no-chat");
-                return;
-            }
-
-            if (_vm.Messages.Count == 0)
-            {
-                SyncMessageChildren(elements.Append(BuildEmptyState()).ToList(), "empty");
-                return;
-            }
-
-            // M4.9.5 Phase G4: group messages by day. Insert a date separator
-            // before the first message of each new calendar day (and at the top
-            // of a resumed conversation) so the timeline reads naturally.
-            DateTime? lastDay = null;
-            foreach (var message in _vm.Messages)
-            {
-                var day = message.CreatedAt.ToLocalTime().Date;
-                if (lastDay == null || day.Date != lastDay.Value.Date)
-                {
-                    elements.Add(BuildDaySeparator(message.CreatedAt, lastDay == null));
-                    lastDay = day;
-                }
-                elements.Add(GetCachedMessageElement(message));
-            }
-
-            var signature = string.Join(
-                "|",
-                _vm.Messages.Select(m => $"{m.Id:N}:{m.Role}:{m.Content.Length}:{m.TurnId?.ToString("N") ?? "draft"}"))
-                + $"|err:{_vm.ErrorMessage?.Length ?? 0}";
-            SyncMessageChildren(elements, signature);
-
-            if (shouldScrollToBottom)
-            {
-                DispatcherQueue.TryEnqueue(() =>
-                    MessagesScrollViewer.ChangeView(null, MessagesScrollViewer.ScrollableHeight, null, false));
-            }
+                var addedHeight = Math.Max(0, MessagesScrollViewer.ExtentHeight - previousExtent);
+                MessagesScrollViewer.ChangeView(null, previousOffset + addedHeight, null, true);
+                _loadingOlderMessages = false;
+            });
         }
     }
 
@@ -474,29 +451,6 @@ public sealed partial class ChatPage : UserControl
             }
         }
     }
-
-    private void SyncMessageChildren(IReadOnlyList<UIElement> elements, string signature)
-    {
-        if (!string.Equals(signature, _lastLayoutSignature, StringComparison.Ordinal) ||
-            MessagesStack.Children.Count != elements.Count)
-        {
-            MessagesStack.Children.Clear();
-            foreach (var element in elements)
-                MessagesStack.Children.Add(element);
-            _lastLayoutSignature = signature;
-            return;
-        }
-
-        for (var i = 0; i < elements.Count; i++)
-        {
-            if (!ReferenceEquals(MessagesStack.Children[i], elements[i]))
-                MessagesStack.Children[i] = elements[i];
-        }
-    }
-
-    private bool IsNearBottom() =>
-        MessagesScrollViewer.ScrollableHeight <= 0 ||
-        MessagesScrollViewer.ScrollableHeight - MessagesScrollViewer.VerticalOffset < 80;
 
     private UIElement BuildNoChatState()
     {
@@ -2000,6 +1954,25 @@ public sealed partial class ChatPage : UserControl
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
 
     private sealed record CachedMessageElement(string Signature, UIElement Element);
+    private sealed record TimelineElementToken(Guid MessageId, UIElement MessageElement);
+
+    private sealed class ChatMessageElementFactory(ChatPage owner) : IElementFactory
+    {
+        public UIElement GetElement(ElementFactoryGetArgs args)
+        {
+            if (args.Data is not Message message)
+                return new Grid();
+
+            var index = owner._vm?.Messages.IndexOf(message) ?? 0;
+            return owner.CreateTimelineElement(message, Math.Max(0, index));
+        }
+
+        public void RecycleElement(ElementFactoryRecycleArgs args)
+        {
+            if (args.Element != null)
+                owner.RecycleTimelineElement(args.Element);
+        }
+    }
 
     private sealed record LiveStreamBodyVisuals(
         Expander Expander,
@@ -2020,6 +1993,6 @@ public sealed partial class ChatPage : UserControl
             : compact
                 ? new Thickness(18, 12, 18, 12)
                 : new Thickness(24, 18, 24, 18);
-        MessagesStack.Spacing = compact ? 10 : 14;
+        TimelineLayout.Spacing = compact ? 10 : 14;
     }
 }

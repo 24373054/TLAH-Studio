@@ -13,6 +13,9 @@ public partial class SidebarViewModel : ObservableObject
 {
     private readonly IChatService _chatService;
     private readonly IAppStateService _appState;
+    private CancellationTokenSource? _loadChatsCts;
+    private long _loadChatsVersion;
+    private const int SearchDebounceMs = 220;
 
     public ObservableCollection<ChatSummaryDto> Chats { get; } = new();
     public ObservableCollection<ChatSummaryDto> PinnedChats { get; } = new();
@@ -55,13 +58,27 @@ public partial class SidebarViewModel : ObservableObject
     }
 
     [RelayCommand]
-    public async Task LoadChatsAsync()
+    public Task LoadChatsAsync() => LoadChatsCoreAsync(debounce: false);
+
+    private async Task LoadChatsCoreAsync(bool debounce)
     {
+        _loadChatsCts?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        _loadChatsCts = cancellation;
+        var version = Interlocked.Increment(ref _loadChatsVersion);
         IsLoading = true;
         try
         {
+            if (debounce)
+                await Task.Delay(SearchDebounceMs, cancellation.Token);
+
             var currentId = _appState.CurrentChatId;
-            var chats = await _chatService.ListChatsAsync(SearchText, ShowArchived);
+            var searchText = SearchText;
+            var showArchived = ShowArchived;
+            var chats = await _chatService.ListChatsAsync(searchText, showArchived, cancellation.Token);
+            if (!IsCurrentChatListLoad(version, cancellation))
+                return;
+
             Chats.Clear();
             PinnedChats.Clear();
             RegularChats.Clear();
@@ -84,11 +101,23 @@ public partial class SidebarViewModel : ObservableObject
             if (currentId != null)
                 SelectedChat = Chats.FirstOrDefault(c => c.Id == currentId.Value);
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // A newer keystroke, archive toggle, or mutation owns the sidebar.
+        }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(_loadChatsCts, cancellation))
+            {
+                _loadChatsCts = null;
+                IsLoading = false;
+            }
+            cancellation.Dispose();
         }
     }
+
+    private bool IsCurrentChatListLoad(long version, CancellationTokenSource cancellation) =>
+        !cancellation.IsCancellationRequested && version == Volatile.Read(ref _loadChatsVersion);
 
     [RelayCommand]
     public async Task CreateChatAsync()
@@ -210,7 +239,7 @@ public partial class SidebarViewModel : ObservableObject
     }
 
     partial void OnSearchTextChanged(string value) =>
-        _ = LoadChatsAsync();
+        _ = LoadChatsCoreAsync(debounce: true);
 
     partial void OnShowArchivedChanged(bool value) =>
         _ = LoadChatsAsync();

@@ -19,6 +19,11 @@ public interface IChatService
     Task RestoreChatAsync(Guid chatId, CancellationToken ct = default);
     Task<string> ExportChatJsonAsync(Guid chatId, CancellationToken ct = default);
     Task<List<Message>> GetChatMessagesAsync(Guid chatId, CancellationToken ct = default);
+    Task<ChatMessagePage> GetChatMessagePageAsync(
+        Guid chatId,
+        int? beforeSequenceNum = null,
+        int pageSize = 80,
+        CancellationToken ct = default);
     Task<int> GetNextSequenceAsync(Guid chatId, CancellationToken ct = default);
     Task DeleteMessagesAfterAsync(Guid messageId, bool includeSelected = false, CancellationToken ct = default);
     Task<Message> UpdateMessageContentAsync(Guid messageId, string content, CancellationToken ct = default);
@@ -36,3 +41,9 @@ public record ChatSummaryDto(
     string? ProjectName = null,
     Guid? ConfigProfileId = null,
     string? ConfigProfileName = null);
+
+/// <summary>
+/// A chronological window of one conversation. The UI requests the newest
+/// page first and uses <see cref="HasMore"/> to load older history on demand.
+/// </summary>
+public sealed record ChatMessagePage(IReadOnlyList<Message> Messages, bool HasMore);

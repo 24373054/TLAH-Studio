@@ -18,6 +18,7 @@ public sealed partial class AgentActivityPanelControl : UserControl
     private readonly HashSet<Guid> _expandedRuns = new();
     private readonly HashSet<Guid> _collapsedRuns = new();
     private readonly Dictionary<Guid, Expander> _runExpanders = new();
+    private readonly Dictionary<Guid, string> _runContentSignatures = new();
 
     public AgentActivityPanelControl()
     {
@@ -123,12 +124,16 @@ public sealed partial class AgentActivityPanelControl : UserControl
             ActivityStack.Children.RemoveAt(i);
 
         foreach (var staleId in _runExpanders.Keys.Where(id => !activeRunIds.Contains(id)).ToArray())
+        {
             _runExpanders.Remove(staleId);
+            _runContentSignatures.Remove(staleId);
+        }
     }
 
     private void ClearRunElements()
     {
         _runExpanders.Clear();
+        _runContentSignatures.Clear();
         ActivityStack.Children.Clear();
     }
 
@@ -170,7 +175,7 @@ public sealed partial class AgentActivityPanelControl : UserControl
         if (_runExpanders.TryGetValue(run.Id, out var expander))
         {
             expander.Header = BuildRunHeader(run);
-            expander.Content = BuildRunContent(run);
+            UpdateExpandedRunContent(expander, run);
             expander.Background = RunBackgroundBrush(run);
             expander.BorderBrush = run.IsActive ? AccentSubtleBrush() : PanelBorderBrush();
             return expander;
@@ -188,17 +193,20 @@ public sealed partial class AgentActivityPanelControl : UserControl
         {
             IsExpanded = isExpanded,
             Header = BuildRunHeader(run),
-            Content = BuildRunContent(run),
+            Content = isExpanded ? BuildRunContent(run) : null,
             Background = RunBackgroundBrush(run),
             BorderBrush = run.IsActive ? AccentSubtleBrush() : PanelBorderBrush(),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(0)
         };
+        if (isExpanded)
+            _runContentSignatures[run.Id] = RunContentSignature(run);
         expander.Expanding += (_, _) =>
         {
             _expandedRuns.Add(run.Id);
             _collapsedRuns.Remove(run.Id);
+            RefreshExpandedRunContent(run.Id, expander);
         };
         expander.Collapsed += (_, _) =>
         {
@@ -206,6 +214,39 @@ public sealed partial class AgentActivityPanelControl : UserControl
             _expandedRuns.Remove(run.Id);
         };
         return expander;
+    }
+
+    private void UpdateExpandedRunContent(Expander expander, AgentActivityRun run)
+    {
+        if (!expander.IsExpanded)
+            return;
+
+        var signature = RunContentSignature(run);
+        if (_runContentSignatures.TryGetValue(run.Id, out var current) && current == signature)
+            return;
+
+        expander.Content = BuildRunContent(run);
+        _runContentSignatures[run.Id] = signature;
+    }
+
+    private void RefreshExpandedRunContent(Guid runId, Expander expander)
+    {
+        var run = _vm?.AgentActivityRuns.FirstOrDefault(candidate => candidate.Id == runId);
+        if (run == null)
+            return;
+
+        var signature = RunContentSignature(run);
+        if (_runContentSignatures.TryGetValue(run.Id, out var current) && current == signature)
+            return;
+
+        expander.Content = BuildRunContent(run);
+        _runContentSignatures[run.Id] = signature;
+    }
+
+    private static string RunContentSignature(AgentActivityRun run)
+    {
+        var last = run.Lines.LastOrDefault();
+        return $"{run.Status}|{run.TimeText}|{run.Tasks.Count}|{run.Lines.Count}|{last?.SequenceNumber}|{last?.Text}";
     }
 
     private bool ShouldExpand(AgentActivityRun run, int index)
@@ -559,13 +600,13 @@ public sealed partial class AgentActivityPanelControl : UserControl
 
     private static string StatusLabel(string status) => status switch
     {
-        AgentRunStatuses.Running => "RUN",
-        AgentRunStatuses.AwaitingApproval => "WAIT",
-        AgentRunStatuses.Completed => "DONE",
-        AgentRunStatuses.Paused => "PAUSE",
-        AgentRunStatuses.Cancelled => "STOP",
-        AgentRunStatuses.Failed => "ERR",
-        _ => "RUN"
+        AgentRunStatuses.Running => "Running",
+        AgentRunStatuses.AwaitingApproval => "Review",
+        AgentRunStatuses.Completed => "Done",
+        AgentRunStatuses.Paused => "Paused",
+        AgentRunStatuses.Cancelled => "Stopped",
+        AgentRunStatuses.Failed => "Failed",
+        _ => "Running"
     };
 
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
@@ -675,11 +716,11 @@ public sealed partial class AgentActivityPanelControl : UserControl
 
     private static string TaskStatusLabel(string status) => status switch
     {
-        AgentTaskStatuses.InProgress => "DOING",
-        AgentTaskStatuses.Completed => "DONE",
-        AgentTaskStatuses.Blocked => "BLOCK",
-        AgentTaskStatuses.Cancelled => "DROP",
-        _ => "TODO"
+        AgentTaskStatuses.InProgress => "Working",
+        AgentTaskStatuses.Completed => "Done",
+        AgentTaskStatuses.Blocked => "Blocked",
+        AgentTaskStatuses.Cancelled => "Dropped",
+        _ => "To do"
     };
 
     private Brush ToolPreviewBackgroundBrush(string? renderHint)

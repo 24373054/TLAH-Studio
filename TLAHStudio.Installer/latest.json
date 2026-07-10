@@ -1,14 +1,14 @@
 {
-  "version": "4.9.8",
+  "version": "4.9.9",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.8.exe",
-  "sha256": "1fd4e1902ab0682cd3b34cb5fd6990f7efe686cafdb2ff20eb4b5e479469f320",
-  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.9.8.json.sig",
-  "releaseNotes": "Agent safety and release hardening update.\n\nFixes:\n- Full access no longer bypasses policy denials or safety blocks\n- Plan mode now persists permission transitions and requires user approval to exit\n- Update manifests use immutable versioned signatures with stricter release verification",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.9.exe",
+  "sha256": "9f8e9936ae09e82394fe1554daaac69919fea7ce525cf5dadc34fab155a63be6",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.9.9.json.sig",
+  "releaseNotes": "Frontend performance and agent UX update.\n\n- Paged virtualized conversation timeline with stable async selection\n- Clear agent, workspace, and permission state in the composer\n- Markdown plan review with feedback before execution\n- Lazy long-code highlighting and lower-cost activity rendering",
   "forceUpdate": false,
   "minSupportedVersion": "4.9.7",
   "rolloutPercent": 100,
-  "installerSizeBytes": 98035912
+  "installerSizeBytes": 98041176
 }

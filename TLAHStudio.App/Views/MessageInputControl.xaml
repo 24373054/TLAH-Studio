@@ -56,7 +56,6 @@
         <Button
             x:Name="AgentModeButton"
             Grid.Column="1"
-            Width="46"
             MinWidth="46"
             MinHeight="46"
             Margin="0,0,12,0"
@@ -69,13 +68,15 @@
             Click="AgentMode_Click"
             ToolTipService.ToolTip="Agent mode runs approved sandbox commands for multi-step tasks"
             AutomationProperties.Name="Agent mode">
-            <SymbolIcon Symbol="Play" />
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <SymbolIcon Symbol="Play" />
+                <TextBlock x:Name="AgentModeLabel" Text="Agent" FontWeight="SemiBold" />
+            </StackPanel>
         </Button>
 
         <Button
             x:Name="WorkspaceButton"
             Grid.Column="2"
-            Width="46"
             MinWidth="46"
             MinHeight="46"
             Margin="0,0,12,0"
@@ -108,13 +109,15 @@
                         Click="UseSandbox_Click" />
                 </MenuFlyout>
             </Button.Flyout>
-            <SymbolIcon Symbol="Folder" />
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <SymbolIcon Symbol="Folder" />
+                <TextBlock x:Name="WorkspaceLabel" Text="Sandbox" TextTrimming="CharacterEllipsis" MaxWidth="100" />
+            </StackPanel>
         </Button>
 
         <Button
             x:Name="PermissionModeButton"
             Grid.Column="3"
-            Width="46"
             MinWidth="46"
             MinHeight="46"
             Margin="0,0,12,0"
@@ -147,7 +150,10 @@
                         Click="AskApproval_Click" />
                 </MenuFlyout>
             </Button.Flyout>
-            <SymbolIcon Symbol="Permissions" />
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <SymbolIcon Symbol="Permissions" />
+                <TextBlock x:Name="PermissionModeLabel" Text="Ask" FontWeight="SemiBold" />
+            </StackPanel>
         </Button>
 
         <TextBox

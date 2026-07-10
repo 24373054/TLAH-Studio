@@ -1650,7 +1650,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     {
         if (item.Invocation.Approved != true)
         {
-            var result = new AgentToolResult(false, string.Empty, "Not approved.");
+            var result = new AgentToolResult(false, string.Empty, ApprovalRejectionMessage(item.Invocation));
             item.Invocation.Status = ToolInvocationStatuses.Denied;
             step.Status = AgentStepStatuses.Denied;
             await CompleteInvocationWithResultAsync(state, item, step, result, options, events, ct);
@@ -1840,6 +1840,29 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 step.Id,
                 item.Invocation.Id), events, ct);
         }
+    }
+
+    private static string ApprovalRejectionMessage(ToolInvocation invocation)
+    {
+        if (!string.Equals(invocation.ToolName, AgentToolNames.ExitPlanMode, StringComparison.OrdinalIgnoreCase))
+            return "Not approved.";
+
+        try
+        {
+            using var document = JsonDocument.Parse(invocation.ArgumentsJson);
+            if (document.RootElement.TryGetProperty("feedback", out var feedback) &&
+                feedback.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(feedback.GetString()))
+            {
+                return $"Plan needs revision before approval. User feedback: {feedback.GetString()!.Trim()}";
+            }
+        }
+        catch (JsonException)
+        {
+            // A malformed optional feedback payload should not change denial semantics.
+        }
+
+        return "Plan was not approved. Continue planning or ask the user what to change.";
     }
 
     private static AgentEngineOptions ApplyPersistedPermissionOptions(

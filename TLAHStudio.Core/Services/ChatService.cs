@@ -30,7 +30,6 @@ public class ChatService : IChatService
     public async Task<Chat?> GetChatAsync(Guid chatId, CancellationToken ct = default)
     {
         return await _db.Set<Chat>()
-            .Include(c => c.Messages.OrderBy(m => m.SequenceNum))
             .Include(c => c.ProjectSpace)
             .Include(c => c.ConfigProfile)
             .FirstOrDefaultAsync(c => c.Id == chatId, ct);
@@ -228,6 +227,30 @@ public class ChatService : IChatService
             .Where(m => m.ChatId == chatId)
             .OrderBy(m => m.SequenceNum)
             .ToListAsync(ct);
+    }
+
+    public async Task<ChatMessagePage> GetChatMessagePageAsync(
+        Guid chatId,
+        int? beforeSequenceNum = null,
+        int pageSize = 80,
+        CancellationToken ct = default)
+    {
+        var take = Math.Clamp(pageSize, 1, 200);
+        var query = _db.Set<Message>().Where(m => m.ChatId == chatId);
+        if (beforeSequenceNum.HasValue)
+            query = query.Where(m => m.SequenceNum < beforeSequenceNum.Value);
+
+        // Fetch in reverse so SQLite can stop at the page boundary, then put
+        // the result back in chronological order for the conversation view.
+        var newestFirst = await query
+            .OrderByDescending(m => m.SequenceNum)
+            .Take(take + 1)
+            .ToListAsync(ct);
+        var hasMore = newestFirst.Count > take;
+        if (hasMore)
+            newestFirst.RemoveAt(newestFirst.Count - 1);
+        newestFirst.Reverse();
+        return new ChatMessagePage(newestFirst, hasMore);
     }
 
     public async Task<int> GetNextSequenceAsync(Guid chatId, CancellationToken ct = default)

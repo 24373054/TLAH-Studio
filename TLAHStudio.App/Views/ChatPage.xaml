@@ -55,19 +55,34 @@
                 </Button>
             </Grid>
         </Border>
-        <ScrollViewer
-            x:Name="MessagesScrollViewer"
-            Grid.Row="1"
-            Padding="26,20"
-            VerticalScrollBarVisibility="Auto"
-            VerticalScrollMode="Enabled"
-            HorizontalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Disabled"
-            ZoomMode="Disabled"
-            AutomationProperties.Name="Conversation messages">
-            <StackPanel
-                x:Name="MessagesStack"
-                Spacing="16" />
-        </ScrollViewer>
+        <Grid Grid.Row="1">
+            <ScrollViewer
+                x:Name="MessagesScrollViewer"
+                Padding="26,20"
+                VerticalScrollBarVisibility="Auto"
+                VerticalScrollMode="Enabled"
+                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
+                ZoomMode="Disabled"
+                ViewChanged="MessagesScrollViewer_ViewChanged"
+                AutomationProperties.Name="Conversation messages">
+                <!-- A repeater only realizes the visible portion of the timeline.
+                     Its element factory keeps rich message rendering in C# while
+                     avoiding a retained visual for every historic message. -->
+                <ItemsRepeater x:Name="MessagesRepeater">
+                    <ItemsRepeater.Layout>
+                        <StackLayout x:Name="TimelineLayout" Spacing="16" />
+                    </ItemsRepeater.Layout>
+                </ItemsRepeater>
+            </ScrollViewer>
+
+            <ContentControl
+                x:Name="ConversationStateHost"
+                Margin="26,20"
+                HorizontalContentAlignment="Stretch"
+                VerticalContentAlignment="Stretch"
+                IsHitTestVisible="False"
+                Visibility="Collapsed" />
+        </Grid>
     </Grid>
 </UserControl>

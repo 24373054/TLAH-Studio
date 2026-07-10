@@ -13,6 +13,8 @@ TLAH Studio combines chat, tool execution, MCP integrations, prompt/debug inspec
 - MCP supports STDIO and Streamable HTTP servers with tool/resource discovery.
 - Long agent runs persist checkpoints, progress events, artifacts, rollback metadata, and stopped-run records.
 - The right-side Agent Activity panel replays historical runs after completion or cancellation.
+- Conversations open from a paged, virtualized timeline so long histories do not retain every rich message visual.
+- Plan mode presents a Markdown implementation review with feedback before write access is restored.
 - Chat headers show context usage, including conversation, tools, MCP, execution results, files, and total budget.
 - Debug tooling captures raw HTTP request/response data for provider troubleshooting.
 - Updates are delivered through signed `latest.json` metadata and Windows installer packages.
@@ -54,8 +56,8 @@ Build, sign, and smoke-test the release locally first:
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version 4.9.8 `
-  -ReleaseNotes "Reliability, security, and release-pipeline fixes." `
+  -Version 4.9.9 `
+  -ReleaseNotes "Virtualized conversations, clearer agent state, and plan review." `
   -CertificateThumbprint F6DC173C746447A05FF83B9F7162121344CC09F0 `
   -AllowUntrustedCertificate `
   -ForceSmokeTest
@@ -66,10 +68,10 @@ then atomically upload the already-verified files:
 
 ```powershell
 git add -A
-git commit -m "release 4.9.8"
-git tag -a v4.9.8 -m "TLAH Studio 4.9.8"
+git commit -m "release 4.9.9"
+git tag -a v4.9.9 -m "TLAH Studio 4.9.9"
 git push origin main
-git push origin v4.9.8
+git push origin v4.9.9
 .\tools\deploy.ps1 -Server <ssh-user>@download.matrixlabs.cn
 ```
 
@@ -86,7 +88,7 @@ Thumbprint: F6DC173C746447A05FF83B9F7162121344CC09F0
 Verify an existing release:
 
 ```powershell
-.\tools\verify-release.ps1 -Version 4.9.8 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version 4.9.9 -AllowUntrustedAuthenticode
 ```
 
 Generated files:

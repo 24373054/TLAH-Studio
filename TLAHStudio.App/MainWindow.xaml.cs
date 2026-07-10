@@ -175,6 +175,12 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            if (string.Equals(request.ToolName, AgentToolNames.ExitPlanMode, StringComparison.OrdinalIgnoreCase))
+            {
+                await ShowPlanReviewDialogAsync(request);
+                return;
+            }
+
             SoundService.Play(InteractionSound.Approval);
             var details = request.ArgumentsJson;
             try
@@ -294,6 +300,123 @@ public sealed partial class MainWindow : Window
             App.Log($"AGENT APPROVAL DIALOG FAILED: {ex}");
             request.Completion.TrySetResult(AgentApprovalChoice.AlwaysDeny);
         }
+    }
+
+    /// <summary>
+    /// Gives plan-mode exits a document review rather than exposing a generic
+    /// tool JSON prompt. A denial with feedback is persisted on the invocation
+    /// so the runtime returns it to the agent while remaining in plan mode.
+    /// </summary>
+    private async Task ShowPlanReviewDialogAsync(AgentApprovalRequest request)
+    {
+        var plan = ExtractPlan(request.ArgumentsJson);
+        var content = new StackPanel { Spacing = 12, MaxWidth = 760 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "The agent has finished read-only exploration. Review the proposed implementation before restoring write access.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"]
+        });
+
+        var planView = new CommunityToolkit.WinUI.UI.Controls.MarkdownTextBlock
+        {
+            Text = plan,
+            IsTextSelectionEnabled = true,
+            Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"],
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Padding = new Thickness(0)
+        };
+        var planSurface = new Border
+        {
+            Padding = new Thickness(16, 12, 16, 12),
+            MaxHeight = 430,
+            Background = (Brush)Application.Current.Resources["InputBackgroundBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderSubtleBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Child = new ScrollViewer
+            {
+                Content = planView,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            }
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(planSurface, "Implementation plan");
+        content.Children.Add(planSurface);
+
+        content.Children.Add(new TextBlock
+        {
+            Text = "Feedback for another planning pass (optional)",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"]
+        });
+        var feedback = new TextBox
+        {
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 72,
+            MaxHeight = 140,
+            PlaceholderText = "For example: use the safer migration path and add a regression test.",
+            Background = (Brush)Application.Current.Resources["InputBackgroundBrush"],
+            Foreground = (Brush)Application.Current.Resources["TextPrimaryBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderSubtleBrush"],
+            CornerRadius = new CornerRadius(8)
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(feedback, "Plan feedback");
+        content.Children.Add(feedback);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Review implementation plan",
+            Content = content,
+            PrimaryButtonText = "Approve and continue",
+            SecondaryButtonText = "Keep planning",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootGrid.XamlRoot
+        };
+        if (Content is FrameworkElement root)
+            dialog.RequestedTheme = root.ActualTheme;
+
+        var result = await TryShowDialogAsync(dialog, waitForTurn: true);
+        SoundService.Play(result is ContentDialogResult.Primary or ContentDialogResult.Secondary
+            ? InteractionSound.Complete
+            : InteractionSound.Error);
+        if (result == ContentDialogResult.Primary)
+        {
+            request.Completion.TrySetResult(AgentApprovalChoice.AllowOnce);
+            return;
+        }
+
+        if (result == ContentDialogResult.Secondary && !string.IsNullOrWhiteSpace(feedback.Text))
+        {
+            request.UpdatedArgumentsJson = JsonSerializer.Serialize(new
+            {
+                plan,
+                feedback = feedback.Text.Trim()
+            });
+        }
+        request.Completion.TrySetResult(AgentApprovalChoice.DenyOnce);
+    }
+
+    private static string ExtractPlan(string argumentsJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(argumentsJson);
+            if (document.RootElement.TryGetProperty("plan", out var plan) &&
+                plan.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(plan.GetString()))
+            {
+                return plan.GetString()!.Trim();
+            }
+        }
+        catch (JsonException)
+        {
+            // The approval flow still presents a readable state below.
+        }
+
+        return "The agent did not provide a readable plan. Keep planning and ask it to submit a complete implementation plan.";
     }
 
     /// <summary>

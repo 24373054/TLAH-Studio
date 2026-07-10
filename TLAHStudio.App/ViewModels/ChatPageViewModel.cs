@@ -8,7 +8,6 @@ using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
 using TLAHStudio.Core.Services.Workspace;
-using TLAHStudio.App.Models;
 
 namespace TLAHStudio.App.ViewModels;
 
@@ -24,6 +23,8 @@ public partial class ChatPageViewModel : ObservableObject
     private readonly IAppStateService _appState;
     private readonly IWorkspaceRootService _workspaceRootService;
     private CancellationTokenSource? _sendCts;
+    private CancellationTokenSource? _chatLoadCts;
+    private long _chatLoadVersion;
     private IProgress<AgentProgressUpdate>? _activeAgentProgress;
     private AssistantStreamState? _activeStream;
     private string? _activeAgentRequest;
@@ -31,16 +32,9 @@ public partial class ChatPageViewModel : ObservableObject
     // and re-invoke SendMessageAsync. Guards the recursive dispatch path.
     private bool _isHandlingSlashCommand;
     private const int StreamDrainDelayMs = 32;
+    private const int InitialMessagePageSize = 80;
     private const string AgentActivityPanelStorageKey = "tlah-agent-activity-panel-open";
     private const string AgentPermissionModeStorageKey = "tlah-agent-permission-mode";
-
-    /// <summary>
-    /// M2.8.0: Typed content blocks for virtualized rendering.
-    /// Replaces monolithic message rendering with independently renderable blocks.
-    /// </summary>
-    public ObservableCollection<ChatMessageBlock> ChatMessageBlocks { get; } = new();
-
-    private readonly ChatRenderer _chatRenderer = new();
 
     public ObservableCollection<Message> Messages { get; } = new();
     public ObservableCollection<AgentProgressLine> AgentProgressLines { get; } = new();
@@ -54,6 +48,9 @@ public partial class ChatPageViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isLoading;
+
+    [ObservableProperty]
+    private bool _hasOlderMessages;
 
     [ObservableProperty]
     private Chat? _currentChat;
@@ -184,9 +181,11 @@ public partial class ChatPageViewModel : ObservableObject
 
     private void OnChatDeselected(object? sender, EventArgs e)
     {
+        CancelPendingChatLoad();
+        Interlocked.Increment(ref _chatLoadVersion);
         CurrentChat = null;
         Messages.Clear();
-        ChatMessageBlocks.Clear();
+        HasOlderMessages = false;
         ClearAgentProgress();
         ClearAgentActivity();
         ContextUsageText = "Context --";
@@ -201,39 +200,101 @@ public partial class ChatPageViewModel : ObservableObject
     [RelayCommand]
     public async Task LoadChatAsync(Guid chatId)
     {
+        CancelPendingChatLoad();
+        var cancellation = new CancellationTokenSource();
+        _chatLoadCts = cancellation;
+        var version = Interlocked.Increment(ref _chatLoadVersion);
         IsLoading = true;
         ErrorMessage = null;
+        // Do not leave a previous chat visible while the new selection is in
+        // flight: an error or late response must never look like it belongs to
+        // the conversation the user just selected.
+        CurrentChat = null;
+        Messages.Clear();
+        HasOlderMessages = false;
+        ClearAgentProgress();
+        ClearAgentActivity();
         try
         {
-            var chat = await _chatService.GetChatAsync(chatId);
+            var chatTask = _chatService.GetChatAsync(chatId, cancellation.Token);
+            var messagesTask = _chatService.GetChatMessagePageAsync(
+                chatId,
+                pageSize: InitialMessagePageSize,
+                ct: cancellation.Token);
+            await Task.WhenAll(chatTask, messagesTask);
+            if (!IsCurrentChatLoad(chatId, version, cancellation))
+                return;
+
+            var chat = await chatTask;
+            var page = await messagesTask;
             CurrentChat = chat;
-            await RefreshWorkspaceAsync(chatId);
-            Messages.Clear();
-            ChatMessageBlocks.Clear();
-            ClearAgentProgress();
-            ClearAgentActivity();
-            if (chat?.Messages != null)
-            {
-                var msgList = chat.Messages.ToList();
-                foreach (var msg in msgList)
-                    Messages.Add(msg);
-                // M2.8.0: Populate typed blocks
-                ChatMessageBlocks.Clear();
-                foreach (var block in _chatRenderer.RenderAll(msgList))
-                    ChatMessageBlocks.Add(block);
-            }
-            await LoadAgentActivityAsync(chatId);
-            await UpdateContextUsageAsync(chatId);
-            UpdateAgentStatus(await _llmService.GetLatestAgentRunAsync(chatId));
+            await RefreshWorkspaceAsync(chatId, version);
+            if (!IsCurrentChatLoad(chatId, version, cancellation))
+                return;
+
+            foreach (var msg in page.Messages)
+                Messages.Add(msg);
+            HasOlderMessages = page.HasMore;
+
+            await LoadAgentActivityAsync(chatId, version);
+            await UpdateContextUsageAsync(chatId, version);
+            var latestRun = await _llmService.GetLatestAgentRunAsync(chatId);
+            if (IsCurrentChatLoad(chatId, version, cancellation))
+                UpdateAgentStatus(latestRun);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // Selection changed; a newer load owns the visible state.
         }
         catch (Exception e)
         {
-            ErrorMessage = e.Message;
+            if (IsCurrentChatLoad(chatId, version, cancellation))
+                ErrorMessage = e.Message;
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(_chatLoadCts, cancellation))
+            {
+                _chatLoadCts = null;
+                IsLoading = false;
+            }
+            cancellation.Dispose();
         }
+    }
+
+    /// <summary>Loads one older chronological page without replacing the active transcript.</summary>
+    public async Task LoadOlderMessagesAsync()
+    {
+        if (CurrentChat == null || !HasOlderMessages || Messages.Count == 0)
+            return;
+
+        var chatId = CurrentChat.Id;
+        var version = Volatile.Read(ref _chatLoadVersion);
+        var beforeSequence = Messages[0].SequenceNum;
+        try
+        {
+            var page = await _chatService.GetChatMessagePageAsync(chatId, beforeSequence, InitialMessagePageSize);
+            if (_appState.CurrentChatId != chatId || version != Volatile.Read(ref _chatLoadVersion))
+                return;
+
+            for (var i = page.Messages.Count - 1; i >= 0; i--)
+                Messages.Insert(0, page.Messages[i]);
+            HasOlderMessages = page.HasMore;
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer chat was selected while this page was in flight.
+        }
+    }
+
+    private bool IsCurrentChatLoad(Guid chatId, long version, CancellationTokenSource cancellation) =>
+        !cancellation.IsCancellationRequested &&
+        version == Volatile.Read(ref _chatLoadVersion) &&
+        _appState.CurrentChatId == chatId;
+
+    private void CancelPendingChatLoad()
+    {
+        _chatLoadCts?.Cancel();
     }
 
     [RelayCommand]
@@ -692,9 +753,11 @@ public partial class ChatPageViewModel : ObservableObject
         await RefreshWorkspaceAsync(_appState.CurrentChatId.Value);
     }
 
-    private async Task RefreshWorkspaceAsync(Guid chatId)
+    private async Task RefreshWorkspaceAsync(Guid chatId, long? loadVersion = null)
     {
         var root = await _workspaceRootService.GetRootAsync(chatId);
+        if (loadVersion.HasValue && !IsCurrentChatVersion(chatId, loadVersion.Value))
+            return;
         WorkspacePath = root.RootPath;
         IsWorkspaceConfigured = root.IsConfigured;
         WorkspaceDisplayName = root.IsConfigured
@@ -750,10 +813,6 @@ public partial class ChatPageViewModel : ObservableObject
                 stream.TryCompleteFinalDrainLocked();
             }
         }
-
-        // M2.8.0: Finalize streaming blocks
-        if (stream?.Message != null)
-            _chatRenderer.FinalizeStreaming(ChatMessageBlocks, stream.Message);
 
         UpdateAgentStatus(result.AgentRun);
         StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
@@ -862,11 +921,6 @@ public partial class ChatPageViewModel : ObservableObject
         };
         Messages.Add(message);
 
-        // M2.8.0: Create initial streaming block
-        var streamBlock = ChatMessageBlock.TextBlock(message.Id, "assistant", string.Empty, ChatMessageBlocks.Count);
-        streamBlock.IsStreaming = true;
-        ChatMessageBlocks.Add(streamBlock);
-
         _activeStream = new AssistantStreamState(
             message,
             new InlineLlmStreamProgress(OnAssistantStream));
@@ -968,8 +1022,6 @@ public partial class ChatPageViewModel : ObservableObject
                     stream.Message.Content = stream.ComposeContent();
                     changed = true;
 
-                    // M2.8.0: Incremental block update — no full tree rebuild
-                    _chatRenderer.UpdateStreamingBlock(ChatMessageBlocks, stream.Message);
                 }
 
                 if (!changed)
@@ -1063,9 +1115,11 @@ public partial class ChatPageViewModel : ObservableObject
         IsAgentLiveVisible = true;
     }
 
-    private async Task LoadAgentActivityAsync(Guid chatId)
+    private async Task LoadAgentActivityAsync(Guid chatId, long? loadVersion = null)
     {
         var snapshots = await _llmService.GetAgentActivityAsync(chatId);
+        if (loadVersion.HasValue && !IsCurrentChatVersion(chatId, loadVersion.Value))
+            return;
         AgentActivityRuns.Clear();
         foreach (var snapshot in snapshots)
         {
@@ -1089,11 +1143,13 @@ public partial class ChatPageViewModel : ObservableObject
             Progress: progress,
             PermissionMode: AgentPermissionModes.Normalize(SelectedAgentPermissionMode));
 
-    private async Task UpdateContextUsageAsync(Guid chatId)
+    private async Task UpdateContextUsageAsync(Guid chatId, long? loadVersion = null)
     {
         try
         {
             var usage = await _llmService.GetContextUsageAsync(chatId);
+            if (loadVersion.HasValue && !IsCurrentChatVersion(chatId, loadVersion.Value))
+                return;
             LastContextUsage = usage;
             ContextUsageText =
                 $"Context {FormatTokenCount(usage.TotalTokens)} / {FormatTokenCount(usage.AvailableTokens)} ({usage.PercentUsed:F1}%)";
@@ -1108,10 +1164,15 @@ public partial class ChatPageViewModel : ObservableObject
         }
         catch
         {
+            if (loadVersion.HasValue && !IsCurrentChatVersion(chatId, loadVersion.Value))
+                return;
             ContextUsageText = "Context unavailable";
             ContextUsageToolTip = "Context usage could not be calculated for this chat.";
         }
     }
+
+    private bool IsCurrentChatVersion(Guid chatId, long version) =>
+        version == Volatile.Read(ref _chatLoadVersion) && _appState.CurrentChatId == chatId;
 
     private static string FormatTokenCount(int value)
     {
