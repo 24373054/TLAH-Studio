@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/24373054/TLAH-Studio/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Latest release
+    url: https://github.com/24373054/TLAH-Studio/releases/latest
+    about: Confirm the problem still exists in the current stable version.

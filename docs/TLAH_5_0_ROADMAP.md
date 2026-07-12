@@ -27,7 +27,7 @@ TLAH Studio(Talk Like A Human)是 Windows 原生 AI 智能体工作台,基于 C#
 
 ### 1.3 研究方法
 
-本路线图的差距判断基于对 Claude Code 源码(`C:\Users\23157\CODE\00TLAH\_analysis\claude-code-src\src`)五个子系统的逐文件研读,对照 TLAH Studio 4.7.0 源码(`C:\Users\23157\CODE\00TLAH\TLAH`)。所有 `路径:行号` 引用均来自实际代码读取,非臆测。
+本路线图最初的差距判断基于对一份本地、独立授权的参考源码快照与 TLAH Studio 4.7.0 的历史对照。参考源码不属于本仓库；所有相关结论仅作为历史设计背景，当前能力应以代码、测试和现行架构文档为准。
 
 ---
 
