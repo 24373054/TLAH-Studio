@@ -1,8 +1,8 @@
-﻿; TLAH Studio - Inno Setup Installer Script
+; TLAH Studio - Inno Setup Installer Script
 ; Supports: manual install (GUI wizard) and silent update (/VERYSILENT /NORESTART)
 
 #define MyAppName "TLAH Studio"
-#define MyAppVersion "4.10.0"
+#define MyAppVersion "4.11.0"
 #define MyAppPublisher "KeEntropy Technology"
 #define MyAppExeName "TLAHStudio.App.exe"
 #define MyAppUpdaterName "TLAHStudio.Updater.exe"

@@ -364,9 +364,10 @@ try {
     # sign-latest uses modern ECDsa APIs that are unavailable in Windows
     # PowerShell 5. Prefer PowerShell 7 when it is installed so a release
     # build started from either shell produces the same signed manifest.
-    $pwsh = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue
+    $pwsh = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
     if ($pwsh) {
-        Invoke-Native $pwsh.Source @(
+        Invoke-Native ([string]$pwsh.Path) @(
             "-NoProfile",
             "-File",
             (Resolve-Path -LiteralPath ".\tools\sign-latest.ps1").Path,

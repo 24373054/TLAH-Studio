@@ -82,16 +82,16 @@ public sealed partial class MessageInputControl : UserControl
         InputRoot.Padding = compact
             ? new Thickness(12, 10, 12, 10)
             : new Thickness(20, 14, 20, 14);
-        var controlMargin = compact ? new Thickness(0, 0, 8, 0) : new Thickness(0, 0, 10, 0);
-        RoleButton.Margin = controlMargin;
-        AgentModeButton.Margin = controlMargin;
-        WorkspaceButton.Margin = controlMargin;
-        PermissionModeButton.Margin = controlMargin;
-        ActionGrid.Margin = compact
-            ? new Thickness(8, 0, 0, 0)
-            : new Thickness(12, 0, 0, 0);
-        SendBtn.MinWidth = compact ? 44 : 54;
-        StopBtn.MinWidth = compact ? 44 : 54;
+        // The Nocturne input dock owns its rhythm through StackPanel/Grid
+        // spacing. Per-control margins made narrow layouts look uneven and
+        // increased measure work during every resize.
+        RoleButton.Margin = new Thickness(0);
+        AgentModeButton.Margin = new Thickness(0);
+        WorkspaceButton.Margin = new Thickness(0);
+        PermissionModeButton.Margin = new Thickness(0);
+        ActionGrid.Margin = new Thickness(0);
+        SendBtn.MinWidth = compact ? 48 : 56;
+        StopBtn.MinWidth = compact ? 48 : 56;
         InputBox.Padding = compact
             ? new Thickness(12, 10, 12, 10)
             : new Thickness(14, 10, 14, 10);

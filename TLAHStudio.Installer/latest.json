@@ -1,14 +1,14 @@
 {
-    "version":  "4.10.0",
-    "channel":  "stable",
-    "platform":  "windows",
-    "arch":  "x64",
-    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.10.0.exe",
-    "sha256":  "67a99ad8d6d4d9c673329c0a8211c2e84444ce649289a99a4bf642292c5cdc20",
-    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest-4.10.0.json.sig",
-    "releaseNotes":  "4.10.0\n\nHighlights:\n- Virtualized conversations, activity, and sidebar lists for smoother large-workspace navigation.\n- Added Changes & Preview (Ctrl+Shift+D) for workspace status and diff review.\n- Hardened startup and release verification, including an installed-app smoke test.",
-    "forceUpdate":  true,
-    "minSupportedVersion":  "4.9.7",
-    "rolloutPercent":  100,
-    "installerSizeBytes":  98036872
+  "version": "4.11.0",
+  "channel": "stable",
+  "platform": "windows",
+  "arch": "x64",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.11.0.exe",
+  "sha256": "a56dc5488fca955ee9551c51e226a8bb38101610d0ed398ae6c839775d903a98",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.11.0.json.sig",
+  "releaseNotes": "4.11.0\n\nHighlights:\n- Nocturne Studio visual direction with a unified icon system and calmer material layers.\n- Rebuilt the conversation canvas, command dock, navigation, and review workbench.\n- Added restrained motion feedback and smoother long-conversation scrolling.",
+  "forceUpdate": true,
+  "minSupportedVersion": "4.9.7",
+  "rolloutPercent": 100,
+  "installerSizeBytes": 98042272
 }

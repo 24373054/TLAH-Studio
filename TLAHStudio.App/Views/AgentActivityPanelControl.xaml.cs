@@ -601,28 +601,28 @@ public sealed partial class AgentActivityPanelControl : UserControl
     private SolidColorBrush ThemeBrush(Color light, Color dark) => new(ThemeColor(light, dark));
 
     private SolidColorBrush TextPrimaryBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x17, 0x20, 0x33),
-        Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)));
+        Color.FromArgb(0xFF, 0x1D, 0x1B, 0x24),
+        Color.FromArgb(0xFF, 0xF4, 0xF2, 0xEE)));
 
     private SolidColorBrush TextSecondaryBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x56, 0x65, 0x7A),
-        Color.FromArgb(0xFF, 0xE0, 0xE8, 0xF4)));
+        Color.FromArgb(0xFF, 0x63, 0x5E, 0x6E),
+        Color.FromArgb(0xFF, 0xE0, 0xE3, 0xEB)));
 
     private SolidColorBrush AccentSubtleBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0xBF, 0xD2, 0xFF),
-        Color.FromArgb(0x99, 0x71, 0xA7, 0xFF)));
+        Color.FromArgb(0xFF, 0xB5, 0xAE, 0xFF),
+        Color.FromArgb(0x99, 0x90, 0x85, 0xFF)));
 
     private SolidColorBrush PanelBorderBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0xD2, 0xDC, 0xEB),
-        Color.FromArgb(0x6E, 0x71, 0x81, 0x95)));
+        Color.FromArgb(0xFF, 0xD8, 0xD8, 0xD0),
+        Color.FromArgb(0x6E, 0x5D, 0x64, 0x76)));
 
     private SolidColorBrush RunBackgroundBrush(AgentActivityRun run) => run.IsActive
         ? ThemeBrush(
-            Color.FromArgb(0xF8, 0xFA, 0xFD, 0xFF),
-            Color.FromArgb(0xE8, 0x12, 0x1B, 0x2B))
+            Color.FromArgb(0xF8, 0xFC, 0xFA, 0xFF),
+            Color.FromArgb(0xE8, 0x1B, 0x1A, 0x29))
         : ThemeBrush(
-            Color.FromArgb(0xEE, 0xFF, 0xFF, 0xFF),
-            Color.FromArgb(0xCA, 0x0E, 0x16, 0x24));
+            Color.FromArgb(0xEE, 0xFF, 0xFE, 0xFC),
+            Color.FromArgb(0xCA, 0x11, 0x14, 0x1D));
 
     // M4.9.4: Status brushes now resolve from theme tokens (Success/Warning/
     // Info/Danger) instead of hardcoded hex, so they honor theme switching.

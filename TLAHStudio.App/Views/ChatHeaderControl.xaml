@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid
-        Padding="26,16,22,14"
+        Padding="28,18,24,16"
         Background="{ThemeResource AppChromeBrush}"
         BorderBrush="{ThemeResource BorderSubtleBrush}"
         BorderThickness="0,0,0,1">
@@ -12,129 +12,112 @@
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
-        <StackPanel
-            Grid.Column="0"
-            VerticalAlignment="Center"
-            Spacing="2">
+        <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="4">
             <TextBlock
                 x:Name="TitleBlock"
                 Text="Select a chat"
-                FontSize="18"
+                FontSize="20"
                 FontWeight="SemiBold"
                 Foreground="{ThemeResource TextPrimaryBrush}"
                 TextTrimming="CharacterEllipsis"
                 Tapped="Title_Tapped"
                 ToolTipService.ToolTip="Edit title"
                 AutomationProperties.Name="Chat title" />
-            <TextBlock
-                x:Name="ContextUsageBlock"
-                Text="Context --"
-                FontSize="12"
-                Foreground="{ThemeResource TextMutedBrush}"
-                TextTrimming="CharacterEllipsis"
-                AutomationProperties.Name="Context usage" />
-            <!-- M4.7.0: Colored segmented context gauge -->
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock
+                    Text="CONTEXT"
+                    FontSize="10"
+                    FontWeight="SemiBold"
+                    CharacterSpacing="65"
+                    Foreground="{ThemeResource TextMutedBrush}" />
+                <TextBlock
+                    x:Name="ContextUsageBlock"
+                    Text="Context --"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextSecondaryBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    AutomationProperties.Name="Context usage" />
+            </StackPanel>
             <Border
                 x:Name="ContextGauge"
-                Height="4"
-                Margin="0,4,0,0"
+                Height="3"
+                Margin="0,3,0,0"
                 CornerRadius="2"
                 Background="{ThemeResource BorderSubtleBrush}"
                 Visibility="Collapsed">
                 <Grid x:Name="ContextGaugeGrid" ColumnSpacing="1" />
             </Border>
-            <!-- M4.9.5 Phase F1: compact warning — shown when context > 80%. -->
             <TextBlock
                 x:Name="CompactWarn"
-                Text="⚠ Context near limit — consider compacting"
+                Text="Context near limit — consider compacting"
                 FontSize="11"
                 FontWeight="SemiBold"
                 Foreground="{ThemeResource DangerBrush}"
-                Margin="0,4,0,0"
+                Margin="0,2,0,0"
                 Visibility="Collapsed"
                 AutomationProperties.Name="Context near limit warning" />
         </StackPanel>
 
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
             <Button
                 Click="Theme_Click"
-                Width="38"
-                Height="38"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                CornerRadius="8"
-                Padding="0"
+                Style="{StaticResource NocturneIconButtonStyle}"
                 ToolTipService.ToolTip="Toggle theme"
                 AutomationProperties.Name="Toggle theme">
-                <SymbolIcon Symbol="Switch" />
-            </Button>
-            <Button
-                Click="SystemPrompt_Click"
-                Width="38"
-                Height="38"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                CornerRadius="8"
-                Padding="0"
-                ToolTipService.ToolTip="System prompt"
-                AutomationProperties.Name="System prompt">
-                <SymbolIcon Symbol="Edit" />
-            </Button>
-            <Button
-                Click="Background_Click"
-                Width="38"
-                Height="38"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                CornerRadius="8"
-                Padding="0"
-                ToolTipService.ToolTip="Background"
-                AutomationProperties.Name="Background settings">
-                <SymbolIcon Symbol="Pictures" />
+                <FontIcon Glyph="&#xE706;" Style="{StaticResource NocturneIconStyle}" />
             </Button>
             <Button
                 x:Name="ActivityButton"
                 Click="Activity_Click"
-                Width="38"
-                Height="38"
+                MinHeight="38"
+                Padding="11,0"
                 Background="{ThemeResource SurfaceElevatedBrush}"
                 Foreground="{ThemeResource TextSecondaryBrush}"
                 BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
                 CornerRadius="8"
-                Padding="0"
                 ToolTipService.ToolTip="Agent activity"
                 AutomationProperties.Name="Agent activity">
-                <SymbolIcon Symbol="List" />
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <FontIcon Glyph="&#xE7C3;" Style="{StaticResource NocturneIconStyle}" />
+                    <TextBlock Text="Activity" FontSize="12" FontWeight="SemiBold" />
+                </StackPanel>
             </Button>
             <Button
                 x:Name="ChangesButton"
                 Click="Changes_Click"
-                Width="38"
-                Height="38"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                MinHeight="38"
+                Padding="11,0"
+                Background="{ThemeResource AccentSoftBrush}"
+                Foreground="{ThemeResource AccentBrush}"
+                BorderBrush="{ThemeResource AccentSoftBrush}"
+                BorderThickness="1"
                 CornerRadius="8"
-                Padding="0"
                 ToolTipService.ToolTip="Changes and preview"
                 AutomationProperties.Name="Changes and preview">
-                <SymbolIcon Symbol="Document" />
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <FontIcon Glyph="&#xE8A5;" Style="{StaticResource NocturneIconStyle}" Foreground="{ThemeResource AccentBrush}" />
+                    <TextBlock Text="Changes" FontSize="12" FontWeight="SemiBold" />
+                </StackPanel>
             </Button>
             <Button
-                Click="Agent_Click"
-                Width="38"
-                Height="38"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                CornerRadius="8"
-                Padding="0"
-                ToolTipService.ToolTip="AGENT.md"
-                AutomationProperties.Name="Agent file">
-                <SymbolIcon Symbol="Document" />
+                Style="{StaticResource NocturneIconButtonStyle}"
+                ToolTipService.ToolTip="More workspace controls"
+                AutomationProperties.Name="More workspace controls">
+                <FontIcon Glyph="&#xE712;" Style="{StaticResource NocturneIconStyle}" />
+                <Button.Flyout>
+                    <MenuFlyout>
+                        <MenuFlyoutItem Text="System prompt" Click="SystemPrompt_Click">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" Style="{StaticResource NocturneIconStyle}" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="Canvas appearance" Click="Background_Click">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE790;" Style="{StaticResource NocturneIconStyle}" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                        <MenuFlyoutItem Text="AGENT.md" Click="Agent_Click">
+                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A5;" Style="{StaticResource NocturneIconStyle}" /></MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                    </MenuFlyout>
+                </Button.Flyout>
             </Button>
         </StackPanel>
     </Grid>

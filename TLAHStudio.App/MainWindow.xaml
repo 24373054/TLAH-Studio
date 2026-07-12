@@ -9,8 +9,14 @@
         x:Name="RootGrid"
         Background="{ThemeResource AppBackgroundBrush}"
         AutomationProperties.Name="TLAH Studio workspace">
+        <Grid.ChildrenTransitions>
+            <TransitionCollection>
+                <EntranceThemeTransition FromVerticalOffset="10" IsStaggeringEnabled="False" />
+                <RepositionThemeTransition />
+            </TransitionCollection>
+        </Grid.ChildrenTransitions>
         <Grid.RowDefinitions>
-            <RowDefinition Height="44" />
+            <RowDefinition Height="48" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -20,32 +26,38 @@
             Background="{ThemeResource AppChromeBrush}"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             BorderThickness="0,0,0,1"
-            MinHeight="44">
+            MinHeight="48">
             <Border
-                Width="26"
-                Height="26"
+                Width="28"
+                Height="28"
                 Margin="14,0,0,0"
                 HorizontalAlignment="Left"
                 VerticalAlignment="Center"
                 Background="{ThemeResource BrandMarkBrush}"
                 BorderBrush="{ThemeResource BorderSubtleBrush}"
                 BorderThickness="1"
-                CornerRadius="8">
+                CornerRadius="9">
                 <Image
                     Source="ms-appx:///Assets/logo.png"
-                    Width="18"
-                    Height="18"
+                    Width="19"
+                    Height="19"
                     Stretch="Uniform"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
             </Border>
-            <TextBlock
-                Text="TLAH Studio"
-                Margin="50,0,160,0"
-                VerticalAlignment="Center"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                FontSize="13"
-                FontWeight="SemiBold" />
+            <StackPanel Margin="54,0,160,0" VerticalAlignment="Center" Spacing="0">
+                <TextBlock
+                    Text="TLAH Studio"
+                    Foreground="{ThemeResource TextPrimaryBrush}"
+                    FontSize="13"
+                    FontWeight="SemiBold" />
+                <TextBlock
+                    Text="AGENT WORKSPACE"
+                    Foreground="{ThemeResource TextMutedBrush}"
+                    FontSize="9"
+                    FontWeight="SemiBold"
+                    CharacterSpacing="70" />
+            </StackPanel>
         </Grid>
 
         <Grid Grid.Row="1">
@@ -57,6 +69,10 @@
             <views:SidebarPage x:Name="SidebarView" Grid.Column="0" />
 
             <Grid Grid.Column="1">
+                <Rectangle
+                    Fill="{ThemeResource NocturneAmbientBrush}"
+                    Opacity="0.44"
+                    IsHitTestVisible="False" />
                 <Image
                     x:Name="BackgroundImage"
                     Stretch="UniformToFill"

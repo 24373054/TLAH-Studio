@@ -37,6 +37,9 @@ public sealed partial class ChatPage : UserControl
     private bool _userScrolledUp;
     private bool _scrollToBottomQueued;
     private bool _loadingOlderMessages;
+    private readonly Dictionary<Guid, bool> _daySeparators = new();
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _wheelSettleTimer;
+    private double? _smoothScrollTarget;
 
     private BindableCollectionAdapter<Message>? _messageItems;
     public ChatPage()
@@ -44,6 +47,13 @@ public sealed partial class ChatPage : UserControl
         App.Log("ChatPage ctor entered.");
         InitializeComponent();
         App.Log("ChatPage XAML initialized.");
+        _wheelSettleTimer = DispatcherQueue.CreateTimer();
+        _wheelSettleTimer.Interval = TimeSpan.FromMilliseconds(140);
+        _wheelSettleTimer.Tick += (_, _) =>
+        {
+            _wheelSettleTimer.Stop();
+            _smoothScrollTarget = null;
+        };
         ActualThemeChanged += (_, _) =>
         {
             RefreshTimeline();
@@ -85,6 +95,7 @@ public sealed partial class ChatPage : UserControl
         // which is not reliable in a self-contained unpackaged installation.
         _messageItems = new BindableCollectionAdapter<Message>(_vm.Messages);
         MessagesRepeater.ItemsSource = _messageItems;
+        UpdateTimelineMetadata();
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.StreamingMessageUpdated += (_, _) => RequestRender();
         _vm.MessageIdMutated += oldId =>
@@ -145,6 +156,11 @@ public sealed partial class ChatPage : UserControl
         AgentStatusText.Text = _vm.AgentStatusText;
         AgentProgressRing.IsActive =
             _vm.CurrentAgentRunStatus is AgentRunStatuses.Running or AgentRunStatuses.AwaitingApproval;
+        AgentProgressRing.Visibility = Visibility.Collapsed;
+        if (AgentProgressRing.IsActive)
+            NocturneMotion.StartBreathing(AgentStatusSignal);
+        else
+            NocturneMotion.StopBreathing(AgentStatusSignal);
         ResumeAgentButton.Visibility =
             _vm.CurrentAgentRunStatus is AgentRunStatuses.Paused or AgentRunStatuses.Cancelled or AgentRunStatuses.Failed
                 ? Visibility.Visible
@@ -159,6 +175,7 @@ public sealed partial class ChatPage : UserControl
 
     private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        UpdateTimelineMetadata();
         var messageCount = _vm?.Messages.Count ?? 0;
         var isAppend = e.NewItems != null &&
                        e.NewStartingIndex >= messageCount - e.NewItems.Count;
@@ -210,19 +227,23 @@ public sealed partial class ChatPage : UserControl
             if (_vm == null)
                 return;
 
-            // Only realized visuals are cached by the repeater's element
-            // factory. Streaming therefore updates the visible draft in place
-            // without scanning, measuring, or rebuilding historic content.
-            foreach (var message in _vm.Messages)
+            // Streaming used to scan every historical message for each token.
+            // That turns a long conversation into an O(n) UI-thread task and
+            // visibly interrupts mouse-wheel scrolling. There can be only one
+            // live assistant draft, so update that realized element directly.
+            var draft = _vm.Messages.LastOrDefault(IsStreamingDraft);
+            CachedMessageElement? cachedDraft = null;
+            if (draft != null && _messageElementCache.TryGetValue(draft.Id, out var realizedDraft))
             {
-                if (!_messageElementCache.TryGetValue(message.Id, out var cached))
-                    continue;
+                cachedDraft = realizedDraft;
+                UpdateCachedStreamingMessage(realizedDraft.Element, draft);
+            }
 
-                if (IsStreamingDraft(message))
-                {
-                    UpdateCachedStreamingMessage(cached.Element, message);
-                }
-                else if (TryGetLiveStreamVisuals(cached.Element, out var visuals) && visuals.CursorTimer.IsEnabled)
+            foreach (var cached in _messageElementCache.Values)
+            {
+                if (ReferenceEquals(cached, cachedDraft))
+                    continue;
+                if (TryGetLiveStreamVisuals(cached.Element, out var visuals) && visuals.CursorTimer.IsEnabled)
                 {
                     visuals.CursorTimer.Stop();
                     visuals.CursorText.Visibility = Visibility.Collapsed;
@@ -267,9 +288,9 @@ public sealed partial class ChatPage : UserControl
     private UIElement CreateTimelineElement(Message message, int index)
     {
         var messageElement = GetCachedMessageElement(message);
-        var showsDay = index == 0 ||
-                       _vm == null ||
-                       _vm.Messages[index - 1].CreatedAt.ToLocalTime().Date != message.CreatedAt.ToLocalTime().Date;
+        var showsDay = _daySeparators.TryGetValue(message.Id, out var value)
+            ? value
+            : index == 0;
         if (!showsDay)
         {
             if (messageElement is FrameworkElement element)
@@ -307,6 +328,7 @@ public sealed partial class ChatPage : UserControl
         DispatcherQueue.TryEnqueue(() =>
         {
             _scrollToBottomQueued = false;
+            _smoothScrollTarget = null;
             MessagesScrollViewer.ChangeView(null, MessagesScrollViewer.ScrollableHeight, null, false);
         });
     }
@@ -314,7 +336,9 @@ public sealed partial class ChatPage : UserControl
     private async void MessagesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
         _userScrolledUp = MessagesScrollViewer.VerticalOffset < MessagesScrollViewer.ScrollableHeight - 16;
-        if (_loadingOlderMessages || _vm?.HasOlderMessages != true || MessagesScrollViewer.VerticalOffset > 96)
+        // Let direct manipulation settle before asking the database for the
+        // previous page; async loading in the middle of inertia causes a hitch.
+        if (e.IsIntermediate || _loadingOlderMessages || _vm?.HasOlderMessages != true || MessagesScrollViewer.VerticalOffset > 96)
             return;
 
         _loadingOlderMessages = true;
@@ -332,6 +356,47 @@ public sealed partial class ChatPage : UserControl
                 MessagesScrollViewer.ChangeView(null, previousOffset + addedHeight, null, true);
                 _loadingOlderMessages = false;
             });
+        }
+    }
+
+    private void MessagesScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(MessagesScrollViewer);
+        if (point.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse ||
+            point.Properties.MouseWheelDelta == 0 ||
+            MessagesScrollViewer.ScrollableHeight <= 0)
+        {
+            return;
+        }
+
+        // WinUI's wheel path advances in coarse notches on many mouse drivers.
+        // Convert notches into a short compositor-backed ChangeView so repeated
+        // wheel input accumulates toward a stable target rather than jumping.
+        e.Handled = true;
+        var step = Math.Clamp(MessagesScrollViewer.ViewportHeight * 0.18, 56, 112);
+        var notches = point.Properties.MouseWheelDelta / 120.0;
+        var baseOffset = _smoothScrollTarget ?? MessagesScrollViewer.VerticalOffset;
+        _smoothScrollTarget = Math.Clamp(
+            baseOffset - notches * step,
+            0,
+            MessagesScrollViewer.ScrollableHeight);
+        _wheelSettleTimer.Stop();
+        _wheelSettleTimer.Start();
+        MessagesScrollViewer.ChangeView(null, _smoothScrollTarget, null, false);
+    }
+
+    private void UpdateTimelineMetadata()
+    {
+        _daySeparators.Clear();
+        if (_vm == null)
+            return;
+
+        DateTime? previous = null;
+        foreach (var message in _vm.Messages)
+        {
+            var currentDay = message.CreatedAt.ToLocalTime().Date;
+            _daySeparators[message.Id] = previous == null || previous.Value != currentDay;
+            previous = currentDay;
         }
     }
 
@@ -679,32 +744,24 @@ public sealed partial class ChatPage : UserControl
         var row = new Grid
         {
             HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
-            MaxWidth = IsCompactDensity() ? 740 : 840
+            MaxWidth = isUser
+                ? IsCompactDensity() ? 560 : 640
+                : IsCompactDensity() ? 660 : 760
         };
 
         var border = new Border
         {
-            CornerRadius = (CornerRadius)Application.Current.Resources["RadiusCard"],
+            CornerRadius = new CornerRadius(11),
             Padding = IsCompactDensity()
-                ? new Thickness(12, 9, 12, 9)
-                : new Thickness(16, 13, 16, 13),
+                ? new Thickness(13, 10, 13, 10)
+                : new Thickness(18, 15, 18, 15),
             BorderThickness = new Thickness(1),
             BorderBrush = isUser ? AccentSubtleBrush() : MessageBorderBrush(),
             Background = MessageBrush(message.Role)
         };
-        // M4.9.5 Phase G1: subtle elevation shadow on chat bubbles. ThemeShadow
-        // needs a non-zero Translation Z to cast; 8 gives a soft 2-3px lift.
-        try
-        {
-            border.Shadow = new Microsoft.UI.Xaml.Media.ThemeShadow();
-            border.Translation = new System.Numerics.Vector3(0, 0, 8);
-        }
-        catch { /* ThemeShadow unavailable in some hosting contexts */ }
-
-        // M4.9.5 Phase G3: hover micro-interaction — lift the bubble slightly
-        // and brighten its border on pointer enter, restore on exit. Only
-        // applied to finalized (non-draft) messages to avoid interfering with
-        // streaming reflow.
+        // ThemeShadow per bubble was visually subtle but expensive while a long
+        // virtualized timeline is being realized. Keep the tactile feedback in
+        // the border instead so scroll stays GPU-light.
         if (!isDraft)
         {
             var restBorder = border.BorderBrush;
@@ -712,21 +769,20 @@ public sealed partial class ChatPage : UserControl
             border.PointerEntered += (_, _) =>
             {
                 border.BorderBrush = hoverBorder;
-                border.Translation = new System.Numerics.Vector3(0, -1, 12);
             };
             border.PointerExited += (_, _) =>
             {
                 border.BorderBrush = restBorder;
-                border.Translation = new System.Numerics.Vector3(0, 0, 8);
             };
         }
 
-        var stack = new StackPanel { Spacing = 7 };
+        var stack = new StackPanel { Spacing = 8 };
         stack.Children.Add(new TextBlock
         {
             Text = isSystem ? "system" : isUser ? "you" : isTool ? "sandbox" : "assistant",
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            CharacterSpacing = 35,
             Foreground = isUser ? AccentTextBrush() : TextMutedBrush()
         });
         stack.Children.Add(BuildMessageBody(message, isDraft, isUser));
@@ -1877,17 +1933,17 @@ public sealed partial class ChatPage : UserControl
         var color = role.ToLowerInvariant() switch
         {
             "user" => ThemeColor(
-                Color.FromArgb(0xFF, 0x2F, 0x5F, 0xEA),
-                Color.FromArgb(0xFF, 0x34, 0x67, 0xF6)),
+                Color.FromArgb(0xFF, 0x66, 0x5C, 0xD7),
+                Color.FromArgb(0xFF, 0x71, 0x66, 0xE8)),
             "system" => ThemeColor(
-                Color.FromArgb(0xFF, 0xEE, 0xF4, 0xFB),
-                Color.FromArgb(0xEA, 0x1E, 0x2A, 0x3D)),
+                Color.FromArgb(0xFF, 0xF0, 0xEE, 0xF6),
+                Color.FromArgb(0xEA, 0x23, 0x22, 0x2E)),
             "tool" => ThemeColor(
-                Color.FromArgb(0xFF, 0xF3, 0xF8, 0xFF),
-                Color.FromArgb(0xEA, 0x11, 0x20, 0x30)),
+                Color.FromArgb(0xFF, 0xF7, 0xF6, 0xFB),
+                Color.FromArgb(0xEA, 0x14, 0x18, 0x21)),
             _ => ThemeColor(
-                Color.FromArgb(0xF8, 0xFF, 0xFF, 0xFF),
-                Color.FromArgb(0xE8, 0x14, 0x21, 0x32))
+                Color.FromArgb(0xF8, 0xFD, 0xFC, 0xFA),
+                Color.FromArgb(0xE8, 0x18, 0x1C, 0x26))
         };
 
         if (!string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
@@ -1904,30 +1960,30 @@ public sealed partial class ChatPage : UserControl
     private Color ThemeColor(Color light, Color dark) => IsLightTheme() ? light : dark;
 
     private SolidColorBrush TextPrimaryBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x17, 0x20, 0x33),
-        Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)));
+        Color.FromArgb(0xFF, 0x1D, 0x1B, 0x24),
+        Color.FromArgb(0xFF, 0xF4, 0xF2, 0xEE)));
 
     private SolidColorBrush TextSecondaryBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x56, 0x65, 0x7A),
-        Color.FromArgb(0xFF, 0xE0, 0xE8, 0xF4)));
+        Color.FromArgb(0xFF, 0x63, 0x5E, 0x6E),
+        Color.FromArgb(0xFF, 0xE0, 0xE3, 0xEB)));
 
     private SolidColorBrush TextMutedBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x7D, 0x8B, 0xA0),
-        Color.FromArgb(0xFF, 0x91, 0xA0, 0xB4)));
+        Color.FromArgb(0xFF, 0x8E, 0x88, 0x99),
+        Color.FromArgb(0xFF, 0x9D, 0xA7, 0xBA)));
 
     private SolidColorBrush AccentBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0x2F, 0x5F, 0xEA),
-        Color.FromArgb(0xFF, 0x71, 0xA7, 0xFF)));
+        Color.FromArgb(0xFF, 0x66, 0x5C, 0xD7),
+        Color.FromArgb(0xFF, 0x90, 0x85, 0xFF)));
 
     private SolidColorBrush AccentTextBrush() => new(Microsoft.UI.Colors.White);
 
     private SolidColorBrush AccentSubtleBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0xBF, 0xD2, 0xFF),
-        Color.FromArgb(0x99, 0x71, 0xA7, 0xFF)));
+        Color.FromArgb(0xFF, 0xB5, 0xAE, 0xFF),
+        Color.FromArgb(0x99, 0x90, 0x85, 0xFF)));
 
     private SolidColorBrush MessageBorderBrush() => new(ThemeColor(
-        Color.FromArgb(0xFF, 0xD2, 0xDC, 0xEB),
-        Color.FromArgb(0x6E, 0x71, 0x81, 0x95)));
+        Color.FromArgb(0xFF, 0xD8, 0xD8, 0xD0),
+        Color.FromArgb(0x6E, 0x5D, 0x64, 0x76)));
 
     private SolidColorBrush ThemeBrush(Color light, Color dark) => new(ThemeColor(light, dark));
 

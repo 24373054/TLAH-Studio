@@ -557,7 +557,7 @@ public sealed partial class SidebarPage : UserControl
             : new Thickness(20, 18, 18, 16);
         BrandHeaderGrid.ColumnSpacing = _isCollapsed ? 4 : 10;
 
-        CollapseIcon.Symbol = _isCollapsed ? Symbol.Forward : Symbol.Back;
+        CollapseIcon.Glyph = _isCollapsed ? "\uE72C" : "\uE72D";
         ToolTipService.SetToolTip(CollapseButton, _isCollapsed ? "Expand sidebar" : "Collapse sidebar");
         AutomationProperties.SetName(CollapseButton, _isCollapsed ? "Expand sidebar" : "Collapse sidebar");
 

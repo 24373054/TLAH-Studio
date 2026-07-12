@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:views="using:TLAHStudio.App.Views"
     x:Name="SidebarRoot"
-    Width="312">
+    Width="296">
 
     <UserControl.Resources>
         <DataTemplate x:Key="ChatItemTemplate">
@@ -20,9 +20,9 @@
                     Width="24"
                     Height="24"
                     VerticalAlignment="Center">
-                    <SymbolIcon
-                        Symbol="Message"
-                        Foreground="{ThemeResource TextMutedBrush}"
+                    <FontIcon
+                        Glyph="&#xE8BD;"
+                        Style="{StaticResource NocturneIconStyle}"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center" />
                 </Grid>
@@ -57,7 +57,7 @@
                     CornerRadius="8"
                     ToolTipService.ToolTip="Chat actions"
                     AutomationProperties.Name="Chat actions">
-                    <SymbolIcon Symbol="More" />
+                    <FontIcon Glyph="&#xE712;" Style="{StaticResource NocturneIconStyle}" />
                     <Button.Flyout>
                         <MenuFlyout>
                             <MenuFlyoutItem Text="Pin or unpin" Tag="{Binding}" Click="PinChat_Click">
@@ -115,7 +115,7 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <SymbolIcon Symbol="Message" Foreground="{ThemeResource TextMutedBrush}" VerticalAlignment="Center" />
+                <FontIcon Glyph="&#xE8BD;" Style="{StaticResource NocturneIconStyle}" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" Spacing="3">
                     <TextBlock Text="{Binding Chat.Title}" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" TextTrimming="CharacterEllipsis" />
                     <StackPanel Orientation="Horizontal" Spacing="4">
@@ -124,7 +124,7 @@
                     </StackPanel>
                 </StackPanel>
                 <Button Grid.Column="2" Width="32" Height="32" Padding="0" Background="{ThemeResource SurfaceElevatedBrush}" Foreground="{ThemeResource TextMutedBrush}" BorderBrush="{ThemeResource BorderSubtleBrush}" CornerRadius="8" ToolTipService.ToolTip="Chat actions" AutomationProperties.Name="Chat actions">
-                    <SymbolIcon Symbol="More" />
+                    <FontIcon Glyph="&#xE712;" Style="{StaticResource NocturneIconStyle}" />
                     <Button.Flyout>
                         <MenuFlyout>
                             <MenuFlyoutItem Text="Pin or unpin" Tag="{Binding Chat}" Click="PinChat_Click"><MenuFlyoutItem.Icon><SymbolIcon Symbol="Pin" /></MenuFlyoutItem.Icon></MenuFlyoutItem>
@@ -140,7 +140,7 @@
         </DataTemplate>
         <DataTemplate x:Key="VirtualizedCompactChatItemTemplate">
             <Grid Width="48" Height="48" HorizontalAlignment="Center" ToolTipService.ToolTip="{Binding Chat.Title}">
-                <SymbolIcon Symbol="Message" Foreground="{ThemeResource TextSecondaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <FontIcon Glyph="&#xE8BD;" Style="{StaticResource NocturneIconStyle}" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Grid>
         </DataTemplate>
         <views:SidebarEntryTemplateSelector
@@ -150,7 +150,13 @@
             CompactChatTemplate="{StaticResource VirtualizedCompactChatItemTemplate}" />
     </UserControl.Resources>
 
-    <Grid Background="{ThemeResource PanelBrush}">
+        <Grid Background="{ThemeResource PanelBrush}">
+        <Grid.ChildrenTransitions>
+            <TransitionCollection>
+                <EntranceThemeTransition FromHorizontalOffset="-8" IsStaggeringEnabled="False" />
+                <RepositionThemeTransition />
+            </TransitionCollection>
+        </Grid.ChildrenTransitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -162,7 +168,7 @@
         <Grid
             x:Name="SidebarHeader"
             Grid.Row="0"
-            Padding="20,18,18,16"
+            Padding="18,16,16,14"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             BorderThickness="0,0,0,1">
             <Grid x:Name="BrandHeaderGrid" ColumnSpacing="10">
@@ -173,16 +179,16 @@
                 </Grid.ColumnDefinitions>
 
                 <Border
-                    Width="36"
-                    Height="36"
+                    Width="32"
+                    Height="32"
                     Background="{ThemeResource BrandMarkBrush}"
                     BorderBrush="{ThemeResource AccentSecondaryBrush}"
                     BorderThickness="1"
-                    CornerRadius="8">
+                    CornerRadius="9">
                     <Image
                         Source="ms-appx:///Assets/logo.png"
-                        Width="24"
-                        Height="24"
+                        Width="21"
+                        Height="21"
                         Stretch="Uniform"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center" />
@@ -191,12 +197,14 @@
                 <StackPanel x:Name="BrandTextPanel" Grid.Column="1" Spacing="2">
                     <TextBlock
                         Text="TLAH Studio"
-                        FontSize="21"
+                        FontSize="19"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource TextPrimaryBrush}" />
                     <TextBlock
-                        Text="Talk Like A Human"
-                        FontSize="12"
+                        Text="AGENT WORKSPACE"
+                        FontSize="10"
+                        FontWeight="SemiBold"
+                        CharacterSpacing="65"
                         Foreground="{ThemeResource TextMutedBrush}" />
                 </StackPanel>
 
@@ -213,7 +221,7 @@
                     CornerRadius="8"
                     ToolTipService.ToolTip="Collapse sidebar"
                     AutomationProperties.Name="Collapse sidebar">
-                    <SymbolIcon x:Name="CollapseIcon" Symbol="Back" />
+                    <FontIcon x:Name="CollapseIcon" Glyph="&#xE72D;" Style="{StaticResource NocturneIconStyle}" />
                 </Button>
             </Grid>
         </Grid>
@@ -221,21 +229,21 @@
         <StackPanel
             Grid.Row="1"
             Padding="14,12,14,10"
-            Spacing="10">
+            Spacing="9">
             <Button
                 x:Name="NewChatButton"
                 Click="NewChat_Click"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                Foreground="{ThemeResource TextPrimaryBrush}"
-                BorderBrush="{ThemeResource AccentBrush}"
-                CornerRadius="8"
-                Padding="14,11"
+                Background="{ThemeResource AccentStrongBrush}"
+                Foreground="{ThemeResource AccentTextBrush}"
+                BorderBrush="{ThemeResource AccentStrongBrush}"
+                CornerRadius="10"
+                Padding="14,10"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Left"
                 TabIndex="1"
                 AutomationProperties.Name="New chat">
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <SymbolIcon Symbol="Add" />
+                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe Fluent Icons" FontSize="16" Foreground="{ThemeResource AccentTextBrush}" />
                     <TextBlock x:Name="NewChatText" Text="New Chat" FontWeight="SemiBold" />
                 </StackPanel>
             </Button>
@@ -248,11 +256,11 @@
                 <TextBox
                     x:Name="SearchBox"
                     PlaceholderText="Search chats"
-                    MinHeight="40"
+                    MinHeight="38"
                     Background="{ThemeResource InputBackgroundBrush}"
                     Foreground="{ThemeResource TextPrimaryBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8"
+                    CornerRadius="9"
                     TextChanged="SearchBox_TextChanged"
                     TabIndex="2"
                     AutomationProperties.Name="Search chats" />
@@ -263,9 +271,9 @@
                     Background="{ThemeResource SurfaceElevatedBrush}"
                     Foreground="{ThemeResource TextSecondaryBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8"
-                    MinWidth="40"
-                    MinHeight="40"
+                    CornerRadius="9"
+                    MinWidth="38"
+                    MinHeight="38"
                     Padding="10,6"
                     ToolTipService.ToolTip="Show archived chats"
                     TabIndex="3"
@@ -404,13 +412,19 @@
                 SelectionChanged="ChatList_SelectionChanged"
                 ItemTemplateSelector="{StaticResource SidebarEntryTemplateSelector}"
                 AutomationProperties.Name="Chats">
+                <ListView.ItemContainerTransitions>
+                    <TransitionCollection>
+                        <AddDeleteThemeTransition />
+                        <RepositionThemeTransition />
+                    </TransitionCollection>
+                </ListView.ItemContainerTransitions>
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="Margin" Value="0,1" />
                         <Setter Property="Padding" Value="0" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Setter Property="MinHeight" Value="32" />
-                        <Setter Property="CornerRadius" Value="8" />
+                        <Setter Property="MinHeight" Value="36" />
+                        <Setter Property="CornerRadius" Value="9" />
                     </Style>
                 </ListView.ItemContainerStyle>
             </ListView>

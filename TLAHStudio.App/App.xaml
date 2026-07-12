@@ -10,43 +10,46 @@
 
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#F0080D14" />
-                    <SolidColorBrush x:Key="AppChromeBrush" Color="#F00B111B" />
-                    <SolidColorBrush x:Key="PanelBrush" Color="#F00E1624" />
-                    <SolidColorBrush x:Key="PanelAltBrush" Color="#F7172232" />
-                    <SolidColorBrush x:Key="SurfaceBrush" Color="#F0192434" />
-                    <SolidColorBrush x:Key="SurfaceElevatedBrush" Color="#FF243348" />
-                    <SolidColorBrush x:Key="InputBackgroundBrush" Color="#F0101724" />
-                    <SolidColorBrush x:Key="InputDockBrush" Color="#F40A1019" />
-                    <SolidColorBrush x:Key="CardHoverBrush" Color="#2C3D5268" />
-                    <SolidColorBrush x:Key="SidebarSelectedBrush" Color="#2A5F7CFF" />
-                    <SolidColorBrush x:Key="BorderSubtleBrush" Color="#4B718195" />
-                    <SolidColorBrush x:Key="BorderStrongBrush" Color="#7FA7B4C8" />
-                    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#FFFFFFFF" />
-                    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#E0E8F4" />
-                    <SolidColorBrush x:Key="TextMutedBrush" Color="#91A0B4" />
-                    <SolidColorBrush x:Key="AccentBrush" Color="#71A7FF" />
-                    <SolidColorBrush x:Key="AccentStrongBrush" Color="#5F7CFF" />
-                    <SolidColorBrush x:Key="AccentSoftBrush" Color="#2D71A7FF" />
-                    <SolidColorBrush x:Key="AccentSecondaryBrush" Color="#39D0C2" />
-                    <SolidColorBrush x:Key="AccentSecondarySoftBrush" Color="#2439D0C2" />
-                    <SolidColorBrush x:Key="BrandMarkBrush" Color="#2439D0C2" />
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF0D0F14" />
+                    <SolidColorBrush x:Key="AppChromeBrush" Color="#F50F1118" />
+                    <SolidColorBrush x:Key="PanelBrush" Color="#FA11141D" />
+                    <SolidColorBrush x:Key="PanelAltBrush" Color="#FF181B26" />
+                    <SolidColorBrush x:Key="SurfaceBrush" Color="#FB171B25" />
+                    <SolidColorBrush x:Key="SurfaceElevatedBrush" Color="#FF202532" />
+                    <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FC131720" />
+                    <SolidColorBrush x:Key="InputDockBrush" Color="#F7161922" />
+                    <SolidColorBrush x:Key="CardHoverBrush" Color="#263D3A56" />
+                    <SolidColorBrush x:Key="SidebarSelectedBrush" Color="#2E9085FF" />
+                    <SolidColorBrush x:Key="BorderSubtleBrush" Color="#415D6476" />
+                    <SolidColorBrush x:Key="BorderStrongBrush" Color="#777F89A2" />
+                    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#FFF4F2EE" />
+                    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#DDE0E3EB" />
+                    <SolidColorBrush x:Key="TextMutedBrush" Color="#8E9DA7BA" />
+                    <SolidColorBrush x:Key="AccentBrush" Color="#FF9085FF" />
+                    <SolidColorBrush x:Key="AccentStrongBrush" Color="#FF776CF2" />
+                    <SolidColorBrush x:Key="AccentSoftBrush" Color="#2E9085FF" />
+                    <SolidColorBrush x:Key="AccentSecondaryBrush" Color="#FF48C1AD" />
+                    <SolidColorBrush x:Key="AccentSecondarySoftBrush" Color="#2448C1AD" />
+                    <SolidColorBrush x:Key="BrandMarkBrush" Color="#1E9085FF" />
                     <SolidColorBrush x:Key="AccentTextBrush" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="FocusStrokeColorOuterBrush" Color="#71A7FF" />
+                    <SolidColorBrush x:Key="FocusStrokeColorOuterBrush" Color="#FF9085FF" />
                     <SolidColorBrush x:Key="FocusStrokeColorInnerBrush" Color="#080D14" />
-                    <SolidColorBrush x:Key="MessageUserBrush" Color="#3467F6" />
-                    <SolidColorBrush x:Key="MessageAssistantBrush" Color="#E8142132" />
-                    <SolidColorBrush x:Key="MessageSystemBrush" Color="#EA1E2A3D" />
-                    <SolidColorBrush x:Key="WorkbenchOverlayBrush" Color="#9C08101A" />
-                    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#FF111A28" />
-                    <SolidColorBrush x:Key="DangerBrush" Color="#FF7786" />
-                    <SolidColorBrush x:Key="DangerSurfaceBrush" Color="#3DF87171" />
-                    <SolidColorBrush x:Key="SuccessBrush" Color="#4EC99E" />
-                    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#1F3A2E" />
-                    <SolidColorBrush x:Key="WarningBrush" Color="#E8C84C" />
-                    <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#3D3418" />
-                    <SolidColorBrush x:Key="InfoBrush" Color="#71A7FF" />
-                    <SolidColorBrush x:Key="InfoSurfaceBrush" Color="#1A2F52" />
+                    <SolidColorBrush x:Key="MessageUserBrush" Color="#FF7166E8" />
+                    <SolidColorBrush x:Key="MessageAssistantBrush" Color="#F5181C26" />
+                    <SolidColorBrush x:Key="MessageSystemBrush" Color="#EA23222E" />
+                    <SolidColorBrush x:Key="WorkbenchOverlayBrush" Color="#A80D0F14" />
+                    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#FF161A23" />
+                    <SolidColorBrush x:Key="DangerBrush" Color="#FFFA8A9A" />
+                    <SolidColorBrush x:Key="DangerSurfaceBrush" Color="#3D6B2631" />
+                    <SolidColorBrush x:Key="SuccessBrush" Color="#FF48C6A3" />
+                    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#20303C35" />
+                    <SolidColorBrush x:Key="WarningBrush" Color="#FFE6BC62" />
+                    <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#3D3D301B" />
+                    <SolidColorBrush x:Key="InfoBrush" Color="#FF9085FF" />
+                    <SolidColorBrush x:Key="InfoSurfaceBrush" Color="#232A254D" />
+                    <SolidColorBrush x:Key="DiffAddedBrush" Color="#FF62D8B4" />
+                    <SolidColorBrush x:Key="DiffRemovedBrush" Color="#FFFF9AA8" />
+                    <SolidColorBrush x:Key="NocturneAmbientBrush" Color="#169085FF" />
 
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#DCE4EE" />
@@ -58,9 +61,9 @@
                     <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#526F7D91" />
                     <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#3F6F7D91" />
                     <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#8A8FA0B4" />
-                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#6AA7FF" />
-                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#5F9EFF" />
-                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#4D8DFF" />
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF9085FF" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF8276FA" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF776CF2" />
                     <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#304B5565" />
                     <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#141C28" />
@@ -91,43 +94,46 @@
                 </ResourceDictionary>
 
                 <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#F0F6F8FC" />
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFF7F6F3" />
                     <SolidColorBrush x:Key="AppChromeBrush" Color="#FAFFFFFF" />
-                    <SolidColorBrush x:Key="PanelBrush" Color="#FBFFFFFF" />
-                    <SolidColorBrush x:Key="PanelAltBrush" Color="#F1F5F8FC" />
+                    <SolidColorBrush x:Key="PanelBrush" Color="#FCFFFFFF" />
+                    <SolidColorBrush x:Key="PanelAltBrush" Color="#FFF2F0EB" />
                     <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFFFF" />
-                    <SolidColorBrush x:Key="SurfaceElevatedBrush" Color="#FFF9FBFE" />
+                    <SolidColorBrush x:Key="SurfaceElevatedBrush" Color="#FFFFFEFC" />
                     <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFFFF" />
-                    <SolidColorBrush x:Key="InputDockBrush" Color="#F8FFFFFF" />
-                    <SolidColorBrush x:Key="CardHoverBrush" Color="#F0EFF5FF" />
-                    <SolidColorBrush x:Key="SidebarSelectedBrush" Color="#E6EDFF" />
-                    <SolidColorBrush x:Key="BorderSubtleBrush" Color="#D2DCEB" />
-                    <SolidColorBrush x:Key="BorderStrongBrush" Color="#AEBBD0" />
-                    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#172033" />
-                    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#56657A" />
-                    <SolidColorBrush x:Key="TextMutedBrush" Color="#7D8BA0" />
-                    <SolidColorBrush x:Key="AccentBrush" Color="#2F5FEA" />
-                    <SolidColorBrush x:Key="AccentStrongBrush" Color="#2348CC" />
-                    <SolidColorBrush x:Key="AccentSoftBrush" Color="#E6EDFF" />
-                    <SolidColorBrush x:Key="AccentSecondaryBrush" Color="#0F9F93" />
-                    <SolidColorBrush x:Key="AccentSecondarySoftBrush" Color="#DDF7F4" />
-                    <SolidColorBrush x:Key="BrandMarkBrush" Color="#E7F8F6" />
+                    <SolidColorBrush x:Key="InputDockBrush" Color="#F9FFFFFF" />
+                    <SolidColorBrush x:Key="CardHoverBrush" Color="#F0F1EEFF" />
+                    <SolidColorBrush x:Key="SidebarSelectedBrush" Color="#E8E6E4FF" />
+                    <SolidColorBrush x:Key="BorderSubtleBrush" Color="#D8D8D0" />
+                    <SolidColorBrush x:Key="BorderStrongBrush" Color="#B6B2C2" />
+                    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#FF1D1B24" />
+                    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#FF635E6E" />
+                    <SolidColorBrush x:Key="TextMutedBrush" Color="#FF8E8899" />
+                    <SolidColorBrush x:Key="AccentBrush" Color="#FF665CD7" />
+                    <SolidColorBrush x:Key="AccentStrongBrush" Color="#FF5449C0" />
+                    <SolidColorBrush x:Key="AccentSoftBrush" Color="#FFECEAFC" />
+                    <SolidColorBrush x:Key="AccentSecondaryBrush" Color="#FF008A78" />
+                    <SolidColorBrush x:Key="AccentSecondarySoftBrush" Color="#D9DDF7F1" />
+                    <SolidColorBrush x:Key="BrandMarkBrush" Color="#FFE9E7FF" />
                     <SolidColorBrush x:Key="AccentTextBrush" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="FocusStrokeColorOuterBrush" Color="#2F5FEA" />
+                    <SolidColorBrush x:Key="FocusStrokeColorOuterBrush" Color="#FF665CD7" />
                     <SolidColorBrush x:Key="FocusStrokeColorInnerBrush" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="MessageUserBrush" Color="#2F5FEA" />
-                    <SolidColorBrush x:Key="MessageAssistantBrush" Color="#F8FFFFFF" />
-                    <SolidColorBrush x:Key="MessageSystemBrush" Color="#EEF4FB" />
-                    <SolidColorBrush x:Key="WorkbenchOverlayBrush" Color="#EAF7FAFE" />
+                    <SolidColorBrush x:Key="MessageUserBrush" Color="#FF665CD7" />
+                    <SolidColorBrush x:Key="MessageAssistantBrush" Color="#FFFDFCFA" />
+                    <SolidColorBrush x:Key="MessageSystemBrush" Color="#FFF0EEF6" />
+                    <SolidColorBrush x:Key="WorkbenchOverlayBrush" Color="#EAF9F8F6" />
                     <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#FFFFFFFF" />
-                    <SolidColorBrush x:Key="DangerBrush" Color="#DC2626" />
-                    <SolidColorBrush x:Key="DangerSurfaceBrush" Color="#FEE2E2" />
-                    <SolidColorBrush x:Key="SuccessBrush" Color="#0F9F93" />
-                    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#DBF7E8" />
+                    <SolidColorBrush x:Key="DangerBrush" Color="#FFD64B63" />
+                    <SolidColorBrush x:Key="DangerSurfaceBrush" Color="#FFFFE8EC" />
+                    <SolidColorBrush x:Key="SuccessBrush" Color="#FF008A78" />
+                    <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#FFE0F6EF" />
                     <SolidColorBrush x:Key="WarningBrush" Color="#B45309" />
                     <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#FEF3C7" />
-                    <SolidColorBrush x:Key="InfoBrush" Color="#2F5FEA" />
-                    <SolidColorBrush x:Key="InfoSurfaceBrush" Color="#DBEAFF" />
+                    <SolidColorBrush x:Key="InfoBrush" Color="#FF665CD7" />
+                    <SolidColorBrush x:Key="InfoSurfaceBrush" Color="#FFEAE8FF" />
+                    <SolidColorBrush x:Key="DiffAddedBrush" Color="#FF087F6B" />
+                    <SolidColorBrush x:Key="DiffRemovedBrush" Color="#FFD64B63" />
+                    <SolidColorBrush x:Key="NocturneAmbientBrush" Color="#12665CD7" />
 
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#161D28" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#586779" />
@@ -139,9 +145,9 @@
                     <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#D3DDE9" />
                     <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#E3EAF3" />
                     <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#B6C3D3" />
-                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#2563EB" />
-                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#1D4ED8" />
-                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#1E40AF" />
+                    <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF665CD7" />
+                    <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF5A50C9" />
+                    <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF4D43B4" />
                     <SolidColorBrush x:Key="AccentFillColorDisabledBrush" Color="#CBD5E1" />
                     <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FFFFFF" />
@@ -209,6 +215,9 @@
                     <SolidColorBrush x:Key="WarningSurfaceBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
                     <SolidColorBrush x:Key="InfoBrush" Color="{ThemeResource SystemColorHotlightColor}" />
                     <SolidColorBrush x:Key="InfoSurfaceBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+                    <SolidColorBrush x:Key="DiffAddedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="DiffRemovedBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+                    <SolidColorBrush x:Key="NocturneAmbientBrush" Color="{ThemeResource SystemColorHighlightColor}" />
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
@@ -261,6 +270,12 @@
             <x:Double x:Key="TextFontSizeLabel">11</x:Double>
             <x:Double x:Key="TextFontSizeBadge">10</x:Double>
 
+            <!-- M4.11: Nocturne motion is deliberately short and quiet. Native
+                 theme transitions respect the user's Reduce Motion preference. -->
+            <x:Double x:Key="MotionQuickMs">120</x:Double>
+            <x:Double x:Key="MotionStandardMs">180</x:Double>
+            <x:Double x:Key="MotionPanelMs">220</x:Double>
+
             <!-- M4.9.4: Spacing scale (non-theme, global). -->
             <x:Double x:Key="SpaceXS">4</x:Double>
             <x:Double x:Key="SpaceS">8</x:Double>
@@ -280,6 +295,32 @@
                  Segoe UI Variable for Latin), with Consolas for monospace. -->
             <FontFamily x:Key="TextPrimaryFontFamily">Microsoft YaHei UI, Segoe UI Variable, Segoe UI</FontFamily>
             <FontFamily x:Key="MonoFontFamily">Consolas, Cascadia Mono, Courier New</FontFamily>
+
+            <!-- M4.11: one optical icon language for the primary workbench. -->
+            <Style x:Key="NocturneIconStyle" TargetType="FontIcon">
+                <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+            </Style>
+            <Style x:Key="NocturneIconButtonStyle" TargetType="Button">
+                <Setter Property="Width" Value="38" />
+                <Setter Property="Height" Value="38" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Background" Value="{ThemeResource SurfaceElevatedBrush}" />
+                <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BorderSubtleBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource RadiusContainer}" />
+            </Style>
+            <Style x:Key="NocturneContextChipStyle" TargetType="Button">
+                <Setter Property="MinHeight" Value="34" />
+                <Setter Property="Padding" Value="10,6" />
+                <Setter Property="Background" Value="{ThemeResource InputBackgroundBrush}" />
+                <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BorderSubtleBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource RadiusBadge}" />
+            </Style>
 
             <!-- M4.9.5 Phase F3: apply the CJK-aware primary font globally via
                  an implicit TextBlock style (no BasedOn — WinUI 3's default

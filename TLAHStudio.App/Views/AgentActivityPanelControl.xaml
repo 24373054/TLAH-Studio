@@ -10,6 +10,12 @@
         BorderThickness="1,0,0,0"
         MinWidth="300"
         AutomationProperties.Name="Agent activity panel">
+        <Grid.ChildrenTransitions>
+            <TransitionCollection>
+                <EntranceThemeTransition FromHorizontalOffset="12" IsStaggeringEnabled="False" />
+                <RepositionThemeTransition />
+            </TransitionCollection>
+        </Grid.ChildrenTransitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -18,13 +24,14 @@
 
         <Grid
             Grid.Row="0"
-            Padding="16,15,14,12"
+            Padding="18,18,14,14"
             ColumnSpacing="10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <StackPanel Spacing="2">
+            <StackPanel Spacing="3">
+                <TextBlock Text="AGENT TRACE" FontSize="10" FontWeight="SemiBold" CharacterSpacing="65" Foreground="{ThemeResource TextMutedBrush}" />
                 <TextBlock
                     Text="Agent Activity"
                     FontSize="16"
@@ -40,16 +47,10 @@
             <Button
                 Grid.Column="1"
                 Click="Collapse_Click"
-                Width="34"
-                Height="34"
-                Padding="0"
-                CornerRadius="8"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                Style="{StaticResource NocturneIconButtonStyle}"
                 ToolTipService.ToolTip="Collapse activity panel"
                 AutomationProperties.Name="Collapse activity panel">
-                <SymbolIcon Symbol="Forward" />
+                <FontIcon Glyph="&#xE72C;" Style="{StaticResource NocturneIconStyle}" />
             </Button>
         </Grid>
 
@@ -61,11 +62,12 @@
         <Grid Grid.Row="2">
             <ScrollViewer
                 x:Name="ActivityScrollViewer"
-                Padding="14,14,14,16"
+                Padding="16,16,16,18"
                 VerticalScrollBarVisibility="Auto"
                 VerticalScrollMode="Enabled"
                 HorizontalScrollBarVisibility="Disabled"
                 HorizontalScrollMode="Disabled"
+                IsScrollInertiaEnabled="True"
                 ZoomMode="Disabled">
                 <ItemsRepeater x:Name="ActivityRepeater">
                     <ItemsRepeater.Layout>
