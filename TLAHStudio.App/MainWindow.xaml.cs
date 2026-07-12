@@ -7,7 +7,6 @@ using System.Text.Json;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.App.Views;
 using TLAHStudio.App.Views.Dialogs;
-using TLAHStudio.App.Infrastructure;
 using TLAHStudio.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.Storage.Streams;
@@ -40,6 +39,7 @@ public sealed partial class MainWindow : Window
     public ISandboxCommandService SandboxCommandService { get; }
 
     public WorkspaceReviewViewModel WorkspaceReviewVM { get; }
+    public Microsoft.UI.Xaml.ElementTheme CurrentAppTheme => RootGrid.ActualTheme;
     public async Task<ContentDialogResult?> TryShowDialogAsync(ContentDialog dialog, bool waitForTurn = false)
     {
         if (waitForTurn)
@@ -111,7 +111,11 @@ public sealed partial class MainWindow : Window
         SetAppIcon(appWindow);
         appWindow.Resize(new Windows.Graphics.SizeInt32(1280, 800));
         ConfigureTitleBarButtons(appWindow);
-        RootGrid.ActualThemeChanged += (_, _) => ConfigureTitleBarButtons(appWindow);
+        RootGrid.ActualThemeChanged += (_, _) =>
+        {
+            ConfigureTitleBarButtons(appWindow);
+            ApplyWorkbenchPanelTheme();
+        };
 
         BackgroundService.ConfigChanged += (_, config) =>
             DispatcherQueue.TryEnqueue(() => _ = ApplyBackgroundConfigAsync(config));
@@ -121,6 +125,7 @@ public sealed partial class MainWindow : Window
         RootGrid.SizeChanged += OnRootGridSizeChanged;
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnGlobalKeyDown), true);
         Activated += OnFirst;
+        ApplyWorkbenchPanelTheme();
         UpdateAgentActivityPanelLayout();
     }
 
@@ -984,15 +989,17 @@ public sealed partial class MainWindow : Window
             AgentActivityPanelView == null || WorkspaceReviewPanelView == null)
             return;
 
-        var wasActivityVisible = AgentActivityPanelView.Visibility == Visibility.Visible;
-        var wasReviewVisible = WorkspaceReviewPanelView.Visibility == Visibility.Visible;
-
         var availableWidth = WorkbenchGrid.ActualWidth;
         if (double.IsNaN(availableWidth) || availableWidth <= 0)
             availableWidth = Math.Max(0, RootGrid.ActualWidth - SidebarView.ActualWidth);
 
         AgentActivityPanelView.Visibility = Visibility.Collapsed;
         WorkspaceReviewPanelView.Visibility = Visibility.Collapsed;
+        // Visibility changes can occur while a theme transition is still
+        // completing. Reassert the intended grid columns before restoring a
+        // panel so a recycled visual can never inherit the chat column.
+        Grid.SetColumn(AgentActivityPanelView, 1);
+        Grid.SetColumn(WorkspaceReviewPanelView, 2);
         AgentActivityColumn.Width = new GridLength(0);
         WorkspaceReviewColumn.Width = new GridLength(0);
         if (availableWidth < 780)
@@ -1005,8 +1012,6 @@ public sealed partial class MainWindow : Window
             {
                 WorkspaceReviewColumn.Width = new GridLength(reviewWidth);
                 WorkspaceReviewPanelView.Visibility = Visibility.Visible;
-                if (!wasReviewVisible)
-                    NocturneMotion.Reveal(WorkspaceReviewPanelView, verticalOffset: 0, durationMs: 220);
             }
             return;
         }
@@ -1023,8 +1028,20 @@ public sealed partial class MainWindow : Window
 
         AgentActivityColumn.Width = new GridLength(activityWidth);
         AgentActivityPanelView.Visibility = Visibility.Visible;
-        if (!wasActivityVisible)
-            NocturneMotion.Reveal(AgentActivityPanelView, verticalOffset: 0, durationMs: 220);
+    }
+
+    private void ApplyWorkbenchPanelTheme()
+    {
+        if (AgentActivityPanelView == null || WorkspaceReviewPanelView == null || RootGrid == null)
+            return;
+
+        // Activity content is generated in code, so it cannot rely on a
+        // collapsed UserControl re-inheriting the root's theme on its own.
+        // Pin it to the same effective theme as the workbench before it is
+        // shown; ActualThemeChanged then refreshes its generated brushes.
+        var theme = RootGrid.ActualTheme;
+        AgentActivityPanelView.RequestedTheme = theme;
+        WorkspaceReviewPanelView.RequestedTheme = theme;
     }
 
     private static bool IsKeyDown(VirtualKey key) =>

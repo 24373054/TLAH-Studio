@@ -594,7 +594,9 @@ public sealed partial class AgentActivityPanelControl : UserControl
 
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
 
-    private bool IsLightTheme() => ActualTheme == Microsoft.UI.Xaml.ElementTheme.Light;
+    private bool IsLightTheme() =>
+        App.MainWindow is MainWindow window &&
+        window.CurrentAppTheme == Microsoft.UI.Xaml.ElementTheme.Light;
 
     private Color ThemeColor(Color light, Color dark) => IsLightTheme() ? light : dark;
 

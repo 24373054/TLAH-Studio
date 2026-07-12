@@ -1,14 +1,14 @@
 {
-  "version": "4.11.0",
+  "version": "4.11.1",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.11.0.exe",
-  "sha256": "a56dc5488fca955ee9551c51e226a8bb38101610d0ed398ae6c839775d903a98",
-  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.11.0.json.sig",
-  "releaseNotes": "4.11.0\n\nHighlights:\n- Nocturne Studio visual direction with a unified icon system and calmer material layers.\n- Rebuilt the conversation canvas, command dock, navigation, and review workbench.\n- Added restrained motion feedback and smoother long-conversation scrolling.",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.11.1.exe",
+  "sha256": "a06c9b0b807a3111040924aa326372faa0417a15d7134d04ebb6993d2153cc93",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.11.1.json.sig",
+  "releaseNotes": "4.11.1\n\nHotfix:\n- Fixed the Activity panel reopening in the chat column instead of the right workbench column.\n- Restored Activity panel theme inheritance after close/reopen and theme changes.\n- Preserved the Nocturne motion system without applying composition offsets to grid-managed panels.",
   "forceUpdate": true,
   "minSupportedVersion": "4.9.7",
   "rolloutPercent": 100,
-  "installerSizeBytes": 98042272
+  "installerSizeBytes": 98039248
 }
