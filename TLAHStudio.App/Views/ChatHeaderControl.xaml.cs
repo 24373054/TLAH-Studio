@@ -39,6 +39,12 @@ public sealed partial class ChatHeaderControl : UserControl
                 DispatcherQueue.TryEnqueue(UpdateActivityButton);
         };
         UpdateActivityButton();
+        w.WorkspaceReviewVM.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(WorkspaceReviewViewModel.IsOpen))
+                DispatcherQueue.TryEnqueue(UpdateChangesButton);
+        };
+        UpdateChangesButton();
     }
 
     private void UpdateTitle(string? title)
@@ -245,6 +251,14 @@ public sealed partial class ChatHeaderControl : UserControl
         Play(InteractionSound.Toggle);
         UpdateActivityButton();
     }
+    private void Changes_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindow is not MainWindow w) return;
+        w.ToggleWorkspaceReviewPanel();
+        Play(InteractionSound.Toggle);
+        UpdateChangesButton();
+    }
+
 
     private async void Agent_Click(object sender, RoutedEventArgs e)
     {
@@ -265,6 +279,14 @@ public sealed partial class ChatHeaderControl : UserControl
         ActivityButton.Background = isOpen ? Brush("AccentStrongBrush") : Brush("SurfaceElevatedBrush");
         ActivityButton.Foreground = isOpen ? Brush("AccentTextBrush") : Brush("TextSecondaryBrush");
         ActivityButton.BorderBrush = isOpen ? Brush("AccentStrongBrush") : Brush("BorderSubtleBrush");
+    }
+
+    private void UpdateChangesButton()
+    {
+        var isOpen = App.MainWindow is MainWindow window && window.WorkspaceReviewVM.IsOpen;
+        ChangesButton.Background = isOpen ? Brush("AccentStrongBrush") : Brush("SurfaceElevatedBrush");
+        ChangesButton.Foreground = isOpen ? Brush("AccentTextBrush") : Brush("TextSecondaryBrush");
+        ChangesButton.BorderBrush = isOpen ? Brush("AccentStrongBrush") : Brush("BorderSubtleBrush");
     }
 
     private async void Settings_Click(object s, RoutedEventArgs e)

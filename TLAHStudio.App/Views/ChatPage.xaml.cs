@@ -16,6 +16,7 @@ using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
 using TLAHStudio.App.Models;
+using TLAHStudio.App.Infrastructure;
 using TLAHStudio.App.Views.Controls;
 
 namespace TLAHStudio.App.Views;
@@ -37,6 +38,7 @@ public sealed partial class ChatPage : UserControl
     private bool _scrollToBottomQueued;
     private bool _loadingOlderMessages;
 
+    private BindableCollectionAdapter<Message>? _messageItems;
     public ChatPage()
     {
         App.Log("ChatPage ctor entered.");
@@ -78,7 +80,11 @@ public sealed partial class ChatPage : UserControl
         _sandbox = sandbox;
         _sound = sound;
 
-        MessagesRepeater.ItemsSource = _vm.Messages;
+        // ItemsRepeater has a native binding contract. Passing ObservableCollection<T>
+        // directly makes C#/WinRT generate an IReadOnlyList<T> projection at runtime,
+        // which is not reliable in a self-contained unpackaged installation.
+        _messageItems = new BindableCollectionAdapter<Message>(_vm.Messages);
+        MessagesRepeater.ItemsSource = _messageItems;
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.StreamingMessageUpdated += (_, _) => RequestRender();
         _vm.MessageIdMutated += oldId =>
@@ -235,8 +241,8 @@ public sealed partial class ChatPage : UserControl
     {
         InvalidateMessageCache();
         MessagesRepeater.ItemsSource = null;
-        if (_vm != null)
-            MessagesRepeater.ItemsSource = _vm.Messages;
+        if (_messageItems != null)
+            MessagesRepeater.ItemsSource = _messageItems;
         UpdateConversationState();
     }
 

@@ -1,14 +1,14 @@
 {
-  "version": "4.9.9",
-  "channel": "stable",
-  "platform": "windows",
-  "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.9.9.exe",
-  "sha256": "9f8e9936ae09e82394fe1554daaac69919fea7ce525cf5dadc34fab155a63be6",
-  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.9.9.json.sig",
-  "releaseNotes": "Frontend performance and agent UX update.\n\n- Paged virtualized conversation timeline with stable async selection\n- Clear agent, workspace, and permission state in the composer\n- Markdown plan review with feedback before execution\n- Lazy long-code highlighting and lower-cost activity rendering",
-  "forceUpdate": false,
-  "minSupportedVersion": "4.9.7",
-  "rolloutPercent": 100,
-  "installerSizeBytes": 98041176
+    "version":  "4.10.0",
+    "channel":  "stable",
+    "platform":  "windows",
+    "arch":  "x64",
+    "installerUrl":  "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.10.0.exe",
+    "sha256":  "67a99ad8d6d4d9c673329c0a8211c2e84444ce649289a99a4bf642292c5cdc20",
+    "signatureUrl":  "https://download.matrixlabs.cn/tlah/windows/latest-4.10.0.json.sig",
+    "releaseNotes":  "4.10.0\n\nHighlights:\n- Virtualized conversations, activity, and sidebar lists for smoother large-workspace navigation.\n- Added Changes & Preview (Ctrl+Shift+D) for workspace status and diff review.\n- Hardened startup and release verification, including an installed-app smoke test.",
+    "forceUpdate":  true,
+    "minSupportedVersion":  "4.9.7",
+    "rolloutPercent":  100,
+    "installerSizeBytes":  98036872
 }

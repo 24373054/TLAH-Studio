@@ -38,6 +38,7 @@ public sealed partial class MainWindow : Window
     public IAppReleaseService AppReleaseService { get; }
     public ISandboxCommandService SandboxCommandService { get; }
 
+    public WorkspaceReviewViewModel WorkspaceReviewVM { get; }
     public async Task<ContentDialogResult?> TryShowDialogAsync(ContentDialog dialog, bool waitForTurn = false)
     {
         if (waitForTurn)
@@ -69,12 +70,12 @@ public sealed partial class MainWindow : Window
         MainViewModel mvm, SidebarViewModel svm, ChatPageViewModel cvm,
         DebugPanelViewModel dvm, SettingsDialogViewModel sv, BackgroundSettingsDialogViewModel bv,
         AgentFileDialogViewModel av, PrivacyDataViewModel pv, TeamWorkspaceViewModel twv, ToolPlatformViewModel tpv, UpdateNotificationViewModel uv, IThemeService ts,
-        IBackgroundService bg, IUiDensityService density, IInteractionSoundService sound, IAppReleaseService release, ISandboxCommandService sandbox)
+        IBackgroundService bg, IUiDensityService density, IInteractionSoundService sound, IAppReleaseService release, ISandboxCommandService sandbox, WorkspaceReviewViewModel review)
     {
         ViewModel = mvm; SidebarVM = svm; ChatVM = cvm; DebugVM = dvm;
         SettingsVM = sv; BgSettingsVM = bv; AgentFileVM = av; PrivacyDataVM = pv; TeamWorkspaceVM = twv; ToolPlatformVM = tpv;
         UpdateNotificationVM = uv; ThemeService = ts; BackgroundService = bg;
-        UiDensityService = density; SoundService = sound; AppReleaseService = release; SandboxCommandService = sandbox;
+        UiDensityService = density; SoundService = sound; AppReleaseService = release; SandboxCommandService = sandbox; WorkspaceReviewVM = review;
 
         App.Log("MainWindow ctor entered.");
         this.InitializeComponent();
@@ -83,6 +84,7 @@ public sealed partial class MainWindow : Window
         DebugPanelView.Bind(DebugVM);
         ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService, SandboxCommandService, SoundService);
         AgentActivityPanelView.Bind(ChatVM, UiDensityService, SoundService);
+        WorkspaceReviewPanelView.Bind(WorkspaceReviewVM, SoundService);
         ChatVM.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ChatPageViewModel.IsAgentActivityPanelOpen))
@@ -744,6 +746,14 @@ public sealed partial class MainWindow : Window
                    IsKeyDown(VirtualKey.LeftControl) ||
                    IsKeyDown(VirtualKey.RightControl);
 
+        if (ctrl && IsKeyDown(VirtualKey.Shift) && e.Key == VirtualKey.D)
+        {
+            e.Handled = true;
+            ToggleWorkspaceReviewPanel(true);
+            SoundService.Play(InteractionSound.Navigate);
+            return;
+        }
+
         if (ctrl && e.Key == VirtualKey.N)
         {
             e.Handled = true;
@@ -824,6 +834,7 @@ public sealed partial class MainWindow : Window
                 new("Search Chats", "Focus the sidebar search", "Chat", "focus-search", 0),
                 new("Toggle Theme", "Switch between light and dark", "App", "toggle-theme", 10),
                 new("Open Settings", "Configure provider, model, keys", "App", "settings", 20),
+                new("Changes & Preview", "Review local Git changes", "Workspace", "changes", 10),
                 new("Clear Conversation", "Remove all messages", "Chat", "clear", 30),
                 new("Toggle Agent Mode", "Enable or disable agent", "Chat", "agent", 30),
                 new("Stop Generation", "Cancel the running request", "Chat", "stop", 30),
@@ -904,6 +915,9 @@ public sealed partial class MainWindow : Window
                 ChatVM.Messages.Clear();
                 ChatVM.ErrorMessage = null;
                 break;
+            case "changes":
+                ToggleWorkspaceReviewPanel(true);
+                break;
             case "agent":
                 ChatVM.IsAgentModeEnabled = !ChatVM.IsAgentModeEnabled;
                 break;
@@ -944,39 +958,64 @@ public sealed partial class MainWindow : Window
 
     public void ToggleAgentActivityPanel(bool? open = null)
     {
-        ChatVM.IsAgentActivityPanelOpen = open ?? !ChatVM.IsAgentActivityPanelOpen;
+        var shouldOpen = open ?? !ChatVM.IsAgentActivityPanelOpen;
+        ChatVM.IsAgentActivityPanelOpen = shouldOpen;
+        if (shouldOpen)
+            WorkspaceReviewVM.IsOpen = false;
+        UpdateAgentActivityPanelLayout();
+    }
+
+    public void ToggleWorkspaceReviewPanel(bool? open = null)
+    {
+        var shouldOpen = open ?? !WorkspaceReviewVM.IsOpen;
+        WorkspaceReviewVM.IsOpen = shouldOpen;
+        if (shouldOpen)
+        {
+            ChatVM.IsAgentActivityPanelOpen = false;
+            _ = WorkspaceReviewVM.RefreshAsync();
+        }
         UpdateAgentActivityPanelLayout();
     }
 
     private void UpdateAgentActivityPanelLayout()
     {
-        if (AgentActivityColumn == null || AgentActivityPanelView == null)
+        if (AgentActivityColumn == null || WorkspaceReviewColumn == null ||
+            AgentActivityPanelView == null || WorkspaceReviewPanelView == null)
             return;
 
         var availableWidth = WorkbenchGrid.ActualWidth;
         if (double.IsNaN(availableWidth) || availableWidth <= 0)
             availableWidth = Math.Max(0, RootGrid.ActualWidth - SidebarView.ActualWidth);
 
-        var canShow = ChatVM.IsAgentActivityPanelOpen && availableWidth >= 780;
-        if (!canShow)
+        AgentActivityPanelView.Visibility = Visibility.Collapsed;
+        WorkspaceReviewPanelView.Visibility = Visibility.Collapsed;
+        AgentActivityColumn.Width = new GridLength(0);
+        WorkspaceReviewColumn.Width = new GridLength(0);
+        if (availableWidth < 780)
+            return;
+
+        if (WorkspaceReviewVM.IsOpen)
         {
-            AgentActivityPanelView.Visibility = Visibility.Collapsed;
-            AgentActivityColumn.Width = new GridLength(0);
+            var reviewWidth = Math.Clamp(availableWidth * 0.38, 420, 560);
+            if (availableWidth - reviewWidth >= 520)
+            {
+                WorkspaceReviewColumn.Width = new GridLength(reviewWidth);
+                WorkspaceReviewPanelView.Visibility = Visibility.Visible;
+            }
             return;
         }
 
-        var targetWidth = Math.Clamp(availableWidth * 0.30, 320, 420);
-        if (availableWidth - targetWidth < 520)
-            targetWidth = Math.Max(300, availableWidth - 520);
-
-        if (targetWidth < 300)
-        {
-            AgentActivityPanelView.Visibility = Visibility.Collapsed;
-            AgentActivityColumn.Width = new GridLength(0);
+        if (!ChatVM.IsAgentActivityPanelOpen)
             return;
-        }
 
-        AgentActivityColumn.Width = new GridLength(targetWidth);
+        var activityWidth = Math.Clamp(availableWidth * 0.30, 320, 420);
+        if (availableWidth - activityWidth < 520)
+            activityWidth = Math.Max(300, availableWidth - 520);
+
+        if (activityWidth < 300)
+            return;
+
+        AgentActivityColumn.Width = new GridLength(activityWidth);
         AgentActivityPanelView.Visibility = Visibility.Visible;
     }
 

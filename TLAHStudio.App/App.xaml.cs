@@ -22,6 +22,7 @@ using TLAHStudio.Core.Services.SessionMemory;
 using TLAHStudio.Core.Services.Workspace;
 using TLAHStudio.Data;
 using TLAHStudio.App.ViewModels;
+using TLAHStudio.App.Services;
 using TLAHStudio.App.Views;
 
 namespace TLAHStudio.App;
@@ -87,6 +88,7 @@ public partial class App : Application
             services.AddSingleton<IInteractionSoundService, InteractionSoundService>();
             services.AddSingleton<IAppReleaseService, AppReleaseService>();
             services.AddScoped<IChatService, ChatService>();
+            services.AddSingleton<IWorkspaceReviewService, WorkspaceReviewService>();
             services.AddScoped<ISettingsService, SettingsService>();
             services.AddSingleton<ISandboxCommandService, SandboxCommandService>();
             services.AddScoped<IToolPlatformService, ToolPlatformService>();
@@ -208,6 +210,7 @@ public partial class App : Application
             services.AddSingleton<SidebarViewModel>();
             services.AddSingleton<ChatPageViewModel>();
             services.AddSingleton<DebugPanelViewModel>();
+            services.AddSingleton<WorkspaceReviewViewModel>();
             services.AddTransient<SettingsDialogViewModel>();
             services.AddTransient<BackgroundSettingsDialogViewModel>();
             services.AddTransient<AgentFileDialogViewModel>();

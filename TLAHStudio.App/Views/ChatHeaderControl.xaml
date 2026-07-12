@@ -110,6 +110,20 @@
                 <SymbolIcon Symbol="List" />
             </Button>
             <Button
+                x:Name="ChangesButton"
+                Click="Changes_Click"
+                Width="38"
+                Height="38"
+                Background="{ThemeResource SurfaceElevatedBrush}"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                CornerRadius="8"
+                Padding="0"
+                ToolTipService.ToolTip="Changes and preview"
+                AutomationProperties.Name="Changes and preview">
+                <SymbolIcon Symbol="Document" />
+            </Button>
+            <Button
                 Click="Agent_Click"
                 Width="38"
                 Height="38"

@@ -27,6 +27,7 @@ public partial class SidebarViewModel : ObservableObject
     public ObservableCollection<ChatSummaryDto> ThisWeekChats { get; } = new();
     public ObservableCollection<ChatSummaryDto> OlderChats { get; } = new();
 
+    public ObservableCollection<SidebarEntry> SidebarItems { get; } = new();
     [ObservableProperty]
     private ChatSummaryDto? _selectedChat;
 
@@ -87,6 +88,7 @@ public partial class SidebarViewModel : ObservableObject
             ThisWeekChats.Clear();
             OlderChats.Clear();
             var now = DateTime.Now.Date;
+            SidebarItems.Clear();
             foreach (var chat in chats)
             {
                 Chats.Add(chat);
@@ -225,10 +227,29 @@ public partial class SidebarViewModel : ObservableObject
         }
     }
 
+    private void PopulateSidebarItems()
+    {
+        SidebarItems.Clear();
+        AddSidebarGroup("Pinned", PinnedChats);
+        AddSidebarGroup("Today", TodayChats);
+        AddSidebarGroup("Yesterday", YesterdayChats);
+        AddSidebarGroup("This Week", ThisWeekChats);
+        AddSidebarGroup("Older", OlderChats);
+    }
+
+    private void AddSidebarGroup(string name, IEnumerable<ChatSummaryDto> chats)
+    {
+        var entries = chats.Select(chat => new SidebarEntry(null, chat)).ToArray();
+        if (entries.Length == 0) return;
+        SidebarItems.Add(new SidebarEntry(name, null));
+        foreach (var entry in entries) SidebarItems.Add(entry);
+    }
+
     private void UpdateGroupState()
     {
         HasPinnedChats = PinnedChats.Count > 0;
         HasRegularChats = RegularChats.Count > 0;
+        PopulateSidebarItems();
         HasVisibleChats = Chats.Count > 0;
     }
 

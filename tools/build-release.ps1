@@ -223,6 +223,7 @@ try {
             "TLAHStudio.App.pri",
             "Views\SidebarPage.xbf",
             "Views\ChatPage.xbf",
+            "Views\WorkspaceReviewPanelControl.xbf",
             "Views\MessageInputControl.xbf"
         )) {
             $path = Join-Path $PublishDir $requiredFile
@@ -247,7 +248,9 @@ try {
             Remove-Item -LiteralPath $logPath -Force
         }
 
-        $process = Start-Process -FilePath $exe -WorkingDirectory $PublishDir -WindowStyle Hidden -PassThru
+        $smokeWorkingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("TLAHStudioPublishSmoke-" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $smokeWorkingDirectory -Force | Out-Null
+        $process = Start-Process -FilePath $exe -WorkingDirectory $smokeWorkingDirectory -WindowStyle Hidden -PassThru
         try {
             $deadline = (Get-Date).AddSeconds(15)
             while ((Get-Date) -lt $deadline) {
@@ -285,6 +288,9 @@ try {
         finally {
             if (-not $process.HasExited) {
                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $smokeWorkingDirectory) {
+                Remove-Item -LiteralPath $smokeWorkingDirectory -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -355,7 +361,27 @@ try {
     $latestJsonText2 = $latest | ConvertTo-Json -Depth 10
     [System.IO.File]::WriteAllText($latestJson, $latestJsonText2, (New-Object System.Text.UTF8Encoding $false))
 
-    & .\tools\sign-latest.ps1 -LatestJsonPath $latestJson -PrivateKeyFile $PrivateKeyFile
+    # sign-latest uses modern ECDsa APIs that are unavailable in Windows
+    # PowerShell 5. Prefer PowerShell 7 when it is installed so a release
+    # build started from either shell produces the same signed manifest.
+    $pwsh = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue
+    if ($pwsh) {
+        Invoke-Native $pwsh.Source @(
+            "-NoProfile",
+            "-File",
+            (Resolve-Path -LiteralPath ".\tools\sign-latest.ps1").Path,
+            "-LatestJsonPath",
+            $latestJson,
+            "-PrivateKeyFile",
+            $PrivateKeyFile
+        )
+    }
+    else {
+        & .\tools\sign-latest.ps1 -LatestJsonPath $latestJson -PrivateKeyFile $PrivateKeyFile
+        if ($LASTEXITCODE -ne 0) {
+            throw "sign-latest.ps1 failed with exit code $LASTEXITCODE."
+        }
+    }
     $versionedSignature = ".\TLAHStudio.Installer\latest-$Version.json.sig"
     Copy-Item -LiteralPath "$latestJson.sig" -Destination $versionedSignature -Force
 

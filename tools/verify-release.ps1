@@ -19,6 +19,32 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-StartupLogFragment {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][long]$Offset
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return ""
+    }
+
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $stream.Position = [Math]::Min($Offset, $stream.Length)
+        $reader = [System.IO.StreamReader]::new($stream)
+        try {
+            return $reader.ReadToEnd()
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function Invoke-SmokeInstall {
     param(
         [Parameter(Mandatory = $true)]
@@ -67,6 +93,39 @@ function Invoke-SmokeInstall {
     if ($installedVersion -ne $Version) {
         throw "Smoke install version mismatch. version.json=$installedVersion, expected=$Version"
     }
+    # A file-presence check cannot catch CLR/WinUI startup regressions. Launch
+    # from outside {app} so self-contained assembly resolution is exercised in
+    # the same way as a desktop shortcut or shell invocation.
+    $startupLog = Join-Path $env:LOCALAPPDATA "TLAH Studio\logs\startup.log"
+    $startupOffset = if (Test-Path -LiteralPath $startupLog) { (Get-Item -LiteralPath $startupLog).Length } else { 0 }
+    $appPath = Join-Path $installDir "TLAHStudio.App.exe"
+    $appProcess = Start-Process -FilePath $appPath -WorkingDirectory $smokeRoot -PassThru
+    $deadline = (Get-Date).AddSeconds(18)
+    $startupText = ""
+    $activated = $false
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 250
+        $startupText = Get-StartupLogFragment -Path $startupLog -Offset $startupOffset
+        if ($startupText -match "FATAL:|UNHANDLED XAML:") {
+            if (-not $appProcess.HasExited) { Stop-Process -Id $appProcess.Id -Force }
+            throw "Installed application failed its startup smoke test: $startupText"
+        }
+        if ($startupText -match "Window activated\.") {
+            $activated = $true
+            break
+        }
+        if ($appProcess.HasExited) {
+            throw "Installed application exited before activating. Startup log: $startupText"
+        }
+    }
+    if (-not $activated) {
+        if (-not $appProcess.HasExited) { Stop-Process -Id $appProcess.Id -Force }
+        throw "Installed application did not activate within 18 seconds. Startup log: $startupText"
+    }
+    if (-not $appProcess.HasExited) {
+        Stop-Process -Id $appProcess.Id -Force
+    }
+
 
     $uninstaller = Join-Path $installDir "unins000.exe"
     if (Test-Path -LiteralPath $uninstaller) {

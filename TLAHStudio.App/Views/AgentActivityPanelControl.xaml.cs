@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using TLAHStudio.App.ViewModels;
+using TLAHStudio.App.Infrastructure;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
 using Windows.UI;
@@ -20,12 +21,14 @@ public sealed partial class AgentActivityPanelControl : UserControl
     private readonly Dictionary<Guid, Expander> _runExpanders = new();
     private readonly Dictionary<Guid, string> _runContentSignatures = new();
 
+    private BindableCollectionAdapter<AgentActivityRun>? _activityItems;
     public AgentActivityPanelControl()
     {
         App.Log("AgentActivityPanelControl ctor entered.");
         InitializeComponent();
         App.Log("AgentActivityPanelControl XAML initialized.");
         ActualThemeChanged += (_, _) => RequestRender(immediate: true);
+        ActivityRepeater.ItemTemplate = new ActivityRunElementFactory(this);
     }
 
     public void Bind(
@@ -37,6 +40,8 @@ public sealed partial class AgentActivityPanelControl : UserControl
         _densityService = densityService;
         _sound = sound;
         _vm.AgentActivityChanged += (_, _) => RequestRender();
+        _activityItems = new BindableCollectionAdapter<AgentActivityRun>(_vm.AgentActivityRuns);
+        ActivityRepeater.ItemsSource = _activityItems;
         _vm.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
@@ -86,43 +91,21 @@ public sealed partial class AgentActivityPanelControl : UserControl
             return;
 
         SummaryText.Text = _vm.AgentActivitySummary;
-
         if (_vm.CurrentChat == null)
         {
-            ClearRunElements();
-            ActivityStack.Children.Add(BuildEmptyState("Select a chat", "Agent runs for the selected conversation will appear here."));
+            ShowEmptyState("Select a chat", "Agent runs for the selected conversation will appear here.");
             return;
         }
 
         if (!_vm.HasAgentActivity)
         {
-            ClearRunElements();
-            ActivityStack.Children.Add(BuildEmptyState("No agent runs yet", "Start Agent mode to build a persistent execution trail."));
+            ShowEmptyState("No agent runs yet", "Start Agent mode to build a persistent execution trail.");
             return;
         }
 
-        RemoveEmptyStateIfNeeded();
-        var activeRunIds = new HashSet<Guid>();
-        for (var i = 0; i < _vm.AgentActivityRuns.Count; i++)
-        {
-            var run = _vm.AgentActivityRuns[i];
-            activeRunIds.Add(run.Id);
-            var expander = GetOrUpdateRunExpander(run, i);
-            if (ActivityStack.Children.Count <= i)
-            {
-                ActivityStack.Children.Add(expander);
-            }
-            else if (!ReferenceEquals(ActivityStack.Children[i], expander))
-            {
-                if (ActivityStack.Children.Contains(expander))
-                    ActivityStack.Children.Remove(expander);
-                ActivityStack.Children.Insert(i, expander);
-            }
-        }
-
-        for (var i = ActivityStack.Children.Count - 1; i >= _vm.AgentActivityRuns.Count; i--)
-            ActivityStack.Children.RemoveAt(i);
-
+        ActivityEmptyStateHost.Content = null;
+        ActivityScrollViewer.Visibility = Visibility.Visible;
+        var activeRunIds = _vm.AgentActivityRuns.Select(run => run.Id).ToHashSet();
         foreach (var staleId in _runExpanders.Keys.Where(id => !activeRunIds.Contains(id)).ToArray())
         {
             _runExpanders.Remove(staleId);
@@ -130,17 +113,17 @@ public sealed partial class AgentActivityPanelControl : UserControl
         }
     }
 
+    private void ShowEmptyState(string title, string body)
+    {
+        ClearRunElements();
+        ActivityScrollViewer.Visibility = Visibility.Collapsed;
+        ActivityEmptyStateHost.Content = BuildEmptyState(title, body);
+    }
+
     private void ClearRunElements()
     {
         _runExpanders.Clear();
         _runContentSignatures.Clear();
-        ActivityStack.Children.Clear();
-    }
-
-    private void RemoveEmptyStateIfNeeded()
-    {
-        if (_runExpanders.Count == 0)
-            ActivityStack.Children.Clear();
     }
 
     private UIElement BuildEmptyState(string title, string body)
@@ -767,5 +750,29 @@ public sealed partial class AgentActivityPanelControl : UserControl
             _ => Color.FromArgb(0xFF, 0xD8, 0xE1, 0xEC)
         };
         return ThemeBrush(light, dark);
+    }
+    private sealed class ActivityRunElementFactory : IElementFactory
+    {
+        private readonly AgentActivityPanelControl _owner;
+
+        public ActivityRunElementFactory(AgentActivityPanelControl owner)
+        {
+            _owner = owner;
+        }
+
+        public UIElement GetElement(ElementFactoryGetArgs args)
+        {
+            if (args.Data is not AgentActivityRun run)
+                return new Grid();
+
+            var index = _owner._vm?.AgentActivityRuns.IndexOf(run) ?? 0;
+            return _owner.GetOrUpdateRunExpander(run, Math.Max(0, index));
+        }
+
+        public void RecycleElement(ElementFactoryRecycleArgs args)
+        {
+            // Cached expanders retain user expansion state while the repeater
+            // realizes only the portion of the activity history on screen.
+        }
     }
 }

@@ -58,18 +58,25 @@
             Height="1"
             Background="{ThemeResource BorderSubtleBrush}" />
 
-        <ScrollViewer
-            x:Name="ActivityScrollViewer"
-            Grid.Row="2"
-            Padding="14,14,14,16"
-            VerticalScrollBarVisibility="Auto"
-            VerticalScrollMode="Enabled"
-            HorizontalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Disabled"
-            ZoomMode="Disabled">
-            <StackPanel
-                x:Name="ActivityStack"
-                Spacing="12" />
-        </ScrollViewer>
+        <Grid Grid.Row="2">
+            <ScrollViewer
+                x:Name="ActivityScrollViewer"
+                Padding="14,14,14,16"
+                VerticalScrollBarVisibility="Auto"
+                VerticalScrollMode="Enabled"
+                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
+                ZoomMode="Disabled">
+                <ItemsRepeater x:Name="ActivityRepeater">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Spacing="12" />
+                    </ItemsRepeater.Layout>
+                </ItemsRepeater>
+            </ScrollViewer>
+            <ContentControl
+                x:Name="ActivityEmptyStateHost"
+                Margin="14,14,14,16"
+                VerticalAlignment="Top" />
+        </Grid>
     </Grid>
 </UserControl>
