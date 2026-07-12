@@ -6,7 +6,7 @@
 
 执行方式：
 
-1. 把本文和仓库根目录 `C:\Users\23157\CODE\00TLAH\TLAH` 一起交给本地 Claude Code。
+1. 把本文和仓库根目录一起交给本地编码智能体。
 2. 告诉它严格按 milestone 顺序开发，不要一次性大爆炸改完。
 3. 每完成一个 milestone 必须运行 `.\tools\ci.ps1`，并提交清晰 commit。
 4. 不要直接复制 Claude Code 源码，只吸收架构模式和产品行为。
@@ -20,11 +20,11 @@ Do not treat this as a loose idea list. Treat it as an implementation contract: 
 
 Give this file to the local agent together with the repository root:
 
-`C:\Users\23157\CODE\00TLAH\TLAH`
+`<repo-root>`
 
 Reference Claude Code source only for architecture and product behavior patterns:
 
-`C:\Users\23157\CODE\00TLAH\_analysis\claude-code-src`
+`<licensed-reference-source>`（不属于本仓库）
 
 Important constraint: do not copy Claude Code source code into TLAH. Use it as a reference for design patterns, UX behavior, and testing targets. TLAH must remain an independent C# / WinUI implementation.
 
@@ -32,7 +32,7 @@ Important constraint: do not copy Claude Code source code into TLAH. Use it as a
 
 Current repository state observed on 2026-06-29:
 
-- Main repo: `C:\Users\23157\CODE\00TLAH\TLAH`
+- Main repo: `<repo-root>`
 - Current app version in project files: `2.6.0`
 - Current latest release tag in git history: `v2.6.0`
 - Current `main` also has a later website-only commit: `Refresh download landing page`

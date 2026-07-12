@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible TLAH Studio defect
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. Search existing issues first. Do not include API keys, private prompts, customer data, or full databases. Security issues belong in private vulnerability reporting.
+  - type: input
+    id: version
+    attributes:
+      label: TLAH Studio version
+      placeholder: 4.12.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and build
+      placeholder: Windows 11 24H2, build 26100
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Startup or installation
+        - Chat or provider connection
+        - Agent runtime or Activity
+        - Tools, permissions, or sandbox
+        - MCP, skills, or plugins
+        - Workspace or Changes
+        - Settings, theme, or accessibility
+        - Update or signing
+        - Privacy, export, or local data
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use the smallest reliable sequence.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Relevant configuration
+      description: Provider protocol/model, permission mode, reasoning setting, workspace mode, and execution backend. Never include credentials.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted logs or screenshots
+      description: Drag files here only after removing secrets and private data.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and tested the latest stable release.
+          required: true
+        - label: I removed credentials, private prompts, workspace data, and personal information.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
