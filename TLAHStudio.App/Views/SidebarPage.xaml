@@ -7,106 +7,11 @@
     Width="296">
 
     <UserControl.Resources>
-        <DataTemplate x:Key="ChatItemTemplate">
-            <Grid Padding="13,10" ColumnSpacing="10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <Grid
-                    Grid.Column="0"
-                    Width="24"
-                    Height="24"
-                    VerticalAlignment="Center">
-                    <FontIcon
-                        Glyph="&#xE8BD;"
-                        Style="{StaticResource NocturneIconStyle}"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center" />
-                </Grid>
-
-                <StackPanel Grid.Column="1" Spacing="3">
-                    <TextBlock
-                        Text="{Binding Title}"
-                        FontSize="14"
-                        FontWeight="SemiBold"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        TextTrimming="CharacterEllipsis" />
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <TextBlock
-                            Text="{Binding MessageCount}"
-                            FontSize="12"
-                            Foreground="{ThemeResource TextMutedBrush}" />
-                        <TextBlock
-                            Text="messages"
-                            FontSize="12"
-                            Foreground="{ThemeResource TextMutedBrush}" />
-                    </StackPanel>
-                </StackPanel>
-
-                <Button
-                    Grid.Column="2"
-                    Width="32"
-                    Height="32"
-                    Padding="0"
-                    Background="{ThemeResource SurfaceElevatedBrush}"
-                    Foreground="{ThemeResource TextMutedBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8"
-                    ToolTipService.ToolTip="Chat actions"
-                    AutomationProperties.Name="Chat actions">
-                    <FontIcon Glyph="&#xE712;" Style="{StaticResource NocturneIconStyle}" />
-                    <Button.Flyout>
-                        <MenuFlyout>
-                            <MenuFlyoutItem Text="Pin or unpin" Tag="{Binding}" Click="PinChat_Click">
-                                <MenuFlyoutItem.Icon>
-                                    <SymbolIcon Symbol="Pin" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Text="Rename" Tag="{Binding}" Click="RenameChat_Click">
-                                <MenuFlyoutItem.Icon>
-                                    <SymbolIcon Symbol="Edit" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Text="Archive or restore" Tag="{Binding}" Click="ArchiveChat_Click">
-                                <MenuFlyoutItem.Icon>
-                                    <SymbolIcon Symbol="Folder" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem Text="Export JSON" Tag="{Binding}" Click="ExportChat_Click">
-                                <MenuFlyoutItem.Icon>
-                                    <SymbolIcon Symbol="Save" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutSeparator />
-                            <MenuFlyoutItem Text="Delete" Tag="{Binding}" Click="DeleteChat_Click" Foreground="{ThemeResource DangerBrush}">
-                                <MenuFlyoutItem.Icon>
-                                    <SymbolIcon Symbol="Delete" />
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                        </MenuFlyout>
-                    </Button.Flyout>
-                </Button>
-            </Grid>
-        </DataTemplate>
-
-        <DataTemplate x:Key="CompactChatItemTemplate">
-            <Grid
-                Width="48"
-                Height="48"
-                HorizontalAlignment="Center"
-                ToolTipService.ToolTip="{Binding Title}">
-                <SymbolIcon
-                    Symbol="Message"
-                    Foreground="{ThemeResource TextSecondaryBrush}"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center" />
-            </Grid>
-        </DataTemplate>
         <DataTemplate x:Key="SidebarSectionTemplate">
             <TextBlock Text="{Binding Header}" Margin="8,12,8,3" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
+        </DataTemplate>
+        <DataTemplate x:Key="SidebarCompactSectionTemplate">
+            <Border Height="8" IsHitTestVisible="False" />
         </DataTemplate>
         <DataTemplate x:Key="VirtualizedChatItemTemplate">
             <Grid Padding="13,10" ColumnSpacing="10">
@@ -146,6 +51,7 @@
         <views:SidebarEntryTemplateSelector
             x:Key="SidebarEntryTemplateSelector"
             HeaderTemplate="{StaticResource SidebarSectionTemplate}"
+            CompactHeaderTemplate="{StaticResource SidebarCompactSectionTemplate}"
             ChatTemplate="{StaticResource VirtualizedChatItemTemplate}"
             CompactChatTemplate="{StaticResource VirtualizedCompactChatItemTemplate}" />
     </UserControl.Resources>
@@ -282,126 +188,6 @@
                 </ToggleButton>
             </Grid>
         </StackPanel>
-
-        <ScrollViewer
-            Visibility="Collapsed"
-            Grid.Row="2"
-            Padding="10,0,10,10"
-            VerticalScrollBarVisibility="Auto"
-            VerticalScrollMode="Enabled"
-            HorizontalScrollBarVisibility="Disabled"
-            HorizontalScrollMode="Disabled">
-            <StackPanel Spacing="10">
-                <StackPanel x:Name="PinnedSection" Spacing="4">
-                    <TextBlock
-                        x:Name="PinnedSectionTitle"
-                        Text="Pinned"
-                        Margin="8,4,8,0"
-                        FontSize="11"
-                        FontWeight="SemiBold"
-                        Foreground="{ThemeResource TextMutedBrush}" />
-                    <ListView
-                        x:Name="PinnedListView"
-                        Background="Transparent"
-                        SelectionMode="Single"
-                        IsItemClickEnabled="False"
-                        SelectionChanged="ChatList_SelectionChanged"
-                        ItemTemplate="{StaticResource ChatItemTemplate}">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="Margin" Value="0,2" />
-                                <Setter Property="Padding" Value="0" />
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="MinHeight" Value="62" />
-                                <Setter Property="CornerRadius" Value="8" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                    </ListView>
-                </StackPanel>
-
-                <!-- M4.7.0: Date-grouped chat sections -->
-                <StackPanel x:Name="TodaySection" Spacing="4" Visibility="Collapsed">
-                    <TextBlock Text="Today" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
-                    <ListView x:Name="TodayListView" ItemsSource="" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="Today chats">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="Margin" Value="0,2" />
-                                <Setter Property="Padding" Value="0" />
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="MinHeight" Value="62" />
-                                <Setter Property="CornerRadius" Value="8" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                    </ListView>
-                </StackPanel>
-                <StackPanel x:Name="YesterdaySection" Spacing="4" Visibility="Collapsed">
-                    <TextBlock Text="Yesterday" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
-                    <ListView x:Name="YesterdayListView" ItemsSource="" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="Yesterday chats">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="Margin" Value="0,2" />
-                                <Setter Property="Padding" Value="0" />
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="MinHeight" Value="62" />
-                                <Setter Property="CornerRadius" Value="8" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                    </ListView>
-                </StackPanel>
-                <StackPanel x:Name="ThisWeekSection" Spacing="4" Visibility="Collapsed">
-                    <TextBlock Text="This Week" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
-                    <ListView x:Name="ThisWeekListView" ItemsSource="" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="This week chats">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="Margin" Value="0,2" />
-                                <Setter Property="Padding" Value="0" />
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="MinHeight" Value="62" />
-                                <Setter Property="CornerRadius" Value="8" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                    </ListView>
-                </StackPanel>
-                <StackPanel x:Name="OlderSection" Spacing="4" Visibility="Collapsed">
-                    <TextBlock Text="Older" Margin="8,4,8,0" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
-                    <ListView x:Name="OlderListView" ItemsSource="" Background="Transparent" SelectionMode="Single" IsItemClickEnabled="False" SelectionChanged="ChatList_SelectionChanged" ItemTemplate="{StaticResource ChatItemTemplate}" AutomationProperties.Name="Older chats">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="Margin" Value="0,2" />
-                                <Setter Property="Padding" Value="0" />
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="MinHeight" Value="62" />
-                                <Setter Property="CornerRadius" Value="8" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                    </ListView>
-                </StackPanel>
-
-                <Border
-                    x:Name="EmptyListState"
-                    Visibility="Collapsed"
-                    Padding="16,18"
-                    Background="{ThemeResource PanelAltBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    BorderThickness="1"
-                    CornerRadius="8"
-                    Margin="0,8,0,0">
-                    <StackPanel Spacing="6">
-                        <TextBlock
-                            x:Name="EmptyListTitle"
-                            Text="No chats found"
-                            FontWeight="SemiBold"
-                            Foreground="{ThemeResource TextPrimaryBrush}" />
-                        <TextBlock
-                            x:Name="EmptyListBody"
-                            Text="Create a new chat or clear the current search."
-                            TextWrapping="Wrap"
-                            FontSize="12"
-                            Foreground="{ThemeResource TextSecondaryBrush}" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
 
         <Grid Grid.Row="2" Padding="10,0,10,10">
             <ListView

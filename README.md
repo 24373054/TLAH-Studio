@@ -56,22 +56,24 @@ Build, sign, and smoke-test the release locally first:
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version 4.9.9 `
-  -ReleaseNotes "Virtualized conversations, clearer agent state, and plan review." `
+  -Version X.Y.Z `
+  -ReleaseNotes "Describe the verified stability and experience changes." `
   -CertificateThumbprint F6DC173C746447A05FF83B9F7162121344CC09F0 `
-  -AllowUntrustedCertificate `
-  -ForceSmokeTest
+  -AllowUntrustedCertificate
 ```
+
+Use `-ForceSmokeTest` only on a disposable Windows VM. It installs and launches
+the generated package and can replace an existing local TLAH Studio install.
 
 After reviewing the generated metadata, commit and tag that exact state, push it,
 then atomically upload the already-verified files:
 
 ```powershell
 git add -A
-git commit -m "release 4.9.9"
-git tag -a v4.9.9 -m "TLAH Studio 4.9.9"
+git commit -m "release X.Y.Z"
+git tag -a vX.Y.Z -m "TLAH Studio X.Y.Z"
 git push origin main
-git push origin v4.9.9
+git push origin vX.Y.Z
 .\tools\deploy.ps1 -Server <ssh-user>@download.matrixlabs.cn
 ```
 
@@ -88,7 +90,7 @@ Thumbprint: F6DC173C746447A05FF83B9F7162121344CC09F0
 Verify an existing release:
 
 ```powershell
-.\tools\verify-release.ps1 -Version 4.9.9 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version X.Y.Z -AllowUntrustedAuthenticode
 ```
 
 Generated files:

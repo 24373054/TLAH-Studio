@@ -4,7 +4,7 @@
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue?logo=windows)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-4.9.9-brightgreen)](https://download.matrixlabs.cn/tlah/windows/latest.json)
+[![Version](https://img.shields.io/badge/version-4.12.0-brightgreen)](https://download.matrixlabs.cn/tlah/windows/latest.json)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](./LICENSE)
 
 TLAH Studio 是一款 Windows 原生 AI 智能体（Agent）工作台，使用 C#、WinUI 3 和 Windows App SDK 构建。它将聊天对话、工具执行、MCP 集成、提示词调试和持久化活动时间线融于一个桌面应用中。
@@ -184,7 +184,7 @@ dotnet publish TLAHStudio.App\TLAHStudio.App.csproj `
 | `dotnet publish ... -r win-x64 --self-contained true` | 独立发布 |
 | `.\tools\ci.ps1 -Configuration Release -Platform x64` | 依赖漏洞、测试和 Release 构建质量门 |
 | `cd TLAHStudio.Installer && iscc setup.iss` | 编译安装包 |
-| `.\tools\verify-release.ps1 -Version 4.9.9 -AllowUntrustedAuthenticode` | 验证发布包 |
+| `.\tools\verify-release.ps1 -Version X.Y.Z -AllowUntrustedAuthenticode` | 验证发布包 |
 
 ### 架构概览
 
@@ -251,14 +251,13 @@ TLAH Studio 采用分层架构，核心业务流程如下：
 
 ```powershell
 .\tools\build-release.ps1 `
-  -Version 4.9.9 `
+  -Version X.Y.Z `
   -ReleaseNotes "<发布说明>" `
   -CertificateThumbprint F6DC173C746447A05FF83B9F7162121344CC09F0 `
-  -AllowUntrustedCertificate `
-  -ForceSmokeTest
+  -AllowUntrustedCertificate
 ```
 
-此脚本自动完成：漏洞审计与 CI → publish → Authenticode 签名 → Inno Setup → SHA256 → 更新 `latest.json` → ECDSA P-256 签名 → 安装和启动烟测。确认产物后提交并创建 `v4.9.9` 标签，推送 Git，再运行 `.\tools\deploy.ps1 -Server <ssh-user>@download.matrixlabs.cn` 原子上传该组已验证文件。
+此脚本自动完成：漏洞审计与 CI → publish → Authenticode 签名 → Inno Setup → SHA256 → 更新 `latest.json` → ECDSA P-256 签名 → 启动烟测。`-ForceSmokeTest` 只应在一次性 Windows 虚拟机使用，因为它会安装发布包并可能替换现有本机版本。确认产物后提交并创建 `vX.Y.Z` 标签，推送 Git，再运行 `.\tools\deploy.ps1 -Server <ssh-user>@download.matrixlabs.cn` 原子上传该组已验证文件。
 
 ### 版本同步清单
 
@@ -272,7 +271,7 @@ TLAH Studio 采用分层架构，核心业务流程如下：
 | `TLAHStudio.Installer/latest.json` | `version` |
 | `TLAHStudio.Installer/setup.iss` | `#define MyAppVersion` |
 
-当前版本：**4.9.9**，语义化版本号 (`Major.Minor.Patch`)。
+当前版本：**4.12.0**，语义化版本号 (`Major.Minor.Patch`)。
 
 ### 更新机制
 
@@ -374,7 +373,10 @@ BackgroundTaskRecord
 
 ### 版本历史
 
-- **v4.9.9** — 当前版本：会话虚拟化与分页、异步加载稳定性、状态化输入栏与计划审阅体验
+- **v4.12.0** — 当前版本：Activity 生命周期/主题/缩放稳定性、窄屏 drawer、艺术化微交互与滚动性能
+- **v4.11.x** — Nocturne 视觉语言、图标与交互动效、Activity 稳定热修复
+- **v4.10.0** — 前端架构、可访问性和长会话性能的大型迭代
+- **v4.9.9** — 会话虚拟化与分页、异步加载稳定性、状态化输入栏与计划审阅体验
 - **v4.9.8** — Agent 权限/Plan 状态安全、版本化更新签名与发布验证加固
 - **v4.9.7** — 可靠性、安全依赖、后台任务、更新灰度与发布原子性修复
 - **v4.9.4–v4.9.6** — WinUI 消息渲染、输入交互和回归加固

@@ -1,14 +1,14 @@
 {
-  "version": "4.11.1",
+  "version": "4.12.0",
   "channel": "stable",
   "platform": "windows",
   "arch": "x64",
-  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.11.1.exe",
-  "sha256": "a06c9b0b807a3111040924aa326372faa0417a15d7134d04ebb6993d2153cc93",
-  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.11.1.json.sig",
-  "releaseNotes": "4.11.1\n\nHotfix:\n- Fixed the Activity panel reopening in the chat column instead of the right workbench column.\n- Restored Activity panel theme inheritance after close/reopen and theme changes.\n- Preserved the Nocturne motion system without applying composition offsets to grid-managed panels.",
+  "installerUrl": "https://download.matrixlabs.cn/tlah/windows/TLAHStudioSetup-4.12.0.exe",
+  "sha256": "d73ce7824cece0e5d9a24b0e766ee8a2dbece485f49126d29ee6d621dcd4bb20",
+  "signatureUrl": "https://download.matrixlabs.cn/tlah/windows/latest-4.12.0.json.sig",
+  "releaseNotes": "4.12.0\n\nStability:\n- Stabilized Activity lifecycle, right-workbench placement, live refresh, scaling, and theme inheritance.\n- Added responsive side-pane and narrow-window drawer behavior without zero-width layout churn.\n\nExperience:\n- Separated reasoning effort from tool permissions and refined anchored, single-surface composer popovers.\n- Added a centered responsive settings workspace and improved scrolling across conversations, sidebar, Activity, and Changes.",
   "forceUpdate": true,
   "minSupportedVersion": "4.9.7",
   "rolloutPercent": 100,
-  "installerSizeBytes": 98039248
+  "installerSizeBytes": 98075896
 }

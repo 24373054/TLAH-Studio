@@ -41,10 +41,10 @@ dotnet publish TLAHStudio.App/TLAHStudio.App.csproj -c Release -r win-x64 --self
 .\tools\ci.ps1 -Configuration Release -Platform x64
 
 # Release build + sign + verify + upload
-.\tools\build-release.ps1 -Version 4.9.8 -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate -ForceSmokeTest
+.\tools\build-release.ps1 -Version X.Y.Z -ReleaseNotes "<notes>" -CertificateThumbprint <thumbprint> -AllowUntrustedCertificate
 
 # Verify an existing release
-.\tools\verify-release.ps1 -Version 4.9.8 -AllowUntrustedAuthenticode
+.\tools\verify-release.ps1 -Version X.Y.Z -AllowUntrustedAuthenticode
 
 # Run a single test (filter by name)
 dotnet test TLAHStudio.Core.Tests/TLAHStudio.Core.Tests.csproj -c Release --filter "FullyQualifiedName~SkillLoaderV2Tests"
@@ -289,7 +289,7 @@ Version is stored in multiple places and must be kept in sync:
 - `TLAHStudio.Installer/version.json` and `TLAHStudio.Installer/latest.json`
 - `setup.iss` → `#define MyAppVersion`
 
-Semantic versioning (`Major.Minor.Patch`). Current: **4.9.8**. This release closes Agent permission/Plan state gaps, pins update manifests to immutable versioned signatures, and hardens release verification. The 5.0.0 Phase 2 (multi-agent orchestration) and 5.1+ Phase 3 (platform & differentiation) plans are the next milestones — see `docs/TLAH_5_0_PHASE2_ORCHESTRATION.md` and `docs/TLAH_5_1_PHASE3_PLATFORM.md`.
+Semantic versioning (`Major.Minor.Patch`). Current: **4.12.0**. This release combines Activity lifecycle, theme, scaling, and responsive-pane stability with reduced-motion-aware artistic interactions and long-list scrolling improvements. The 5.0.0 Phase 2 (multi-agent orchestration) and 5.1+ Phase 3 (platform & differentiation) plans are the next milestones — see `docs/TLAH_5_0_PHASE2_ORCHESTRATION.md` and `docs/TLAH_5_1_PHASE3_PLATFORM.md`.
 
 ## Key Architectural Patterns
 

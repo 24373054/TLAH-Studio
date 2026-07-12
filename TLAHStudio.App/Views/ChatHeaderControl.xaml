@@ -60,6 +60,7 @@
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
             <Button
+                x:Name="ThemeButton"
                 Click="Theme_Click"
                 Style="{StaticResource NocturneIconButtonStyle}"
                 ToolTipService.ToolTip="Toggle theme"
@@ -101,6 +102,7 @@
                 </StackPanel>
             </Button>
             <Button
+                x:Name="MoreButton"
                 Style="{StaticResource NocturneIconButtonStyle}"
                 ToolTipService.ToolTip="More workspace controls"
                 AutomationProperties.Name="More workspace controls">

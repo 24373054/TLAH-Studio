@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -16,18 +18,26 @@ public sealed partial class AgentActivityPanelControl : UserControl
     private IUiDensityService? _densityService;
     private IInteractionSoundService? _sound;
     private bool _renderQueued;
+    private bool _fullRefreshQueued;
+    private bool _subscriptionsAttached;
+    private bool _panelActive;
     private readonly HashSet<Guid> _expandedRuns = new();
     private readonly HashSet<Guid> _collapsedRuns = new();
     private readonly Dictionary<Guid, Expander> _runExpanders = new();
-    private readonly Dictionary<Guid, string> _runContentSignatures = new();
+    private readonly Dictionary<Guid, int> _runHeaderSignatures = new();
+    private readonly Dictionary<Guid, int> _runContentSignatures = new();
 
     private BindableCollectionAdapter<AgentActivityRun>? _activityItems;
+    private DispatcherQueueTimer? _renderTimer;
+
     public AgentActivityPanelControl()
     {
         App.Log("AgentActivityPanelControl ctor entered.");
         InitializeComponent();
         App.Log("AgentActivityPanelControl XAML initialized.");
-        ActualThemeChanged += (_, _) => RequestRender(immediate: true);
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+        ActualThemeChanged += OnActualThemeChanged;
         ActivityRepeater.ItemTemplate = new ActivityRunElementFactory(this);
     }
 
@@ -36,23 +46,120 @@ public sealed partial class AgentActivityPanelControl : UserControl
         IUiDensityService densityService,
         IInteractionSoundService sound)
     {
+        DetachSubscriptions();
+        DisposeActivityItems();
+        ClearRunElements(clearExpansionState: true);
+
         _vm = vm;
         _densityService = densityService;
         _sound = sound;
-        _vm.AgentActivityChanged += (_, _) => RequestRender();
+        if (_panelActive)
+        {
+            AttachSubscriptions();
+            EnsureActivityItems();
+            RequestRender(immediate: true, fullRefresh: true);
+        }
+    }
+
+    public void SetPanelActive(bool active)
+    {
+        if (_panelActive == active)
+            return;
+
+        _panelActive = active;
+        if (active)
+        {
+            AttachSubscriptions();
+            EnsureActivityItems();
+            RequestRender(immediate: true, fullRefresh: true);
+        }
+        else
+        {
+            StopRenderTimer();
+            DetachSubscriptions();
+            DisposeActivityItems();
+            ClearRunElements();
+        }
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (_panelActive)
+        {
+            AttachSubscriptions();
+            EnsureActivityItems();
+            RequestRender(immediate: true, fullRefresh: true);
+        }
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        StopRenderTimer();
+        DetachSubscriptions();
+        DisposeActivityItems();
+        ClearRunElements();
+    }
+
+    private void OnActualThemeChanged(FrameworkElement sender, object args) =>
+        RequestRender(immediate: true, fullRefresh: true);
+
+    private void OnAgentActivityChanged(object? sender, EventArgs e) => RequestRender();
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
+            or nameof(ChatPageViewModel.AgentActivitySummary)
+            or nameof(ChatPageViewModel.HasAgentActivity))
+        {
+            RequestRender();
+        }
+    }
+
+    private void OnDensityChanged(object? sender, UiDensity density) =>
+        RequestRender(immediate: true, fullRefresh: true);
+
+    private void AttachSubscriptions()
+    {
+        if (_subscriptionsAttached || _vm == null || _densityService == null)
+            return;
+
+        _vm.AgentActivityChanged += OnAgentActivityChanged;
+        _vm.PropertyChanged += OnViewModelPropertyChanged;
+        _densityService.DensityChanged += OnDensityChanged;
+        _subscriptionsAttached = true;
+    }
+
+    private void DetachSubscriptions()
+    {
+        if (!_subscriptionsAttached)
+            return;
+
+        if (_vm != null)
+        {
+            _vm.AgentActivityChanged -= OnAgentActivityChanged;
+            _vm.PropertyChanged -= OnViewModelPropertyChanged;
+        }
+
+        if (_densityService != null)
+            _densityService.DensityChanged -= OnDensityChanged;
+
+        _subscriptionsAttached = false;
+    }
+
+    private void EnsureActivityItems()
+    {
+        if (_activityItems != null || _vm == null)
+            return;
+
         _activityItems = new BindableCollectionAdapter<AgentActivityRun>(_vm.AgentActivityRuns);
         ActivityRepeater.ItemsSource = _activityItems;
-        _vm.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName is nameof(ChatPageViewModel.CurrentChat)
-                or nameof(ChatPageViewModel.AgentActivitySummary)
-                or nameof(ChatPageViewModel.HasAgentActivity))
-            {
-                RequestRender();
-            }
-        };
-        _densityService.DensityChanged += (_, _) => DispatcherQueue.TryEnqueue(() => RequestRender(immediate: true));
-        RequestRender(immediate: true);
+    }
+
+    private void DisposeActivityItems()
+    {
+        ActivityRepeater.ItemsSource = null;
+        _activityItems?.Dispose();
+        _activityItems = null;
     }
 
     private void Collapse_Click(object sender, RoutedEventArgs e)
@@ -62,11 +169,17 @@ public sealed partial class AgentActivityPanelControl : UserControl
             window.ToggleAgentActivityPanel(false);
     }
 
-    private void RequestRender(bool immediate = false)
+    private void RequestRender(bool immediate = false, bool fullRefresh = false)
     {
-        if (immediate)
+        if (!_panelActive)
+            return;
+
+        _fullRefreshQueued |= fullRefresh;
+
+        if (immediate && DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(Render);
+            StopRenderTimer();
+            FlushRender();
             return;
         }
 
@@ -74,15 +187,61 @@ public sealed partial class AgentActivityPanelControl : UserControl
             return;
 
         _renderQueued = true;
-        _ = Task.Run(async () =>
+        if (immediate)
         {
-            await Task.Delay(40);
-            DispatcherQueue.TryEnqueue(() =>
+            if (!DispatcherQueue.TryEnqueue(FlushRender))
             {
                 _renderQueued = false;
-                Render();
-            });
-        });
+                _fullRefreshQueued = false;
+            }
+            return;
+        }
+
+        _renderTimer ??= CreateRenderTimer();
+        _renderTimer.Stop();
+        _renderTimer.Start();
+    }
+
+    private DispatcherQueueTimer CreateRenderTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(64);
+        timer.IsRepeating = false;
+        timer.Tick += OnRenderTimerTick;
+        return timer;
+    }
+
+    private void OnRenderTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+        FlushRender();
+    }
+
+    private void StopRenderTimer()
+    {
+        _renderTimer?.Stop();
+        _renderQueued = false;
+    }
+
+    private void FlushRender()
+    {
+        _renderQueued = false;
+        var fullRefresh = _fullRefreshQueued;
+        _fullRefreshQueued = false;
+
+        if (fullRefresh)
+            RebuildGeneratedElements();
+
+        Render();
+    }
+
+    private void RebuildGeneratedElements()
+    {
+        ActivityEmptyStateHost.Content = null;
+        ActivityRepeater.ItemsSource = null;
+        ClearRunElements();
+        if (_activityItems != null)
+            ActivityRepeater.ItemsSource = _activityItems;
     }
 
     private void Render()
@@ -104,26 +263,67 @@ public sealed partial class AgentActivityPanelControl : UserControl
         }
 
         ActivityEmptyStateHost.Content = null;
+        if (ActivityRepeater.ItemsSource == null && _activityItems != null)
+            ActivityRepeater.ItemsSource = _activityItems;
         ActivityScrollViewer.Visibility = Visibility.Visible;
         var activeRunIds = _vm.AgentActivityRuns.Select(run => run.Id).ToHashSet();
-        foreach (var staleId in _runExpanders.Keys.Where(id => !activeRunIds.Contains(id)).ToArray())
+        PruneRunState(activeRunIds);
+
+        foreach (var (runId, expander) in _runExpanders.ToArray())
         {
-            _runExpanders.Remove(staleId);
-            _runContentSignatures.Remove(staleId);
+            var run = _vm.AgentActivityRuns.FirstOrDefault(candidate => candidate.Id == runId);
+            if (run != null)
+                UpdateRunExpander(expander, run);
         }
+    }
+
+    private void PruneRunState(HashSet<Guid> activeRunIds)
+    {
+        foreach (var staleId in _runExpanders.Keys.Where(id => !activeRunIds.Contains(id)).ToArray())
+            RemoveRunElement(staleId, _runExpanders[staleId]);
+
+        _expandedRuns.RemoveWhere(id => !activeRunIds.Contains(id));
+        _collapsedRuns.RemoveWhere(id => !activeRunIds.Contains(id));
     }
 
     private void ShowEmptyState(string title, string body)
     {
+        ActivityRepeater.ItemsSource = null;
         ClearRunElements();
         ActivityScrollViewer.Visibility = Visibility.Collapsed;
         ActivityEmptyStateHost.Content = BuildEmptyState(title, body);
     }
 
-    private void ClearRunElements()
+    private void ClearRunElements(bool clearExpansionState = false)
     {
         _runExpanders.Clear();
+        _runHeaderSignatures.Clear();
         _runContentSignatures.Clear();
+        if (clearExpansionState)
+        {
+            _expandedRuns.Clear();
+            _collapsedRuns.Clear();
+        }
+    }
+
+    private void RecycleRunElement(UIElement element)
+    {
+        if (element is not Expander expander || expander.Tag is not Guid runId)
+            return;
+
+        RemoveRunElement(runId, expander);
+    }
+
+    private void RemoveRunElement(Guid runId, Expander expander)
+    {
+        if (_runExpanders.TryGetValue(runId, out var cached) && ReferenceEquals(cached, expander))
+            _runExpanders.Remove(runId);
+
+        _runHeaderSignatures.Remove(runId);
+        _runContentSignatures.Remove(runId);
+        expander.Header = null;
+        expander.Content = null;
+        expander.Tag = null;
     }
 
     private UIElement BuildEmptyState(string title, string body)
@@ -157,23 +357,36 @@ public sealed partial class AgentActivityPanelControl : UserControl
     {
         if (_runExpanders.TryGetValue(run.Id, out var expander))
         {
-            expander.Header = BuildRunHeader(run);
-            UpdateExpandedRunContent(expander, run);
-            expander.Background = RunBackgroundBrush(run);
-            expander.BorderBrush = run.IsActive ? AccentSubtleBrush() : PanelBorderBrush();
+            UpdateRunExpander(expander, run);
             return expander;
         }
 
         expander = BuildRunExpander(run, index);
         _runExpanders[run.Id] = expander;
+        _runHeaderSignatures[run.Id] = RunHeaderSignature(run);
         return expander;
+    }
+
+    private void UpdateRunExpander(Expander expander, AgentActivityRun run)
+    {
+        var signature = RunHeaderSignature(run);
+        if (!_runHeaderSignatures.TryGetValue(run.Id, out var current) || current != signature)
+        {
+            expander.Header = BuildRunHeader(run);
+            expander.Background = RunBackgroundBrush(run);
+            expander.BorderBrush = run.IsActive ? AccentSubtleBrush() : PanelBorderBrush();
+            _runHeaderSignatures[run.Id] = signature;
+        }
+        UpdateExpandedRunContent(expander, run);
     }
 
     private Expander BuildRunExpander(AgentActivityRun run, int index)
     {
+        var runId = run.Id;
         var isExpanded = ShouldExpand(run, index);
         var expander = new Expander
         {
+            Tag = runId,
             IsExpanded = isExpanded,
             Header = BuildRunHeader(run),
             Content = isExpanded ? BuildRunContent(run) : null,
@@ -187,14 +400,14 @@ public sealed partial class AgentActivityPanelControl : UserControl
             _runContentSignatures[run.Id] = RunContentSignature(run);
         expander.Expanding += (_, _) =>
         {
-            _expandedRuns.Add(run.Id);
-            _collapsedRuns.Remove(run.Id);
-            RefreshExpandedRunContent(run.Id, expander);
+            _expandedRuns.Add(runId);
+            _collapsedRuns.Remove(runId);
+            RefreshExpandedRunContent(runId, expander);
         };
         expander.Collapsed += (_, _) =>
         {
-            _collapsedRuns.Add(run.Id);
-            _expandedRuns.Remove(run.Id);
+            _collapsedRuns.Add(runId);
+            _expandedRuns.Remove(runId);
         };
         return expander;
     }
@@ -226,11 +439,24 @@ public sealed partial class AgentActivityPanelControl : UserControl
         _runContentSignatures[run.Id] = signature;
     }
 
-    private static string RunContentSignature(AgentActivityRun run)
+    private static int RunContentSignature(AgentActivityRun run)
     {
-        var last = run.Lines.LastOrDefault();
-        return $"{run.Status}|{run.TimeText}|{run.Tasks.Count}|{run.Lines.Count}|{last?.SequenceNumber}|{last?.Text}";
+        var hash = new HashCode();
+        hash.Add(run.StatusText, StringComparer.Ordinal);
+        hash.Add(run.TimeText, StringComparer.Ordinal);
+        hash.Add(run.ErrorMessage, StringComparer.Ordinal);
+
+        foreach (var task in run.Tasks)
+            hash.Add(task);
+
+        foreach (var line in run.Lines)
+            hash.Add(line);
+
+        return hash.ToHashCode();
     }
+
+    private static int RunHeaderSignature(AgentActivityRun run) =>
+        HashCode.Combine(run.DisplayTitle, run.StatusText, run.TimeText, run.Status, run.IsActive);
 
     private bool ShouldExpand(AgentActivityRun run, int index)
     {
@@ -594,9 +820,7 @@ public sealed partial class AgentActivityPanelControl : UserControl
 
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
 
-    private bool IsLightTheme() =>
-        App.MainWindow is MainWindow window &&
-        window.CurrentAppTheme == Microsoft.UI.Xaml.ElementTheme.Light;
+    private bool IsLightTheme() => ActualTheme == Microsoft.UI.Xaml.ElementTheme.Light;
 
     private Color ThemeColor(Color light, Color dark) => IsLightTheme() ? light : dark;
 
@@ -626,78 +850,106 @@ public sealed partial class AgentActivityPanelControl : UserControl
             Color.FromArgb(0xEE, 0xFF, 0xFE, 0xFC),
             Color.FromArgb(0xCA, 0x11, 0x14, 0x1D));
 
-    // M4.9.4: Status brushes now resolve from theme tokens (Success/Warning/
-    // Info/Danger) instead of hardcoded hex, so they honor theme switching.
     private SolidColorBrush StatusBrush(string status)
     {
-        var key = status switch
+        return status switch
         {
-            AgentRunStatuses.Completed => "SuccessSurfaceBrush",
-            AgentRunStatuses.Failed => "DangerSurfaceBrush",
-            AgentRunStatuses.Cancelled => "SurfaceElevatedBrush",
-            AgentRunStatuses.AwaitingApproval => "WarningSurfaceBrush",
-            _ => "InfoSurfaceBrush"
+            AgentRunStatuses.Completed => SuccessSurfaceBrush(),
+            AgentRunStatuses.Failed => DangerSurfaceBrush(),
+            AgentRunStatuses.Cancelled => NeutralSurfaceBrush(),
+            AgentRunStatuses.AwaitingApproval => WarningSurfaceBrush(),
+            _ => InfoSurfaceBrush()
         };
-        return (SolidColorBrush)Application.Current.Resources[key];
     }
 
     private SolidColorBrush StatusTextBrush(string status)
     {
-        var key = status switch
+        return status switch
         {
-            AgentRunStatuses.Completed => "SuccessBrush",
-            AgentRunStatuses.Failed => "DangerBrush",
-            AgentRunStatuses.AwaitingApproval => "WarningBrush",
-            _ => "InfoBrush"
+            AgentRunStatuses.Completed => SuccessTextBrush(),
+            AgentRunStatuses.Failed => DangerTextBrush(),
+            AgentRunStatuses.AwaitingApproval => WarningTextBrush(),
+            _ => InfoTextBrush()
         };
-        return (SolidColorBrush)Application.Current.Resources[key];
     }
 
     private SolidColorBrush ProgressTagBrush(string severity)
     {
-        var key = severity switch
+        return severity switch
         {
-            AgentEventSeverities.Error => "DangerSurfaceBrush",
-            AgentEventSeverities.Warning => "WarningSurfaceBrush",
-            _ => "InfoSurfaceBrush"
+            AgentEventSeverities.Error => DangerSurfaceBrush(),
+            AgentEventSeverities.Warning => WarningSurfaceBrush(),
+            _ => InfoSurfaceBrush()
         };
-        return (SolidColorBrush)Application.Current.Resources[key];
     }
 
     private SolidColorBrush ProgressTagTextBrush(string severity)
     {
-        var key = severity switch
+        return severity switch
         {
-            AgentEventSeverities.Error => "DangerBrush",
-            AgentEventSeverities.Warning => "WarningBrush",
-            _ => "InfoBrush"
+            AgentEventSeverities.Error => DangerTextBrush(),
+            AgentEventSeverities.Warning => WarningTextBrush(),
+            _ => InfoTextBrush()
         };
-        return (SolidColorBrush)Application.Current.Resources[key];
     }
 
     private SolidColorBrush TaskStatusBrush(string status)
     {
-        var key = status switch
+        return status switch
         {
-            AgentTaskStatuses.Completed => "SuccessSurfaceBrush",
-            AgentTaskStatuses.Blocked => "WarningSurfaceBrush",
-            AgentTaskStatuses.Cancelled => "SurfaceElevatedBrush",
-            AgentTaskStatuses.InProgress => "InfoSurfaceBrush",
-            _ => "SurfaceBrush"
+            AgentTaskStatuses.Completed => SuccessSurfaceBrush(),
+            AgentTaskStatuses.Blocked => WarningSurfaceBrush(),
+            AgentTaskStatuses.Cancelled => NeutralSurfaceBrush(),
+            AgentTaskStatuses.InProgress => InfoSurfaceBrush(),
+            _ => NeutralSurfaceBrush()
         };
-        return (SolidColorBrush)Application.Current.Resources[key];
     }
 
     private SolidColorBrush TaskStatusTextBrush(string status)
     {
-        var key = status switch
+        return status switch
         {
-            AgentTaskStatuses.Completed => "SuccessBrush",
-            AgentTaskStatuses.Blocked => "WarningBrush",
-            _ => "InfoBrush"
+            AgentTaskStatuses.Completed => SuccessTextBrush(),
+            AgentTaskStatuses.Blocked => WarningTextBrush(),
+            _ => InfoTextBrush()
         };
-        return (SolidColorBrush)Application.Current.Resources[key];
     }
+
+    private SolidColorBrush SuccessSurfaceBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0xE0, 0xF6, 0xEF),
+        Color.FromArgb(0x20, 0x30, 0x3C, 0x35));
+
+    private SolidColorBrush SuccessTextBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0x00, 0x8A, 0x78),
+        Color.FromArgb(0xFF, 0x48, 0xC6, 0xA3));
+
+    private SolidColorBrush DangerSurfaceBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0xFF, 0xE8, 0xEC),
+        Color.FromArgb(0x3D, 0x6B, 0x26, 0x31));
+
+    private SolidColorBrush DangerTextBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0xD6, 0x4B, 0x63),
+        Color.FromArgb(0xFF, 0xFA, 0x8A, 0x9A));
+
+    private SolidColorBrush WarningSurfaceBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0xFE, 0xF3, 0xC7),
+        Color.FromArgb(0x3D, 0x3D, 0x30, 0x1B));
+
+    private SolidColorBrush WarningTextBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0xB4, 0x53, 0x09),
+        Color.FromArgb(0xFF, 0xE6, 0xBC, 0x62));
+
+    private SolidColorBrush InfoSurfaceBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0xEA, 0xE8, 0xFF),
+        Color.FromArgb(0x23, 0x2A, 0x25, 0x4D));
+
+    private SolidColorBrush InfoTextBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0x66, 0x5C, 0xD7),
+        Color.FromArgb(0xFF, 0x90, 0x85, 0xFF));
+
+    private SolidColorBrush NeutralSurfaceBrush() => ThemeBrush(
+        Color.FromArgb(0xFF, 0xFF, 0xFE, 0xFC),
+        Color.FromArgb(0xFF, 0x20, 0x25, 0x32));
 
     private static string TaskStatusLabel(string status) => status switch
     {
@@ -773,8 +1025,9 @@ public sealed partial class AgentActivityPanelControl : UserControl
 
         public void RecycleElement(ElementFactoryRecycleArgs args)
         {
-            // Cached expanders retain user expansion state while the repeater
-            // realizes only the portion of the activity history on screen.
+            // Expansion intent is stored separately; release the generated
+            // tree so virtualization can reclaim headers, previews, and brushes.
+            _owner.RecycleRunElement(args.Element);
         }
     }
 }
