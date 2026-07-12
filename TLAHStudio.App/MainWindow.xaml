@@ -9,12 +9,6 @@
         x:Name="RootGrid"
         Background="{ThemeResource AppBackgroundBrush}"
         AutomationProperties.Name="TLAH Studio workspace">
-        <Grid.ChildrenTransitions>
-            <TransitionCollection>
-                <EntranceThemeTransition FromVerticalOffset="10" IsStaggeringEnabled="False" />
-                <RepositionThemeTransition />
-            </TransitionCollection>
-        </Grid.ChildrenTransitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />

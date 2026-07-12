@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using TLAHStudio.App.Infrastructure;
 using TLAHStudio.App.ViewModels;
 
 namespace TLAHStudio.App.Views;
@@ -15,6 +16,10 @@ public sealed partial class ChatHeaderControl : UserControl
         App.Log("ChatHeaderControl ctor entered.");
         InitializeComponent();
         App.Log("ChatHeaderControl XAML initialized.");
+        NocturneMotion.AttachPressFeedback(ThemeButton);
+        NocturneMotion.AttachPressFeedback(ActivityButton);
+        NocturneMotion.AttachPressFeedback(ChangesButton);
+        NocturneMotion.AttachPressFeedback(MoreButton);
         Loaded += OnLoaded;
     }
 

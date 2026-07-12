@@ -7,566 +7,824 @@
     CloseButtonText="Cancel"
     PrimaryButtonClick="Save_Click"
     Background="{ThemeResource DialogSurfaceBrush}"
-    Width="700"
-    MaxHeight="760">
+    HorizontalAlignment="Center"
+    VerticalAlignment="Center">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Spacing="14" Padding="8,4,8,8">
-            <Border
-                HorizontalAlignment="Left"
-                Padding="3"
-                Background="{ThemeResource PanelAltBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <StackPanel Orientation="Horizontal" Spacing="3">
-                    <Button
-                        x:Name="GlobalTabButton"
-                        Tag="global"
-                        Click="Scope_Click"
-                        Content="All Chats"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        CornerRadius="6"
-                        Padding="16,8" />
-                    <Button
-                        x:Name="ChatTabButton"
-                        Tag="chat"
-                        Click="Scope_Click"
-                        Content="This Chat"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        CornerRadius="6"
-                        Padding="16,8" />
+    <ContentDialog.Resources>
+        <!-- The WinUI presenter otherwise clamps dialogs to its compact default
+             while our two-column content keeps measuring wider. -->
+        <x:Double x:Key="ContentDialogMaxWidth">1120</x:Double>
+        <x:Double x:Key="ContentDialogMaxHeight">920</x:Double>
+        <Style x:Key="SettingsNavButtonStyle" TargetType="Button">
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+        </Style>
+        <Style x:Key="SettingsSectionStyle" TargetType="Border">
+            <Setter Property="Padding" Value="20,18" />
+            <Setter Property="Background" Value="{ThemeResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource BorderSubtleBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+        </Style>
+        <Style x:Key="SettingsFieldLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <Grid
+        x:Name="SettingsLayoutRoot"
+        Width="960"
+        Height="680"
+        MinWidth="0"
+        MinHeight="0"
+        Background="{ThemeResource DialogSurfaceBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="SettingsNavColumn" Width="220" />
+            <ColumnDefinition Width="1" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border
+            Grid.Column="0"
+            Margin="-4,-4,0,-4"
+            Padding="10,8,14,12"
+            Background="{ThemeResource PanelAltBrush}"
+            CornerRadius="12,0,0,12">
+            <Grid RowSpacing="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Spacing="3" Padding="4,2,4,0">
+                    <TextBlock
+                        Text="Preferences"
+                        FontSize="20"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource TextPrimaryBrush}" />
+                    <TextBlock
+                        Text="Tune your agent workspace"
+                        FontSize="12"
+                        Foreground="{ThemeResource TextMutedBrush}" />
                 </StackPanel>
-            </Border>
 
-            <Border
-                Padding="12,10"
-                Background="{ThemeResource AccentSoftBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <TextBlock
-                x:Name="ScopeHint"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                TextWrapping="Wrap" />
-            </Border>
+                <AutoSuggestBox
+                    x:Name="SettingsSearchBox"
+                    Grid.Row="1"
+                    QueryIcon="Find"
+                    PlaceholderText="Search settings"
+                    TextChanged="SettingsSearch_TextChanged"
+                    AutomationProperties.Name="Search settings" />
 
-            <Border
-                x:Name="GlobalForm"
-                Padding="14"
-                Background="{ThemeResource SurfaceBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                BorderThickness="1"
-                CornerRadius="8">
-                <StackPanel Spacing="10">
-                    <TextBlock Text="Connection defaults" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                    <TextBlock Text="Used by every chat unless a chat-level override is set." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                    <Border
-                        Padding="12"
-                        Background="{ThemeResource PanelAltBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        BorderThickness="1"
-                        CornerRadius="8">
-                        <Grid RowSpacing="10">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="2">
-                                    <TextBlock Text="Soundscape" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                                    <TextBlock Text="Short, generated interaction sounds for send, complete, navigation, and safety prompts." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <ToggleSwitch
-                                    x:Name="SoundEffectsToggle"
-                                    Grid.Column="1"
-                                    OnContent="On"
-                                    OffContent="Off"
-                                    AutomationProperties.Name="Sound effects" />
-                            </Grid>
-                            <Grid Grid.Row="1" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock
-                                    Text="Volume"
-                                    VerticalAlignment="Center"
-                                    Foreground="{ThemeResource TextSecondaryBrush}" />
-                                <Slider
-                                    x:Name="SoundVolumeSlider"
-                                    Grid.Column="1"
-                                    Minimum="0"
-                                    Maximum="1"
-                                    StepFrequency="0.05"
-                                    AutomationProperties.Name="Sound volume" />
-                            </Grid>
-                        </Grid>
-                    </Border>
-
-                    <!-- M4.7.0: UI Appearance card -->
-                    <Border
-                        Padding="12"
-                        Background="{ThemeResource PanelAltBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        BorderThickness="1"
-                        CornerRadius="8">
-                        <Grid RowSpacing="10">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid Row="0" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="160" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="2">
-                                    <TextBlock Text="Theme" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                                    <TextBlock Text="Light or dark application appearance." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
-                                </StackPanel>
-                                <ComboBox
-                                    x:Name="ThemeCombo"
-                                    Grid.Column="1"
-                                    SelectionChanged="ThemeCombo_SelectionChanged"
-                                    AutomationProperties.Name="Theme selector" />
-                            </Grid>
-                            <Grid Row="1" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="160" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="2">
-                                    <TextBlock Text="Density" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                                    <TextBlock Text="Comfortable provides more spacing; Compact fits more content." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
-                                </StackPanel>
-                                <ComboBox
-                                    x:Name="DensityCombo"
-                                    Grid.Column="1"
-                                    SelectionChanged="DensityCombo_SelectionChanged"
-                                    AutomationProperties.Name="Density selector" />
-                            </Grid>
-                            <!-- M4.9.0: Output style selector -->
-                            <Grid Row="2" ColumnSpacing="12" Margin="0,10,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="160" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Spacing="2">
-                                    <TextBlock Text="Output Style" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                                    <TextBlock Text="Changes how the assistant explains and interacts." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" FontSize="12" />
-                                </StackPanel>
-                                <ComboBox
-                                    x:Name="OutputStyleCombo"
-                                    Grid.Column="1"
-                                    SelectionChanged="OutputStyleCombo_SelectionChanged"
-                                    AutomationProperties.Name="Output style selector" />
-                            </Grid>
-                        </Grid>
-                    </Border>
-
-                <!-- M4.9.0: Skills management -->
-                <Border Padding="16,14" Margin="0,12,0,0"
-                        Background="{ThemeResource SurfaceElevatedBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        BorderThickness="1" CornerRadius="8">
-                    <StackPanel Spacing="10">
-                        <StackPanel Spacing="2">
-                            <TextBlock Text="Skills" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                            <TextBlock x:Name="SkillsSummaryText" Text="Loading..." FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
-                            <ItemsControl x:Name="SkillsListControl">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,3">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Spacing="1">
-                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                                                <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" />
-                                            </StackPanel>
-                                            <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Margin="8,0,0,0"
-                                                    Background="{ThemeResource BorderSubtleBrush}">
-                                                <TextBlock Text="{Binding Source}" FontSize="10" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                            </Border>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
-                        <StackPanel Spacing="6">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button x:Name="OpenBundledSkillsButton" Click="OpenBundledSkills_Click"
-                                        Background="{ThemeResource SurfaceElevatedBrush}"
-                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                                        CornerRadius="6" Padding="10,6">
-                                    <TextBlock Text="Open Bundled (built-in)" FontSize="12" />
-                                </Button>
-                                <Button x:Name="OpenUserSkillsButton" Click="OpenUserSkills_Click"
-                                        Background="{ThemeResource SurfaceElevatedBrush}"
-                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                                        CornerRadius="6" Padding="10,6">
-                                    <TextBlock Text="Open User" FontSize="12" />
-                                </Button>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button x:Name="OpenProjectSkillsButton" Click="OpenProjectSkills_Click"
-                                        Background="{ThemeResource SurfaceElevatedBrush}"
-                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                                        CornerRadius="6" Padding="10,6">
-                                    <TextBlock Text="Open Project (.tlah/skills)" FontSize="12" />
-                                </Button>
-                                <Button x:Name="ReloadSkillsButton" Click="ReloadSkills_Click"
-                                        Background="{ThemeResource SurfaceElevatedBrush}"
-                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                                        CornerRadius="6" Padding="10,6">
-                                    <TextBlock Text="Reload" FontSize="12" />
-                                </Button>
-                            </StackPanel>
-                        </StackPanel>
-                    </StackPanel>
+                <Border
+                    Grid.Row="2"
+                    Padding="3"
+                    Background="{ThemeResource SurfaceBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    BorderThickness="1"
+                    CornerRadius="10">
+                    <Grid ColumnSpacing="3">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button
+                            x:Name="GlobalTabButton"
+                            Tag="global"
+                            Click="Scope_Click"
+                            Content="All chats"
+                            MinHeight="34"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="7"
+                            Padding="8,5"
+                            AutomationProperties.Name="Edit defaults for all chats" />
+                        <Button
+                            x:Name="ChatTabButton"
+                            Grid.Column="1"
+                            Tag="chat"
+                            Click="Scope_Click"
+                            Content="This chat"
+                            MinHeight="34"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="7"
+                            Padding="8,5"
+                            AutomationProperties.Name="Edit settings for this chat" />
+                    </Grid>
                 </Border>
 
-                <TextBlock Text="Provider" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <ComboBox
-                    x:Name="ProviderCombo"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8"
-                    DisplayMemberPath="Name" />
-
-                <TextBlock Text="API Key" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <PasswordBox
-                        x:Name="ApiKeyBox"
-                        PasswordRevealMode="Peek"
-                        Grid.Column="0"
-                        PlaceholderText="sk-..."
-                        Background="{ThemeResource InputBackgroundBrush}"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        CornerRadius="8" />
-                    <Button
-                        Grid.Column="1"
-                        Click="TestGlobal_Click"
-                        Padding="10,7"
-                        CornerRadius="8"
-                        ToolTipService.ToolTip="Test connection">
-                        <SymbolIcon Symbol="Sync" />
-                    </Button>
-                    <Button
-                        Grid.Column="2"
-                        Click="ClearGlobalKey_Click"
-                        Padding="10,7"
-                        CornerRadius="8"
-                        ToolTipService.ToolTip="Clear saved API key">
-                        <SymbolIcon Symbol="Cancel" />
-                    </Button>
-                </Grid>
-
-                <TextBlock Text="Base URL" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="BaseUrlBox"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-
-                <TextBlock Text="Model" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="220" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox
-                        x:Name="ModelBox"
-                        Grid.Column="0"
-                        InputScope="Text"
-                        Background="{ThemeResource InputBackgroundBrush}"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        CornerRadius="8" />
-                    <ComboBox
-                        x:Name="ModelPicker"
-                        Grid.Column="1"
-                        PlaceholderText="Detected models"
-                        SelectionChanged="ModelPicker_SelectionChanged"
-                        Background="{ThemeResource InputBackgroundBrush}"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        CornerRadius="8" />
-                    <Button
-                        Grid.Column="2"
-                        Click="RefreshGlobalModels_Click"
-                        Padding="10,7"
-                        CornerRadius="8"
-                        ToolTipService.ToolTip="Refresh model list">
-                        <SymbolIcon Symbol="Sync" />
-                    </Button>
-                </Grid>
-                <CheckBox
-                    x:Name="DeepSeekLongContextCheckBox"
-                    Content="Use DeepSeek 1M context budget"
-                    Checked="DeepSeekLongContext_Changed"
-                    Unchecked="DeepSeekLongContext_Changed"
-                    Foreground="{ThemeResource TextSecondaryBrush}" />
-
-                <TextBlock Text="Thinking Depth" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <ComboBox
-                    x:Name="ThinkingDepthCombo"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-
-                <TextBlock Text="Temperature" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <Slider
-                        x:Name="TempSlider"
-                        Grid.Column="0"
-                        Minimum="0"
-                        Maximum="2"
-                        StepFrequency="0.1"
-                        ValueChanged="TempSlider_ValueChanged" />
-                    <!-- M4.7.0: Live temperature value label -->
+                <ScrollViewer
+                    Grid.Row="3"
+                    VerticalScrollMode="Enabled"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollMode="Disabled"
+                    HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="3">
                     <TextBlock
-                        x:Name="TempValueLabel"
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        MinWidth="32"
-                        TextAlignment="Right"
-                        FontSize="13"
+                        Margin="12,8,0,5"
+                        Text="CATEGORIES"
+                        FontSize="11"
                         FontWeight="SemiBold"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        Text="0.7" />
-                </Grid>
-
-                <TextBlock Text="Max Tokens" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <NumberBox
-                    x:Name="MaxTokensBox"
-                    Minimum="1"
-                    Maximum="128000" />
-
-                <TextBlock Text="System Prompt" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="SysPromptBox"
-                    AcceptsReturn="True"
-                    InputScope="Text"
-                    MinHeight="96"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-
-                <TextBlock Text="User Role" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="UserRoleBox"
-                    InputScope="Text"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
+                        Foreground="{ThemeResource TextMutedBrush}" />
+                    <Button
+                        x:Name="AppearanceNavButton"
+                        Tag="appearance"
+                        Click="SettingsCategory_Click"
+                        Style="{StaticResource SettingsNavButtonStyle}"
+                        AutomationProperties.Name="Appearance settings">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <SymbolIcon Symbol="View" />
+                            <TextBlock Text="Appearance" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="SoundNavButton"
+                        Tag="sound"
+                        Click="SettingsCategory_Click"
+                        Style="{StaticResource SettingsNavButtonStyle}"
+                        AutomationProperties.Name="Sound settings">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <SymbolIcon Symbol="Volume" />
+                            <TextBlock Text="Sound" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="ConnectionNavButton"
+                        Tag="connection"
+                        Click="SettingsCategory_Click"
+                        Style="{StaticResource SettingsNavButtonStyle}"
+                        AutomationProperties.Name="Connection settings">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <SymbolIcon Symbol="Link" />
+                            <TextBlock Text="Connection" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="BehaviorNavButton"
+                        Tag="behavior"
+                        Click="SettingsCategory_Click"
+                        Style="{StaticResource SettingsNavButtonStyle}"
+                        AutomationProperties.Name="Agent behavior settings">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <SymbolIcon Symbol="Bullets" />
+                            <TextBlock Text="Agent behavior" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="SkillsNavButton"
+                        Tag="skills"
+                        Click="SettingsCategory_Click"
+                        Style="{StaticResource SettingsNavButtonStyle}"
+                        AutomationProperties.Name="Skills settings">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <SymbolIcon Symbol="Library" />
+                            <TextBlock Text="Skills" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="ChatSettingsNavButton"
+                        Tag="chat"
+                        Click="SettingsCategory_Click"
+                        Style="{StaticResource SettingsNavButtonStyle}"
+                        Visibility="Collapsed"
+                        AutomationProperties.Name="Current chat overrides">
+                        <StackPanel Orientation="Horizontal" Spacing="11">
+                            <SymbolIcon Symbol="Message" />
+                            <TextBlock Text="Chat overrides" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
-            </Border>
+                </ScrollViewer>
 
-            <!-- M4.7.0: Reset global settings to defaults -->
-            <HyperlinkButton
-                Content="Reset to defaults"
-                HorizontalAlignment="Right"
-                FontSize="12"
-                Click="ResetGlobal_Click"
-                AutomationProperties.Name="Reset settings to defaults" />
+                <TextBlock
+                    x:Name="SettingsFooterHint"
+                    Grid.Row="4"
+                    Margin="12,0,8,0"
+                    Text="Changes are applied when you save. Theme and density preview immediately."
+                    FontSize="11"
+                    Foreground="{ThemeResource TextMutedBrush}"
+                    TextWrapping="Wrap" />
+            </Grid>
+        </Border>
 
-            <Border
-                x:Name="ChatForm"
-                Padding="14"
-                Background="{ThemeResource SurfaceBrush}"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                BorderThickness="1"
-                CornerRadius="8"
-                Visibility="Collapsed">
-                <StackPanel Spacing="10">
-                    <TextBlock Text="Chat overrides" FontSize="16" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
-                    <TextBlock Text="Leave a value empty to inherit the corresponding global setting." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                <TextBlock Text="Provider Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <ComboBox
-                        x:Name="ChatProviderCombo"
-                        Grid.Column="0"
-                        Background="{ThemeResource InputBackgroundBrush}"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        CornerRadius="8"
-                        DisplayMemberPath="Name"
-                        PlaceholderText="Use global provider" />
-                    <Button
-                        Grid.Column="1"
-                        Click="ClearChatProvider_Click"
-                        Background="Transparent"
-                        Foreground="{ThemeResource TextMutedBrush}"
-                        BorderThickness="0"
-                        Padding="8,6"
-                        ToolTipService.ToolTip="Use global provider">
-                        <SymbolIcon Symbol="Cancel" />
-                    </Button>
+        <Border
+            Grid.Column="1"
+            Background="{ThemeResource BorderSubtleBrush}" />
+
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel x:Name="SettingsHeaderPanel" Margin="26,6,24,18" Spacing="5">
+                <TextBlock
+                    Text="Workspace settings"
+                    FontSize="22"
+                    FontWeight="SemiBold"
+                    Foreground="{ThemeResource TextPrimaryBrush}" />
+                <TextBlock
+                    x:Name="ScopeHint"
+                    Foreground="{ThemeResource TextSecondaryBrush}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.LiveSetting="Polite" />
+            </StackPanel>
+
+            <ScrollViewer
+                x:Name="SettingsScrollViewer"
+                Grid.Row="1"
+                Padding="26,0,24,20"
+                HorizontalScrollMode="Disabled"
+                HorizontalScrollBarVisibility="Disabled"
+                VerticalScrollMode="Enabled"
+                VerticalScrollBarVisibility="Auto"
+                IsTabStop="False">
+                <Grid>
+                    <StackPanel
+                        x:Name="GlobalForm"
+                        Spacing="14">
+                        <StackPanel.ChildrenTransitions>
+                            <TransitionCollection>
+                                <EntranceThemeTransition FromVerticalOffset="8" IsStaggeringEnabled="False" />
+                                <RepositionThemeTransition />
+                            </TransitionCollection>
+                        </StackPanel.ChildrenTransitions>
+
+                        <Border
+                            x:Name="AppearanceSection"
+                            Style="{StaticResource SettingsSectionStyle}"
+                            Tag="appearance theme light dark density compact comfortable output style assistant">
+                            <StackPanel Spacing="16">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Appearance" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Shape the visual rhythm and voice of the workspace." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Grid ColumnSpacing="18" RowSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition x:Name="AppearanceControlColumn" Width="180" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Theme" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Choose a light or dark canvas." Style="{StaticResource SettingsFieldLabelStyle}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ComboBox
+                                        x:Name="ThemeCombo"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Stretch"
+                                        SelectionChanged="ThemeCombo_SelectionChanged"
+                                        AutomationProperties.Name="Theme selector" />
+                                    <StackPanel Grid.Row="1" Spacing="2">
+                                        <TextBlock Text="Density" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Balance breathing room with information density." Style="{StaticResource SettingsFieldLabelStyle}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ComboBox
+                                        x:Name="DensityCombo"
+                                        Grid.Row="1"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Stretch"
+                                        SelectionChanged="DensityCombo_SelectionChanged"
+                                        AutomationProperties.Name="Density selector" />
+                                    <StackPanel Grid.Row="2" Spacing="2">
+                                        <TextBlock Text="Output style" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Choose how the assistant explains and collaborates." Style="{StaticResource SettingsFieldLabelStyle}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ComboBox
+                                        x:Name="OutputStyleCombo"
+                                        Grid.Row="2"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Stretch"
+                                        SelectionChanged="OutputStyleCombo_SelectionChanged"
+                                        AutomationProperties.Name="Output style selector" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            x:Name="SoundSection"
+                            Style="{StaticResource SettingsSectionStyle}"
+                            Tag="sound audio volume soundscape effects notification">
+                            <StackPanel Spacing="16">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Sound" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Subtle feedback for send, completion, navigation, and safety prompts." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Grid ColumnSpacing="18" RowSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Interaction soundscape" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Play short generated interaction sounds." Style="{StaticResource SettingsFieldLabelStyle}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ToggleSwitch
+                                        x:Name="SoundEffectsToggle"
+                                        Grid.Column="1"
+                                        OnContent="On"
+                                        OffContent="Off"
+                                        AutomationProperties.Name="Sound effects" />
+                                    <TextBlock
+                                        Grid.Row="1"
+                                        Text="Volume"
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource SettingsFieldLabelStyle}" />
+                                    <Slider
+                                        x:Name="SoundVolumeSlider"
+                                        Grid.Row="1"
+                                        Grid.Column="1"
+                                        MinWidth="120"
+                                        Minimum="0"
+                                        Maximum="1"
+                                        StepFrequency="0.05"
+                                        AutomationProperties.Name="Sound volume" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            x:Name="ConnectionSection"
+                            Style="{StaticResource SettingsSectionStyle}"
+                            Tag="connection provider api key base url model deepseek context detected models">
+                            <StackPanel Spacing="11">
+                                <StackPanel Spacing="3" Margin="0,0,0,4">
+                                    <TextBlock Text="Connection" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Defaults used by every chat unless an override is set." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Text="Provider" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <ComboBox
+                                    x:Name="ProviderCombo"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    DisplayMemberPath="Name" />
+                                <TextBlock Text="API key" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <PasswordBox
+                                        x:Name="ApiKeyBox"
+                                        PasswordRevealMode="Peek"
+                                        PlaceholderText="sk-..."
+                                        Background="{ThemeResource InputBackgroundBrush}"
+                                        Foreground="{ThemeResource TextPrimaryBrush}"
+                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                        CornerRadius="8"
+                                        AutomationProperties.Name="Global API key" />
+                                    <Button
+                                        Grid.Column="1"
+                                        Click="TestGlobal_Click"
+                                        MinWidth="36"
+                                        MinHeight="36"
+                                        Padding="9"
+                                        CornerRadius="8"
+                                        ToolTipService.ToolTip="Test connection"
+                                        AutomationProperties.Name="Test global connection">
+                                        <SymbolIcon Symbol="Sync" />
+                                    </Button>
+                                    <Button
+                                        Grid.Column="2"
+                                        Click="ClearGlobalKey_Click"
+                                        MinWidth="36"
+                                        MinHeight="36"
+                                        Padding="9"
+                                        CornerRadius="8"
+                                        ToolTipService.ToolTip="Clear saved API key"
+                                        AutomationProperties.Name="Clear saved API key">
+                                        <SymbolIcon Symbol="Cancel" />
+                                    </Button>
+                                </Grid>
+                                <TextBlock Text="Base URL" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <TextBox
+                                    x:Name="BaseUrlBox"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    AutomationProperties.Name="Global base URL" />
+                                <TextBlock Text="Model" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox
+                                        x:Name="ModelBox"
+                                        InputScope="Text"
+                                        Background="{ThemeResource InputBackgroundBrush}"
+                                        Foreground="{ThemeResource TextPrimaryBrush}"
+                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                        CornerRadius="8"
+                                        AutomationProperties.Name="Global model" />
+                                    <ComboBox
+                                        x:Name="ModelPicker"
+                                        Grid.Column="1"
+                                        PlaceholderText="Detected models"
+                                        SelectionChanged="ModelPicker_SelectionChanged"
+                                        Background="{ThemeResource InputBackgroundBrush}"
+                                        Foreground="{ThemeResource TextPrimaryBrush}"
+                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                        CornerRadius="8"
+                                        AutomationProperties.Name="Detected global models" />
+                                    <Button
+                                        Grid.Column="2"
+                                        Click="RefreshGlobalModels_Click"
+                                        MinWidth="36"
+                                        MinHeight="36"
+                                        Padding="9"
+                                        CornerRadius="8"
+                                        ToolTipService.ToolTip="Refresh model list"
+                                        AutomationProperties.Name="Refresh global model list">
+                                        <SymbolIcon Symbol="Sync" />
+                                    </Button>
+                                </Grid>
+                                <CheckBox
+                                    x:Name="DeepSeekLongContextCheckBox"
+                                    Content="Use DeepSeek 1M context budget"
+                                    Checked="DeepSeekLongContext_Changed"
+                                    Unchecked="DeepSeekLongContext_Changed"
+                                    Foreground="{ThemeResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            x:Name="BehaviorSection"
+                            Style="{StaticResource SettingsSectionStyle}"
+                            Tag="agent behavior thinking depth reasoning temperature max tokens system prompt user role">
+                            <StackPanel Spacing="11">
+                                <StackPanel Spacing="3" Margin="0,0,0,4">
+                                    <TextBlock Text="Agent behavior" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Tune reasoning, creativity, context, and the assistant role." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Text="Thinking depth" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <ComboBox
+                                    x:Name="ThinkingDepthCombo"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8" />
+                                <Grid ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Temperature" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                    <TextBlock
+                                        x:Name="TempValueLabel"
+                                        Grid.Column="1"
+                                        MinWidth="32"
+                                        Text="0.7"
+                                        TextAlignment="Right"
+                                        FontSize="13"
+                                        FontWeight="SemiBold"
+                                        Foreground="{ThemeResource TextPrimaryBrush}" />
+                                </Grid>
+                                <Slider
+                                    x:Name="TempSlider"
+                                    Minimum="0"
+                                    Maximum="2"
+                                    StepFrequency="0.1"
+                                    ValueChanged="TempSlider_ValueChanged"
+                                    AutomationProperties.Name="Temperature" />
+                                <TextBlock Text="Max tokens" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <NumberBox
+                                    x:Name="MaxTokensBox"
+                                    Minimum="1"
+                                    Maximum="128000"
+                                    AutomationProperties.Name="Maximum response tokens" />
+                                <TextBlock Text="System prompt" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <TextBox
+                                    x:Name="SysPromptBox"
+                                    AcceptsReturn="True"
+                                    InputScope="Text"
+                                    MinHeight="96"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    AutomationProperties.Name="System prompt" />
+                                <TextBlock Text="User role" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <TextBox
+                                    x:Name="UserRoleBox"
+                                    InputScope="Text"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    AutomationProperties.Name="User role" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border
+                            x:Name="SkillsSection"
+                            Style="{StaticResource SettingsSectionStyle}"
+                            Tag="skills bundled built-in user project reload workspace tlah">
+                            <StackPanel Spacing="12">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Skills" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock
+                                        x:Name="SkillsSummaryText"
+                                        Text="Loading..."
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextSecondaryBrush}"
+                                        TextWrapping="Wrap"
+                                        AutomationProperties.LiveSetting="Polite" />
+                                </StackPanel>
+                                <Border
+                                    Padding="12,8"
+                                    Background="{ThemeResource PanelAltBrush}"
+                                    CornerRadius="9">
+                                    <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl x:Name="SkillsListControl">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="0,5" ColumnSpacing="10">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Spacing="1">
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                                            <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                                        </StackPanel>
+                                                        <Border
+                                                            Grid.Column="1"
+                                                            Padding="7,2"
+                                                            Background="{ThemeResource SurfaceBrush}"
+                                                            CornerRadius="5">
+                                                            <TextBlock Text="{Binding Source}" FontSize="10" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                                        </Border>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Border>
+                                <Grid ColumnSpacing="8" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Button x:Name="OpenBundledSkillsButton" Click="OpenBundledSkills_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" CornerRadius="8" Padding="11,7" Content="Open bundled" />
+                                    <Button x:Name="OpenUserSkillsButton" Grid.Column="1" Click="OpenUserSkills_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" CornerRadius="8" Padding="11,7" Content="Open user" />
+                                    <Button x:Name="OpenProjectSkillsButton" Grid.Row="1" Click="OpenProjectSkills_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" CornerRadius="8" Padding="11,7" Content="Open project" />
+                                    <Button x:Name="ReloadSkillsButton" Grid.Row="1" Grid.Column="1" Click="ReloadSkills_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" CornerRadius="8" Padding="11,7" Content="Reload" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <HyperlinkButton
+                            Content="Reset all-chat defaults"
+                            HorizontalAlignment="Right"
+                            FontSize="12"
+                            Click="ResetGlobal_Click"
+                            AutomationProperties.Name="Reset settings to defaults" />
+                    </StackPanel>
+
+                    <StackPanel
+                        x:Name="ChatForm"
+                        Spacing="14"
+                        Visibility="Collapsed">
+                        <StackPanel.ChildrenTransitions>
+                            <TransitionCollection>
+                                <EntranceThemeTransition FromVerticalOffset="8" IsStaggeringEnabled="False" />
+                            </TransitionCollection>
+                        </StackPanel.ChildrenTransitions>
+                        <Border
+                            x:Name="ChatOverridesSection"
+                            Style="{StaticResource SettingsSectionStyle}"
+                            Tag="chat override provider api key base url model thinking temperature tokens role inherit">
+                            <StackPanel Spacing="11">
+                                <StackPanel Spacing="3" Margin="0,0,0,4">
+                                    <TextBlock Text="Chat overrides" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="Leave a value empty to inherit the corresponding all-chat default." Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Text="Provider override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox
+                                        x:Name="ChatProviderCombo"
+                                        Background="{ThemeResource InputBackgroundBrush}"
+                                        Foreground="{ThemeResource TextPrimaryBrush}"
+                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                        CornerRadius="8"
+                                        DisplayMemberPath="Name"
+                                        PlaceholderText="Use global provider" />
+                                    <Button
+                                        Grid.Column="1"
+                                        Click="ClearChatProvider_Click"
+                                        MinWidth="36"
+                                        MinHeight="36"
+                                        Background="Transparent"
+                                        Foreground="{ThemeResource TextMutedBrush}"
+                                        BorderThickness="0"
+                                        Padding="9"
+                                        ToolTipService.ToolTip="Use global provider"
+                                        AutomationProperties.Name="Clear chat provider override">
+                                        <SymbolIcon Symbol="Cancel" />
+                                    </Button>
+                                </Grid>
+                                <TextBlock Text="API key override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <PasswordBox
+                                        x:Name="ChatApiKeyBox"
+                                        PasswordRevealMode="Peek"
+                                        PlaceholderText="Leave blank to inherit"
+                                        Background="{ThemeResource InputBackgroundBrush}"
+                                        Foreground="{ThemeResource TextPrimaryBrush}"
+                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                        CornerRadius="8"
+                                        AutomationProperties.Name="Chat API key override" />
+                                    <Button
+                                        Grid.Column="1"
+                                        Click="TestChat_Click"
+                                        MinWidth="36"
+                                        MinHeight="36"
+                                        Padding="9"
+                                        CornerRadius="8"
+                                        ToolTipService.ToolTip="Test chat connection"
+                                        AutomationProperties.Name="Test chat connection">
+                                        <SymbolIcon Symbol="Sync" />
+                                    </Button>
+                                    <Button
+                                        Grid.Column="2"
+                                        Click="ClearChatKey_Click"
+                                        MinWidth="36"
+                                        MinHeight="36"
+                                        Padding="9"
+                                        CornerRadius="8"
+                                        ToolTipService.ToolTip="Clear chat API key override"
+                                        AutomationProperties.Name="Clear chat API key override">
+                                        <SymbolIcon Symbol="Cancel" />
+                                    </Button>
+                                </Grid>
+                                <TextBlock Text="Base URL override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <TextBox
+                                    x:Name="ChatBaseUrlBox"
+                                    PlaceholderText="Leave blank to inherit"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    AutomationProperties.Name="Chat base URL override" />
+                                <TextBlock Text="Model override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox
+                                        x:Name="ChatModelBox"
+                                        PlaceholderText="Leave blank to inherit"
+                                        Background="{ThemeResource InputBackgroundBrush}"
+                                        Foreground="{ThemeResource TextPrimaryBrush}"
+                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                        CornerRadius="8"
+                                        AutomationProperties.Name="Chat model override" />
+                                    <ComboBox
+                                        x:Name="ChatModelPicker"
+                                        Grid.Column="1"
+                                        PlaceholderText="Detected models"
+                                        SelectionChanged="ChatModelPicker_SelectionChanged"
+                                        Background="{ThemeResource InputBackgroundBrush}"
+                                        Foreground="{ThemeResource TextPrimaryBrush}"
+                                        BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                        CornerRadius="8"
+                                        AutomationProperties.Name="Detected chat models" />
+                                    <Button
+                                        Grid.Column="2"
+                                        Click="RefreshChatModels_Click"
+                                        MinWidth="36"
+                                        MinHeight="36"
+                                        Padding="9"
+                                        CornerRadius="8"
+                                        ToolTipService.ToolTip="Refresh chat model list"
+                                        AutomationProperties.Name="Refresh chat model list">
+                                        <SymbolIcon Symbol="Sync" />
+                                    </Button>
+                                </Grid>
+                                <CheckBox
+                                    x:Name="ChatDeepSeekLongContextCheckBox"
+                                    Content="Use DeepSeek 1M context budget"
+                                    Checked="ChatDeepSeekLongContext_Changed"
+                                    Unchecked="ChatDeepSeekLongContext_Changed"
+                                    Foreground="{ThemeResource TextSecondaryBrush}" />
+                                <TextBlock Text="Thinking depth override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <ComboBox
+                                    x:Name="ChatThinkingDepthCombo"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8" />
+                                <TextBlock Text="Temperature override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <TextBox
+                                    x:Name="ChatTempBox"
+                                    PlaceholderText="Leave blank to inherit"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    InputScope="Number"
+                                    AutomationProperties.Name="Chat temperature override" />
+                                <TextBlock Text="Max tokens override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <TextBox
+                                    x:Name="ChatMaxTokensBox"
+                                    PlaceholderText="Leave blank to inherit"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    InputScope="Number"
+                                    AutomationProperties.Name="Chat maximum response tokens override" />
+                                <TextBlock Text="User role override" Style="{StaticResource SettingsFieldLabelStyle}" />
+                                <TextBox
+                                    x:Name="ChatUserRoleBox"
+                                    PlaceholderText="Leave blank to inherit"
+                                    Background="{ThemeResource InputBackgroundBrush}"
+                                    Foreground="{ThemeResource TextPrimaryBrush}"
+                                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                                    CornerRadius="8"
+                                    AutomationProperties.Name="Chat user role override" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel
+                        x:Name="SearchEmptyState"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        Visibility="Collapsed">
+                        <SymbolIcon Symbol="Find" Foreground="{ThemeResource TextMutedBrush}" />
+                        <TextBlock Text="No matching settings" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                        <TextBlock Text="Try a provider, model, theme, or behavior keyword." FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    </StackPanel>
                 </Grid>
+            </ScrollViewer>
 
-                <TextBlock Text="API Key Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <PasswordBox
-                        x:Name="ChatApiKeyBox"
-                        PasswordRevealMode="Peek"
-                        Grid.Column="0"
-                        PlaceholderText="Leave blank to inherit"
-                        Background="{ThemeResource InputBackgroundBrush}"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        CornerRadius="8" />
-                    <Button
-                        Grid.Column="1"
-                        Click="TestChat_Click"
-                        Padding="10,7"
-                        CornerRadius="8"
-                        ToolTipService.ToolTip="Test chat connection">
-                        <SymbolIcon Symbol="Sync" />
-                    </Button>
-                    <Button
-                        Grid.Column="2"
-                        Click="ClearChatKey_Click"
-                        Padding="10,7"
-                        CornerRadius="8"
-                        ToolTipService.ToolTip="Clear chat API key override">
-                        <SymbolIcon Symbol="Cancel" />
-                    </Button>
-                </Grid>
-
-                <TextBlock Text="Base URL Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="ChatBaseUrlBox"
-                    PlaceholderText="Leave blank to inherit"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-
-                <TextBlock Text="Model Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="220" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox
-                        x:Name="ChatModelBox"
-                        Grid.Column="0"
-                        PlaceholderText="Leave blank to inherit"
-                        Background="{ThemeResource InputBackgroundBrush}"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        CornerRadius="8" />
-                    <ComboBox
-                        x:Name="ChatModelPicker"
-                        Grid.Column="1"
-                        PlaceholderText="Detected models"
-                        SelectionChanged="ChatModelPicker_SelectionChanged"
-                        Background="{ThemeResource InputBackgroundBrush}"
-                        Foreground="{ThemeResource TextPrimaryBrush}"
-                        BorderBrush="{ThemeResource BorderSubtleBrush}"
-                        CornerRadius="8" />
-                    <Button
-                        Grid.Column="2"
-                        Click="RefreshChatModels_Click"
-                        Padding="10,7"
-                        CornerRadius="8"
-                        ToolTipService.ToolTip="Refresh chat model list">
-                        <SymbolIcon Symbol="Sync" />
-                    </Button>
-                </Grid>
-                <CheckBox
-                    x:Name="ChatDeepSeekLongContextCheckBox"
-                    Content="Use DeepSeek 1M context budget"
-                    Checked="ChatDeepSeekLongContext_Changed"
-                    Unchecked="ChatDeepSeekLongContext_Changed"
-                    Foreground="{ThemeResource TextSecondaryBrush}" />
-
-                <TextBlock Text="Thinking Depth Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <ComboBox
-                    x:Name="ChatThinkingDepthCombo"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-
-                <TextBlock Text="Temperature Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="ChatTempBox"
-                    PlaceholderText="Leave blank to inherit"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-
-                <TextBlock Text="Max Tokens Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="ChatMaxTokensBox"
-                    PlaceholderText="Leave blank to inherit"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-
-                <TextBlock Text="User Role Override" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <TextBox
-                    x:Name="ChatUserRoleBox"
-                    PlaceholderText="Leave blank to inherit"
-                    Background="{ThemeResource InputBackgroundBrush}"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderBrush="{ThemeResource BorderSubtleBrush}"
-                    CornerRadius="8" />
-                </StackPanel>
-            </Border>
-
-            <TextBlock
-                x:Name="TestText"
-                Foreground="{ThemeResource TextSecondaryBrush}"
-                TextWrapping="Wrap"
-                Visibility="Collapsed" />
-
-            <TextBlock
-                x:Name="ErrorText"
-                Foreground="{ThemeResource DangerBrush}"
-                TextWrapping="Wrap"
-                Visibility="Collapsed" />
-        </StackPanel>
-    </ScrollViewer>
+            <StackPanel
+                x:Name="SettingsStatusPanel"
+                Grid.Row="2"
+                Margin="26,8,24,10"
+                Spacing="4">
+                <TextBlock
+                    x:Name="TestText"
+                    Padding="10,7"
+                    Foreground="{ThemeResource TextSecondaryBrush}"
+                    TextWrapping="Wrap"
+                    Visibility="Collapsed"
+                    AutomationProperties.LiveSetting="Polite" />
+                <TextBlock
+                    x:Name="ErrorText"
+                    Padding="10,7"
+                    Foreground="{ThemeResource DangerBrush}"
+                    TextWrapping="Wrap"
+                    Visibility="Collapsed"
+                    AutomationProperties.LiveSetting="Assertive" />
+            </StackPanel>
+        </Grid>
+    </Grid>
 </ContentDialog>

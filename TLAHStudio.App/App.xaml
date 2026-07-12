@@ -50,6 +50,11 @@
                     <SolidColorBrush x:Key="DiffAddedBrush" Color="#FF62D8B4" />
                     <SolidColorBrush x:Key="DiffRemovedBrush" Color="#FFFF9AA8" />
                     <SolidColorBrush x:Key="NocturneAmbientBrush" Color="#169085FF" />
+                    <LinearGradientBrush x:Key="AgentEnergyBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#FF5865F2" Offset="0" />
+                        <GradientStop Color="#FF8B5CF6" Offset="0.52" />
+                        <GradientStop Color="#FFC766FF" Offset="1" />
+                    </LinearGradientBrush>
 
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#DCE4EE" />
@@ -134,6 +139,11 @@
                     <SolidColorBrush x:Key="DiffAddedBrush" Color="#FF087F6B" />
                     <SolidColorBrush x:Key="DiffRemovedBrush" Color="#FFD64B63" />
                     <SolidColorBrush x:Key="NocturneAmbientBrush" Color="#12665CD7" />
+                    <LinearGradientBrush x:Key="AgentEnergyBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#FF4F62E9" Offset="0" />
+                        <GradientStop Color="#FF7459E8" Offset="0.52" />
+                        <GradientStop Color="#FF9B55E4" Offset="1" />
+                    </LinearGradientBrush>
 
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#161D28" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#586779" />
@@ -218,6 +228,10 @@
                     <SolidColorBrush x:Key="DiffAddedBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="DiffRemovedBrush" Color="{ThemeResource SystemColorHotlightColor}" />
                     <SolidColorBrush x:Key="NocturneAmbientBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <LinearGradientBrush x:Key="AgentEnergyBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="{ThemeResource SystemColorHighlightColor}" Offset="0" />
+                        <GradientStop Color="{ThemeResource SystemColorHighlightColor}" Offset="1" />
+                    </LinearGradientBrush>
                     <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
@@ -290,6 +304,9 @@
             <CornerRadius x:Key="RadiusBadge">6</CornerRadius>
             <CornerRadius x:Key="RadiusTag">5</CornerRadius>
             <CornerRadius x:Key="RadiusBar">2</CornerRadius>
+            <CornerRadius x:Key="RadiusPopover">18</CornerRadius>
+            <CornerRadius x:Key="RadiusComposer">14</CornerRadius>
+            <CornerRadius x:Key="RadiusPill">999</CornerRadius>
 
             <!-- M4.9.4: Primary font family — CJK-aware (YaHei UI for Chinese,
                  Segoe UI Variable for Latin), with Consolas for monospace. -->

@@ -36,11 +36,6 @@ public sealed partial class SidebarPage : UserControl
         var w = App.MainWindow as MainWindow; if (w == null) return;
         _vm = w.SidebarVM;
         DataContext = _vm;
-        PinnedListView.ItemsSource = _vm.PinnedChats;
-        TodayListView.ItemsSource = _vm.TodayChats;
-        YesterdayListView.ItemsSource = _vm.YesterdayChats;
-        ThisWeekListView.ItemsSource = _vm.ThisWeekChats;
-        OlderListView.ItemsSource = _vm.OlderChats;
         ChatListView.ItemsSource = _vm.SidebarItems;
         _vm.PropertyChanged += (_, args) =>
         {
@@ -48,9 +43,7 @@ public sealed partial class SidebarPage : UserControl
                 DispatcherQueue.TryEnqueue(SyncSelectedChat);
             if (args.PropertyName == nameof(SidebarViewModel.LastDeletedChat))
                 DispatcherQueue.TryEnqueue(UpdateUndoPanel);
-            if (args.PropertyName is nameof(SidebarViewModel.HasPinnedChats)
-                or nameof(SidebarViewModel.HasRegularChats)
-                or nameof(SidebarViewModel.HasVisibleChats)
+            if (args.PropertyName is nameof(SidebarViewModel.HasVisibleChats)
                 or nameof(SidebarViewModel.SearchText)
                 or nameof(SidebarViewModel.ShowArchived))
                 DispatcherQueue.TryEnqueue(UpdateSections);
@@ -81,12 +74,9 @@ public sealed partial class SidebarPage : UserControl
         if (sender is not ListView list)
             return;
 
-        var chat = list.SelectedItem switch
-        {
-            ChatSummaryDto selected => selected,
-            SidebarEntry { Chat: { } selected } => selected,
-            _ => null
-        };
+        var chat = list.SelectedItem is SidebarEntry { Chat: { } selected }
+            ? selected
+            : null;
         if (chat == null)
         {
             list.SelectedItem = null;
@@ -94,11 +84,7 @@ public sealed partial class SidebarPage : UserControl
         }
 
         _syncingSelection = true;
-        void ClearOthers() { PinnedListView.SelectedItem = null; TodayListView.SelectedItem = null; YesterdayListView.SelectedItem = null; ThisWeekListView.SelectedItem = null; OlderListView.SelectedItem = null; }
-        ClearOthers();
-        list.SelectedItem = list == ChatListView
-            ? _vm.SidebarItems.FirstOrDefault(entry => entry.Chat?.Id == chat.Id)
-            : chat;
+        list.SelectedItem = _vm.SidebarItems.FirstOrDefault(entry => entry.Chat?.Id == chat.Id);
         _syncingSelection = false;
 
         _vm.SelectedChat = chat;
@@ -488,37 +474,26 @@ public sealed partial class SidebarPage : UserControl
         if (_vm == null)
             return;
 
-        PinnedSection.Visibility = _vm.HasPinnedChats ? Visibility.Visible : Visibility.Collapsed;
-        // M4.7.0: Date-grouped sections visibility
-        TodaySection.Visibility = _vm.TodayChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        YesterdaySection.Visibility = _vm.YesterdayChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        ThisWeekSection.Visibility = _vm.ThisWeekChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        OlderSection.Visibility = _vm.OlderChats.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyListState.Visibility = _isCollapsed || _vm.HasVisibleChats
-            ? Visibility.Collapsed
-            : Visibility.Visible;
         ArchivedToggle.IsChecked = _vm.ShowArchived;
 
         if (!string.IsNullOrWhiteSpace(_vm.SearchText))
         {
-            EmptyListTitle.Text = "No matching chats";
-            EmptyListBody.Text = "Clear the search field or start a new chat.";
+            VirtualizedEmptyListTitle.Text = "No matching chats";
+            VirtualizedEmptyListBody.Text = "Clear the search field or start a new chat.";
         }
         else if (_vm.ShowArchived)
         {
-            EmptyListTitle.Text = "No archived chats";
-            EmptyListBody.Text = "Archived conversations will appear here.";
+            VirtualizedEmptyListTitle.Text = "No archived chats";
+            VirtualizedEmptyListBody.Text = "Archived conversations will appear here.";
         }
         else
         {
-            EmptyListTitle.Text = "No chats yet";
-            EmptyListBody.Text = "Create a chat to start a conversation.";
+            VirtualizedEmptyListTitle.Text = "No chats yet";
+            VirtualizedEmptyListBody.Text = "Create a chat to start a conversation.";
         }
         VirtualizedEmptyListState.Visibility = _isCollapsed || _vm.HasVisibleChats
             ? Visibility.Collapsed
             : Visibility.Visible;
-        VirtualizedEmptyListTitle.Text = EmptyListTitle.Text;
-        VirtualizedEmptyListBody.Text = EmptyListBody.Text;
     }
 
     private void SyncSelectedChat()
@@ -527,12 +502,7 @@ public sealed partial class SidebarPage : UserControl
             return;
 
         _syncingSelection = true;
-        PinnedListView.SelectedItem = _vm.PinnedChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
-        TodayListView.SelectedItem = _vm.TodayChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
         ChatListView.SelectedItem = _vm.SidebarItems.FirstOrDefault(entry => entry.Chat?.Id == _vm.SelectedChat?.Id);
-        YesterdayListView.SelectedItem = _vm.YesterdayChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
-        ThisWeekListView.SelectedItem = _vm.ThisWeekChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
-        OlderListView.SelectedItem = _vm.OlderChats.FirstOrDefault(c => c.Id == _vm.SelectedChat?.Id);
         _syncingSelection = false;
     }
 
@@ -549,7 +519,6 @@ public sealed partial class SidebarPage : UserControl
         BrandTextPanel.Visibility = visibility;
         NewChatText.Visibility = visibility;
         SearchToolsGrid.Visibility = visibility;
-        PinnedSectionTitle.Visibility = visibility;
         ExpandedFooter.Visibility = visibility;
         CompactFooter.Visibility = _isCollapsed ? Visibility.Visible : Visibility.Collapsed;
         SidebarHeader.Padding = _isCollapsed
@@ -569,18 +538,10 @@ public sealed partial class SidebarPage : UserControl
             : new Thickness(14, 11, 14, 11);
         NewChatButton.MinHeight = _isCollapsed ? 44 : 0;
 
-        var templateKey = _isCollapsed ? "CompactChatItemTemplate" : "ChatItemTemplate";
-        var template = (DataTemplate)Resources[templateKey];
-        PinnedListView.ItemTemplate = template;
-        TodayListView.ItemTemplate = template;
         var selector = (SidebarEntryTemplateSelector)Resources["SidebarEntryTemplateSelector"];
         selector.IsCompact = _isCollapsed;
         ChatListView.ItemTemplateSelector = null;
         ChatListView.ItemTemplateSelector = selector;
-
-        YesterdayListView.ItemTemplate = template;
-        ThisWeekListView.ItemTemplate = template;
-        OlderListView.ItemTemplate = template;
 
         if (App.MainWindow is MainWindow window)
             ApplyDensity(window.UiDensityService);

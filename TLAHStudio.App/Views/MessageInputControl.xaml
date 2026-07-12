@@ -1,7 +1,22 @@
 <UserControl
     x:Class="TLAHStudio.App.Views.MessageInputControl"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:primitives="using:Microsoft.UI.Xaml.Controls.Primitives">
+
+    <UserControl.Resources>
+        <!-- FlyoutPresenter normally draws its own padded card.  Composer
+             flyouts provide the one visible surface themselves so they stay
+             visually single-layered and align exactly to their anchor. -->
+        <Style x:Key="ComposerFlyoutPresenterStyle" TargetType="FlyoutPresenter">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+    </UserControl.Resources>
 
     <Grid
         x:Name="InputRoot"
@@ -71,18 +86,146 @@
             </Button>
 
             <Button
-                x:Name="PermissionModeButton"
+                x:Name="ReasoningDepthButton"
                 Style="{StaticResource NocturneContextChipStyle}"
                 TabIndex="13"
+                ToolTipService.ToolTip="Reasoning effort"
+                AutomationProperties.Name="Reasoning effort">
+                <Button.Flyout>
+                    <Flyout
+                        x:Name="ReasoningFlyout"
+                        Placement="TopEdgeAlignedLeft"
+                        FlyoutPresenterStyle="{StaticResource ComposerFlyoutPresenterStyle}"
+                        Opened="ReasoningFlyout_Opened"
+                        Closed="ReasoningFlyout_Closed">
+                        <Border
+                            x:Name="ReasoningFlyoutSurface"
+                            Width="348"
+                            Padding="18"
+                            Background="{ThemeResource SurfaceElevatedBrush}"
+                            BorderBrush="{ThemeResource BorderSubtleBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusPopover}">
+                            <StackPanel Spacing="13">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Reasoning effort" FontSize="15" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Controls thinking depth for this chat" FontSize="11" Foreground="{ThemeResource TextMutedBrush}" />
+                                    </StackPanel>
+                                    <FontIcon Grid.Column="1" Glyph="&#xE945;" FontFamily="Segoe Fluent Icons" FontSize="17" Foreground="{ThemeResource AccentBrush}" />
+                                </Grid>
+
+                                <Border
+                                    Height="58"
+                                    Padding="13,5"
+                                    Background="{ThemeResource AgentEnergyBrush}"
+                                    CornerRadius="14">
+                                    <Grid>
+                                        <Ellipse x:Name="ReasoningPulse" Width="6" Height="6" Margin="24,4,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" Fill="#BFFFFFFF" />
+                                        <Ellipse Width="4" Height="4" Margin="72,0,0,9" HorizontalAlignment="Left" VerticalAlignment="Bottom" Fill="#BFFFFFFF" />
+                                        <Ellipse Width="6" Height="6" Margin="0,9,72,0" HorizontalAlignment="Right" VerticalAlignment="Top" Fill="#BFFFFFFF" />
+                                        <Ellipse Width="3" Height="3" Margin="0,0,28,10" HorizontalAlignment="Right" VerticalAlignment="Bottom" Fill="#E6FFFFFF" />
+                                        <Slider
+                                            x:Name="ReasoningSpectrum"
+                                            Minimum="0"
+                                            Maximum="3"
+                                            StepFrequency="1"
+                                            IsThumbToolTipEnabled="False"
+                                            Foreground="White"
+                                            ValueChanged="ReasoningSpectrum_ValueChanged"
+                                            AutomationProperties.Name="Reasoning effort from low to max" />
+                                    </Grid>
+                                </Border>
+
+                                <Grid ColumnSpacing="6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Low" HorizontalAlignment="Left" FontSize="10" Foreground="{ThemeResource TextMutedBrush}" />
+                                    <TextBlock Grid.Column="1" Text="Medium" HorizontalAlignment="Center" FontSize="10" Foreground="{ThemeResource TextMutedBrush}" />
+                                    <TextBlock Grid.Column="2" Text="High" HorizontalAlignment="Center" FontSize="10" Foreground="{ThemeResource TextMutedBrush}" />
+                                    <TextBlock Grid.Column="3" Text="Max" HorizontalAlignment="Right" FontSize="10" Foreground="{ThemeResource TextMutedBrush}" />
+                                </Grid>
+
+                                <TextBlock x:Name="ReasoningDescription" TextWrapping="Wrap" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" />
+
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="ReasoningAutoItem" Click="ReasoningAuto_Click" HorizontalAlignment="Stretch" Padding="12,9" CornerRadius="10" Content="Auto" />
+                                    <Button x:Name="ReasoningOffItem" Grid.Column="1" Click="ReasoningOff_Click" HorizontalAlignment="Stretch" Padding="12,9" CornerRadius="10" Content="Off" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Flyout>
+                </Button.Flyout>
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <FontIcon Glyph="&#xE945;" Style="{StaticResource NocturneIconStyle}" />
+                    <TextBlock x:Name="ReasoningDepthLabel" Text="Auto" FontSize="12" FontWeight="SemiBold" />
+                </StackPanel>
+            </Button>
+
+            <Button
+                x:Name="PermissionModeButton"
+                Style="{StaticResource NocturneContextChipStyle}"
+                TabIndex="14"
                 ToolTipService.ToolTip="Agent permission mode"
                 AutomationProperties.Name="Agent permission mode">
                 <Button.Flyout>
-                    <MenuFlyout>
-                        <MenuFlyoutItem x:Name="FullAccessItem" Text="Full access" Click="FullAccess_Click" />
-                        <MenuFlyoutItem x:Name="AutoApproveItem" Text="Auto approve" Click="AutoApprove_Click" />
-                        <MenuFlyoutItem x:Name="PlanItem" Text="Plan" Click="Plan_Click" />
-                        <MenuFlyoutItem x:Name="AskApprovalItem" Text="Ask" Click="AskApproval_Click" />
-                    </MenuFlyout>
+                    <Flyout
+                        x:Name="PermissionFlyout"
+                        Placement="TopEdgeAlignedLeft"
+                        FlyoutPresenterStyle="{StaticResource ComposerFlyoutPresenterStyle}"
+                        Opened="PermissionFlyout_Opened">
+                        <Border
+                            x:Name="PermissionFlyoutSurface"
+                            Width="348"
+                            Padding="18"
+                            Background="{ThemeResource SurfaceElevatedBrush}"
+                            BorderBrush="{ThemeResource BorderSubtleBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusPopover}">
+                            <StackPanel Spacing="13">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Tool permissions" FontSize="15" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Choose when the agent may use tools" FontSize="11" Foreground="{ThemeResource TextMutedBrush}" />
+                                    </StackPanel>
+                                    <FontIcon Grid.Column="1" Glyph="&#xE72E;" FontFamily="Segoe Fluent Icons" FontSize="17" Foreground="{ThemeResource AccentBrush}" />
+                                </Grid>
+
+                                <TextBlock x:Name="PermissionFlyoutDescription" TextWrapping="Wrap" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" />
+
+                                <Grid ColumnSpacing="8" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Button x:Name="AskApprovalItem" Click="AskApproval_Click" HorizontalAlignment="Stretch" Padding="12,9" CornerRadius="10" Content="Ask each time" />
+                                    <Button x:Name="PlanItem" Grid.Column="1" Click="Plan_Click" HorizontalAlignment="Stretch" Padding="12,9" CornerRadius="10" Content="Plan only" />
+                                    <Button x:Name="AutoApproveItem" Grid.Row="1" Click="AutoApprove_Click" HorizontalAlignment="Stretch" Padding="12,9" CornerRadius="10" Content="Auto approve" />
+                                    <Button x:Name="FullAccessItem" Grid.Row="1" Grid.Column="1" Click="FullAccess_Click" HorizontalAlignment="Stretch" Padding="12,9" CornerRadius="10" Content="Full access" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Flyout>
                 </Button.Flyout>
                 <StackPanel Orientation="Horizontal" Spacing="7">
                     <FontIcon Glyph="&#xE72E;" Style="{StaticResource NocturneIconStyle}" />
@@ -109,10 +252,72 @@
                 Background="{ThemeResource InputBackgroundBrush}"
                 Foreground="{ThemeResource TextPrimaryBrush}"
                 BorderBrush="{ThemeResource BorderSubtleBrush}"
-                CornerRadius="10"
+                CornerRadius="{StaticResource RadiusComposer}"
                 Padding="16,12,16,12"
-                TabIndex="14"
-                AutomationProperties.Name="Message input" />
+                TabIndex="15"
+                AutomationProperties.Name="Message input">
+                <primitives:FlyoutBase.AttachedFlyout>
+                    <Flyout
+                        x:Name="SlashFlyout"
+                        Placement="Top"
+                        ShowMode="Transient"
+                        FlyoutPresenterStyle="{StaticResource ComposerFlyoutPresenterStyle}"
+                        Opened="SlashFlyout_Opened"
+                        Closed="SlashFlyout_Closed">
+                        <Border
+                            x:Name="SlashFlyoutSurface"
+                            CornerRadius="{StaticResource RadiusPopover}"
+                            BorderThickness="1"
+                            BorderBrush="{ThemeResource BorderSubtleBrush}"
+                            Background="{ThemeResource SurfaceElevatedBrush}"
+                            MinWidth="360"
+                            MaxWidth="560">
+                            <ListView
+                                x:Name="SlashList"
+                                MaxHeight="280"
+                                IsItemClickEnabled="True"
+                                AutomationProperties.Name="Slash command completion"
+                                SelectionMode="Single"
+                                CanReorderItems="False"
+                                ScrollViewer.HorizontalScrollMode="Disabled"
+                                ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                Padding="4"
+                                ItemClick="SlashList_ItemClick">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="12,8" ColumnSpacing="9">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border
+                                                Grid.Column="0"
+                                                CornerRadius="4"
+                                                Padding="6,2"
+                                                VerticalAlignment="Center"
+                                                Background="{ThemeResource AccentSoftBrush}">
+                                                <TextBlock Text="{Binding SourceLabel}" FontSize="10" Foreground="{ThemeResource AccentBrush}" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Spacing="2">
+                                                <TextBlock FontFamily="{ThemeResource MonoFontFamily}" FontSize="13" TextTrimming="CharacterEllipsis">
+                                                    <Run Text="/" /><Run Text="{Binding Name}" FontWeight="SemiBold" />
+                                                    <Run Text="{Binding ArgumentHint}" Foreground="{ThemeResource TextMutedBrush}" />
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Border>
+                    </Flyout>
+                </primitives:FlyoutBase.AttachedFlyout>
+            </TextBox>
 
             <TextBlock
                 x:Name="CharCounter"
@@ -129,13 +334,13 @@
                 <Button
                     x:Name="SendBtn"
                     Click="Send_Click"
-                    Background="{ThemeResource AccentStrongBrush}"
+                    Background="{ThemeResource AgentEnergyBrush}"
                     Foreground="{ThemeResource AccentTextBrush}"
-                    CornerRadius="10"
-                    MinWidth="56"
-                    MinHeight="52"
+                    CornerRadius="{StaticResource RadiusPill}"
+                    Width="52"
+                    Height="52"
                     Padding="14,8"
-                    TabIndex="15"
+                    TabIndex="16"
                     ToolTipService.ToolTip="Send (Enter)"
                     AutomationProperties.Name="Send message">
                     <FontIcon Glyph="&#xE724;" FontFamily="Segoe Fluent Icons" FontSize="17" Foreground="{ThemeResource AccentTextBrush}" />
@@ -155,68 +360,19 @@
                     Foreground="{ThemeResource DangerBrush}"
                     BorderBrush="{ThemeResource BorderSubtleBrush}"
                     BorderThickness="1"
-                    CornerRadius="10"
-                    MinWidth="56"
-                    MinHeight="52"
+                    CornerRadius="{StaticResource RadiusPill}"
+                    Width="52"
+                    Height="52"
                     Padding="14,8"
                     ToolTipService.ToolTip="Stop"
-                    TabIndex="15"
+                    TabIndex="16"
                     AutomationProperties.Name="Stop generation">
-                    <FontIcon Glyph="&#xE71A;" FontFamily="Segoe Fluent Icons" FontSize="16" Foreground="{ThemeResource DangerBrush}" />
+                    <Grid>
+                        <Ellipse x:Name="StopPulse" Width="28" Height="28" Fill="{ThemeResource DangerSurfaceBrush}" />
+                        <FontIcon Glyph="&#xE71A;" FontFamily="Segoe Fluent Icons" FontSize="15" Foreground="{ThemeResource DangerBrush}" />
+                    </Grid>
                 </Button>
             </Grid>
         </Grid>
-
-        <Popup
-            x:Name="SlashPopup"
-            Grid.Row="1"
-            IsLightDismissEnabled="True"
-            ShouldConstrainToRootBounds="False"
-            VerticalOffset="-300"
-            HorizontalOffset="0">
-            <Border
-                CornerRadius="10"
-                BorderThickness="1"
-                BorderBrush="{ThemeResource BorderSubtleBrush}"
-                Background="{ThemeResource SurfaceElevatedBrush}"
-                MinWidth="360"
-                MaxWidth="560">
-                <ListView
-                    x:Name="SlashList"
-                    MaxHeight="280"
-                    IsItemClickEnabled="True"
-                    AutomationProperties.Name="Slash command completion"
-                    SelectionMode="Single"
-                    CanReorderItems="False"
-                    Padding="4"
-                    ItemClick="SlashList_ItemClick">
-                    <ListView.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Padding="12,8" ColumnSpacing="9">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Border
-                                    Grid.Column="0"
-                                    CornerRadius="4"
-                                    Padding="6,2"
-                                    VerticalAlignment="Center"
-                                    Background="{ThemeResource AccentSoftBrush}">
-                                    <TextBlock Text="{Binding SourceLabel}" FontSize="10" Foreground="{ThemeResource AccentBrush}" />
-                                </Border>
-                                <StackPanel Grid.Column="1" Spacing="2">
-                                    <TextBlock FontFamily="{ThemeResource MonoFontFamily}" FontSize="13">
-                                        <Run Text="/" /><Run Text="{Binding Name}" FontWeight="SemiBold" />
-                                        <Run Text="{Binding ArgumentHint}" Foreground="{ThemeResource TextMutedBrush}" />
-                                    </TextBlock>
-                                    <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{ThemeResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-            </Border>
-        </Popup>
     </Grid>
 </UserControl>

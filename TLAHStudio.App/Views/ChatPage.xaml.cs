@@ -95,7 +95,7 @@ public sealed partial class ChatPage : UserControl
         // which is not reliable in a self-contained unpackaged installation.
         _messageItems = new BindableCollectionAdapter<Message>(_vm.Messages);
         MessagesRepeater.ItemsSource = _messageItems;
-        UpdateTimelineMetadata();
+        RebuildTimelineMetadata();
         _vm.Messages.CollectionChanged += OnMessagesChanged;
         _vm.StreamingMessageUpdated += (_, _) => RequestRender();
         _vm.MessageIdMutated += oldId =>
@@ -108,6 +108,10 @@ public sealed partial class ChatPage : UserControl
             }
 
             _messageElementCache.Remove(oldId);
+            // A persisted streaming draft receives a new id without raising a
+            // collection change. This is rare, so rebuild the small metadata
+            // map here instead of paying an O(n) scan on every append.
+            RebuildTimelineMetadata();
         }; // M4.4.6: evict stale cache entry
         _vm.PropertyChanged += (_, args) =>
         {
@@ -175,7 +179,7 @@ public sealed partial class ChatPage : UserControl
 
     private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        UpdateTimelineMetadata();
+        UpdateTimelineMetadata(e);
         var messageCount = _vm?.Messages.Count ?? 0;
         var isAppend = e.NewItems != null &&
                        e.NewStartingIndex >= messageCount - e.NewItems.Count;
@@ -285,12 +289,12 @@ public sealed partial class ChatPage : UserControl
         MessagesScrollViewer.Visibility = state == null ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private UIElement CreateTimelineElement(Message message, int index)
+    private UIElement CreateTimelineElement(Message message)
     {
         var messageElement = GetCachedMessageElement(message);
         var showsDay = _daySeparators.TryGetValue(message.Id, out var value)
             ? value
-            : index == 0;
+            : IsFirstMessage(message);
         if (!showsDay)
         {
             if (messageElement is FrameworkElement element)
@@ -299,7 +303,7 @@ public sealed partial class ChatPage : UserControl
         }
 
         var wrapper = new StackPanel { Spacing = IsCompactDensity() ? 8 : 12 };
-        wrapper.Children.Add(BuildDaySeparator(message.CreatedAt, index == 0));
+        wrapper.Children.Add(BuildDaySeparator(message.CreatedAt, IsFirstMessage(message)));
         wrapper.Children.Add(messageElement);
         wrapper.Tag = new TimelineElementToken(message.Id, messageElement);
         return wrapper;
@@ -362,30 +366,113 @@ public sealed partial class ChatPage : UserControl
     private void MessagesScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
         var point = e.GetCurrentPoint(MessagesScrollViewer);
+        var delta = point.Properties.MouseWheelDelta;
         if (point.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse ||
-            point.Properties.MouseWheelDelta == 0 ||
+            point.Properties.IsHorizontalMouseWheel ||
+            delta == 0 ||
             MessagesScrollViewer.ScrollableHeight <= 0)
         {
             return;
         }
 
+        // Precision touchpads and high-resolution wheels report sub-notch
+        // deltas and already benefit from ScrollViewer direct manipulation.
+        // Leave those events untouched; smooth only traditional 120-unit
+        // mouse-wheel notches.
+        if (Math.Abs(delta) < 120 || delta % 120 != 0)
+            return;
+
         // WinUI's wheel path advances in coarse notches on many mouse drivers.
         // Convert notches into a short compositor-backed ChangeView so repeated
         // wheel input accumulates toward a stable target rather than jumping.
-        e.Handled = true;
         var step = Math.Clamp(MessagesScrollViewer.ViewportHeight * 0.18, 56, 112);
-        var notches = point.Properties.MouseWheelDelta / 120.0;
+        var notches = delta / 120.0;
         var baseOffset = _smoothScrollTarget ?? MessagesScrollViewer.VerticalOffset;
-        _smoothScrollTarget = Math.Clamp(
+        var target = Math.Clamp(
             baseOffset - notches * step,
             0,
             MessagesScrollViewer.ScrollableHeight);
+        if (Math.Abs(target - baseOffset) < 0.5)
+            return;
+
+        e.Handled = true;
+        _smoothScrollTarget = target;
         _wheelSettleTimer.Stop();
         _wheelSettleTimer.Start();
         MessagesScrollViewer.ChangeView(null, _smoothScrollTarget, null, false);
     }
 
-    private void UpdateTimelineMetadata()
+    private bool IsFirstMessage(Message message) =>
+        _vm?.Messages.Count > 0 && ReferenceEquals(_vm.Messages[0], message);
+
+    private void UpdateTimelineMetadata(NotifyCollectionChangedEventArgs e)
+    {
+        if (_vm == null)
+            return;
+
+        if (e.Action is NotifyCollectionChangedAction.Reset or NotifyCollectionChangedAction.Move ||
+            e.NewStartingIndex < -1 || e.OldStartingIndex < -1)
+        {
+            RebuildTimelineMetadata();
+            return;
+        }
+
+        if (e.OldItems != null)
+        {
+            foreach (Message message in e.OldItems)
+                _daySeparators.Remove(message.Id);
+        }
+
+        var start = e.Action switch
+        {
+            NotifyCollectionChangedAction.Add or NotifyCollectionChangedAction.Replace => e.NewStartingIndex,
+            NotifyCollectionChangedAction.Remove => e.OldStartingIndex,
+            _ => -1
+        };
+        if (start < 0)
+        {
+            RebuildTimelineMetadata();
+            return;
+        }
+
+        var addedCount = e.Action is NotifyCollectionChangedAction.Add or NotifyCollectionChangedAction.Replace
+            ? e.NewItems?.Count ?? 0
+            : 0;
+        UpdateTimelineMetadataRange(start, addedCount);
+    }
+
+    private void UpdateTimelineMetadataRange(int start, int count)
+    {
+        if (_vm == null)
+            return;
+
+        var messages = _vm.Messages;
+        start = Math.Clamp(start, 0, messages.Count);
+        var end = Math.Min(messages.Count, start + Math.Max(0, count));
+        DateTime? previousDay = start > 0
+            ? messages[start - 1].CreatedAt.ToLocalTime().Date
+            : null;
+
+        for (var index = start; index < end; index++)
+        {
+            var message = messages[index];
+            var currentDay = message.CreatedAt.ToLocalTime().Date;
+            _daySeparators[message.Id] = previousDay == null || previousDay.Value != currentDay;
+            previousDay = currentDay;
+        }
+
+        // Insertion/removal can change only the first untouched successor's
+        // relationship with its predecessor. Updating that one entry keeps
+        // appends O(k) and prepends O(page-size), rather than O(history-size).
+        if (end < messages.Count)
+        {
+            var successor = messages[end];
+            var successorDay = successor.CreatedAt.ToLocalTime().Date;
+            _daySeparators[successor.Id] = previousDay == null || previousDay.Value != successorDay;
+        }
+    }
+
+    private void RebuildTimelineMetadata()
     {
         _daySeparators.Clear();
         if (_vm == null)
@@ -402,19 +489,25 @@ public sealed partial class ChatPage : UserControl
 
     private UIElement GetCachedMessageElement(Message message)
     {
-        var signature = IsStreamingDraft(message)
-            ? $"{message.Role}|streaming-draft|{message.Id:N}|{_chatBubbleOpacity}|{IsCompactDensity()}"
-            : $"{message.Role}|{message.Content}|{message.TurnId?.ToString("N") ?? "draft"}|{_chatBubbleOpacity}|{IsCompactDensity()}";
+        var isStreaming = IsStreamingDraft(message);
+        var isCompact = IsCompactDensity();
         if (_messageElementCache.TryGetValue(message.Id, out var cached) &&
-            string.Equals(cached.Signature, signature, StringComparison.Ordinal))
+            cached.Matches(message, isStreaming, _chatBubbleOpacity, isCompact))
         {
-            if (IsStreamingDraft(message))
+            if (isStreaming)
                 UpdateCachedStreamingMessage(cached.Element, message);
             return cached.Element;
         }
 
         var element = BuildMessage(message);
-        _messageElementCache[message.Id] = new CachedMessageElement(signature, element);
+        _messageElementCache[message.Id] = new CachedMessageElement(
+            message.Role,
+            message.Content,
+            message.TurnId,
+            isStreaming,
+            _chatBubbleOpacity,
+            isCompact,
+            element);
         return element;
     }
 
@@ -2015,7 +2108,23 @@ public sealed partial class ChatPage : UserControl
 
     private bool IsCompactDensity() => _densityService?.CurrentDensity == UiDensity.Compact;
 
-    private sealed record CachedMessageElement(string Signature, UIElement Element);
+    private sealed record CachedMessageElement(
+        string Role,
+        string Content,
+        Guid? TurnId,
+        bool IsStreaming,
+        double BubbleOpacity,
+        bool IsCompact,
+        UIElement Element)
+    {
+        public bool Matches(Message message, bool isStreaming, double bubbleOpacity, bool isCompact) =>
+            string.Equals(Role, message.Role, StringComparison.Ordinal) &&
+            TurnId == message.TurnId &&
+            IsStreaming == isStreaming &&
+            BubbleOpacity.Equals(bubbleOpacity) &&
+            IsCompact == isCompact &&
+            (isStreaming || ReferenceEquals(Content, message.Content));
+    }
     private sealed record TimelineElementToken(Guid MessageId, UIElement MessageElement);
 
     private sealed class ChatMessageElementFactory(ChatPage owner) : IElementFactory
@@ -2025,8 +2134,7 @@ public sealed partial class ChatPage : UserControl
             if (args.Data is not Message message)
                 return new Grid();
 
-            var index = owner._vm?.Messages.IndexOf(message) ?? 0;
-            return owner.CreateTimelineElement(message, Math.Max(0, index));
+            return owner.CreateTimelineElement(message);
         }
 
         public void RecycleElement(ElementFactoryRecycleArgs args)

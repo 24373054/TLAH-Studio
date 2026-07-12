@@ -10,12 +10,6 @@
         BorderThickness="1,0,0,0"
         MinWidth="300"
         AutomationProperties.Name="Agent activity panel">
-        <Grid.ChildrenTransitions>
-            <TransitionCollection>
-                <EntranceThemeTransition FromHorizontalOffset="12" IsStaggeringEnabled="False" />
-                <RepositionThemeTransition />
-            </TransitionCollection>
-        </Grid.ChildrenTransitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />

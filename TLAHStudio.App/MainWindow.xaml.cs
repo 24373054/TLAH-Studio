@@ -11,6 +11,7 @@ using TLAHStudio.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.Storage.Streams;
 using Windows.System;
+using TLAHStudio.App.Infrastructure;
 
 namespace TLAHStudio.App;
 
@@ -19,6 +20,19 @@ public sealed partial class MainWindow : Window
     private bool _firstRunSetupChecked;
     private bool _isNarrowLayout;
     private readonly SemaphoreSlim _contentDialogGate = new(1, 1);
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _paneLayoutTimer;
+    private WorkbenchPaneKind _appliedPane = WorkbenchPaneKind.Uninitialized;
+    private double _appliedPaneWidth = -1;
+
+    private enum WorkbenchPaneKind
+    {
+        Uninitialized,
+        None,
+        Activity,
+        ActivityOverlay,
+        Review,
+        ReviewOverlay
+    }
 
     public MainViewModel ViewModel { get; }
     public SidebarViewModel SidebarVM { get; }
@@ -82,6 +96,11 @@ public sealed partial class MainWindow : Window
         this.InitializeComponent();
         App.Log("MainWindow XAML initialized.");
 
+        _paneLayoutTimer = DispatcherQueue.CreateTimer();
+        _paneLayoutTimer.Interval = TimeSpan.FromMilliseconds(72);
+        _paneLayoutTimer.IsRepeating = false;
+        _paneLayoutTimer.Tick += (_, _) => UpdateAgentActivityPanelLayout();
+
         DebugPanelView.Bind(DebugVM);
         ChatPageView.Bind(ChatVM, DebugVM, BackgroundService, UiDensityService, SandboxCommandService, SoundService);
         AgentActivityPanelView.Bind(ChatVM, UiDensityService, SoundService);
@@ -89,6 +108,11 @@ public sealed partial class MainWindow : Window
         ChatVM.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ChatPageViewModel.IsAgentActivityPanelOpen))
+                DispatcherQueue.TryEnqueue(UpdateAgentActivityPanelLayout);
+        };
+        WorkspaceReviewVM.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(WorkspaceReviewViewModel.IsOpen))
                 DispatcherQueue.TryEnqueue(UpdateAgentActivityPanelLayout);
         };
         ChatVM.AgentApprovalRequested += OnAgentApprovalRequested;
@@ -735,15 +759,17 @@ public sealed partial class MainWindow : Window
     private void OnRootGridSizeChanged(object sender, SizeChangedEventArgs e)
     {
         var isNarrow = e.NewSize.Width < 900;
-        if (_isNarrowLayout == isNarrow)
+        if (_isNarrowLayout != isNarrow)
         {
-            UpdateAgentActivityPanelLayout();
-            return;
+            _isNarrowLayout = isNarrow;
+            SidebarView.SetResponsiveCompact(isNarrow);
         }
 
-        _isNarrowLayout = isNarrow;
-        SidebarView.SetResponsiveCompact(isNarrow);
-        UpdateAgentActivityPanelLayout();
+        // WinUI emits SizeChanged for every resize pixel. Coalesce those events
+        // so pane visibility and GridLength are committed once per settled frame
+        // instead of repeatedly collapsing and rebuilding the workbench.
+        _paneLayoutTimer.Stop();
+        _paneLayoutTimer.Start();
     }
 
     private async void OnGlobalKeyDown(object sender, KeyRoutedEventArgs e)
@@ -993,41 +1019,120 @@ public sealed partial class MainWindow : Window
         if (double.IsNaN(availableWidth) || availableWidth <= 0)
             availableWidth = Math.Max(0, RootGrid.ActualWidth - SidebarView.ActualWidth);
 
-        AgentActivityPanelView.Visibility = Visibility.Collapsed;
-        WorkspaceReviewPanelView.Visibility = Visibility.Collapsed;
-        // Visibility changes can occur while a theme transition is still
-        // completing. Reassert the intended grid columns before restoring a
-        // panel so a recycled visual can never inherit the chat column.
-        Grid.SetColumn(AgentActivityPanelView, 1);
-        Grid.SetColumn(WorkspaceReviewPanelView, 2);
-        AgentActivityColumn.Width = new GridLength(0);
-        WorkspaceReviewColumn.Width = new GridLength(0);
-        if (availableWidth < 780)
-            return;
-
-        if (WorkspaceReviewVM.IsOpen)
+        var targetPane = WorkbenchPaneKind.None;
+        var targetWidth = 0d;
+        if (availableWidth >= 780 && WorkspaceReviewVM.IsOpen)
         {
             var reviewWidth = Math.Clamp(availableWidth * 0.38, 420, 560);
             if (availableWidth - reviewWidth >= 520)
             {
-                WorkspaceReviewColumn.Width = new GridLength(reviewWidth);
-                WorkspaceReviewPanelView.Visibility = Visibility.Visible;
+                targetPane = WorkbenchPaneKind.Review;
+                targetWidth = reviewWidth;
             }
-            return;
+        }
+        else if (availableWidth >= 780 && ChatVM.IsAgentActivityPanelOpen)
+        {
+            var activityWidth = Math.Clamp(availableWidth * 0.30, 320, 420);
+            if (availableWidth - activityWidth < 520)
+                activityWidth = Math.Max(300, availableWidth - 520);
+
+            if (activityWidth >= 300)
+            {
+                targetPane = WorkbenchPaneKind.Activity;
+                targetWidth = activityWidth;
+            }
         }
 
-        if (!ChatVM.IsAgentActivityPanelOpen)
+        if (targetPane == WorkbenchPaneKind.None && WorkspaceReviewVM.IsOpen && availableWidth >= 420)
+        {
+            targetPane = WorkbenchPaneKind.ReviewOverlay;
+            targetWidth = Math.Min(560, Math.Max(420, availableWidth - 16));
+        }
+        else if (targetPane == WorkbenchPaneKind.None && ChatVM.IsAgentActivityPanelOpen && availableWidth >= 300)
+        {
+            targetPane = WorkbenchPaneKind.ActivityOverlay;
+            targetWidth = Math.Min(420, Math.Max(300, availableWidth - 16));
+        }
+
+        if (_appliedPane == targetPane && Math.Abs(_appliedPaneWidth - targetWidth) < 1)
             return;
 
-        var activityWidth = Math.Clamp(availableWidth * 0.30, 320, 420);
-        if (availableWidth - activityWidth < 520)
-            activityWidth = Math.Max(300, availableWidth - 520);
+        var previousPane = _appliedPane;
+        ApplyWorkbenchPanelTheme();
 
-        if (activityWidth < 300)
-            return;
+        var showsActivity = targetPane is WorkbenchPaneKind.Activity or WorkbenchPaneKind.ActivityOverlay;
+        var showsReview = targetPane is WorkbenchPaneKind.Review or WorkbenchPaneKind.ReviewOverlay;
+        AgentActivityPanelView.SetPanelActive(showsActivity);
 
-        AgentActivityColumn.Width = new GridLength(activityWidth);
-        AgentActivityPanelView.Visibility = Visibility.Visible;
+        if (!showsActivity)
+        {
+            AgentActivityPanelView.Visibility = Visibility.Collapsed;
+            AgentActivityColumn.Width = new GridLength(0);
+            ConfigureSidePane(AgentActivityPanelView, canonicalColumn: 1);
+            NocturneMotion.Reset(AgentActivityPanelView);
+        }
+
+        if (!showsReview)
+        {
+            WorkspaceReviewPanelView.Visibility = Visibility.Collapsed;
+            WorkspaceReviewColumn.Width = new GridLength(0);
+            ConfigureSidePane(WorkspaceReviewPanelView, canonicalColumn: 2);
+            NocturneMotion.Reset(WorkspaceReviewPanelView);
+        }
+
+        if (targetPane == WorkbenchPaneKind.Activity)
+        {
+            ConfigureSidePane(AgentActivityPanelView, canonicalColumn: 1);
+            AgentActivityColumn.Width = new GridLength(targetWidth);
+            AgentActivityPanelView.Visibility = Visibility.Visible;
+            if (previousPane != WorkbenchPaneKind.Activity)
+                NocturneMotion.RevealOverlay(AgentActivityPanelView);
+        }
+        else if (targetPane == WorkbenchPaneKind.ActivityOverlay)
+        {
+            AgentActivityColumn.Width = new GridLength(0);
+            ConfigureOverlayPane(AgentActivityPanelView, targetWidth);
+            AgentActivityPanelView.Visibility = Visibility.Visible;
+            if (previousPane != WorkbenchPaneKind.ActivityOverlay)
+                NocturneMotion.RevealOverlay(AgentActivityPanelView);
+        }
+        else if (targetPane == WorkbenchPaneKind.Review)
+        {
+            ConfigureSidePane(WorkspaceReviewPanelView, canonicalColumn: 2);
+            WorkspaceReviewColumn.Width = new GridLength(targetWidth);
+            WorkspaceReviewPanelView.Visibility = Visibility.Visible;
+            if (previousPane != WorkbenchPaneKind.Review)
+                NocturneMotion.RevealOverlay(WorkspaceReviewPanelView);
+        }
+        else if (targetPane == WorkbenchPaneKind.ReviewOverlay)
+        {
+            WorkspaceReviewColumn.Width = new GridLength(0);
+            ConfigureOverlayPane(WorkspaceReviewPanelView, targetWidth);
+            WorkspaceReviewPanelView.Visibility = Visibility.Visible;
+            if (previousPane != WorkbenchPaneKind.ReviewOverlay)
+                NocturneMotion.RevealOverlay(WorkspaceReviewPanelView);
+        }
+
+        _appliedPane = targetPane;
+        _appliedPaneWidth = targetWidth;
+    }
+
+    private static void ConfigureSidePane(FrameworkElement pane, int canonicalColumn)
+    {
+        Grid.SetColumn(pane, canonicalColumn);
+        Grid.SetColumnSpan(pane, 1);
+        pane.HorizontalAlignment = HorizontalAlignment.Stretch;
+        pane.Width = double.NaN;
+        Canvas.SetZIndex(pane, 0);
+    }
+
+    private static void ConfigureOverlayPane(FrameworkElement pane, double width)
+    {
+        Grid.SetColumn(pane, 0);
+        Grid.SetColumnSpan(pane, 3);
+        pane.HorizontalAlignment = HorizontalAlignment.Right;
+        pane.Width = width;
+        Canvas.SetZIndex(pane, 20);
     }
 
     private void ApplyWorkbenchPanelTheme()

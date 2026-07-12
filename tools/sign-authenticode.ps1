@@ -114,14 +114,33 @@ foreach ($file in $files) {
         # embedded. signtool verify against /pa or /all typically rejects
         # self-signed roots under default policy — that's expected for
         # untrusted certs and not a real failure. We treat verification as
-        # best-effort: warn on mismatch, never block the build.
+        # best-effort: warn on mismatch, never block the build. Windows trust
+        # chain discovery can wait indefinitely on an unreachable revocation
+        # endpoint, so keep this diagnostic on a short, bounded timeout.
         $verified = $false
+        $verifyTimedOut = $false
         try {
-            $null = & $signTool verify /all $file.FullName 2>&1
-            if ($LASTEXITCODE -eq 0) { $verified = $true }
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $signTool
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.ArgumentList.Add("verify")
+            $startInfo.ArgumentList.Add("/all")
+            $startInfo.ArgumentList.Add($file.FullName)
+
+            $verifyProcess = [System.Diagnostics.Process]::Start($startInfo)
+            if ($verifyProcess.WaitForExit(15000)) {
+                $verified = $verifyProcess.ExitCode -eq 0
+            }
+            else {
+                $verifyTimedOut = $true
+                $verifyProcess.Kill($true)
+                $verifyProcess.WaitForExit()
+            }
         } catch { }
         if (-not $verified) {
-            Write-Warning "Signature embedded but could not be verified by signtool (expected for self-signed/untrusted certs): $($file.FullName)"
+            $reason = if ($verifyTimedOut) { "verification timed out" } else { "certificate is self-signed/untrusted" }
+            Write-Warning "Signature embedded but signtool verification did not succeed ($reason): $($file.FullName)"
         }
 
         Write-Host "Signature embedded with untrusted/self-signed certificate: $($file.FullName)"

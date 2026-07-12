@@ -5,6 +5,7 @@
     xmlns:views="using:TLAHStudio.App.Views">
     <UserControl.Resources>
         <views:WorkspaceChangeBrushConverter x:Key="WorkspaceChangeBrushConverter" />
+        <views:WorkspaceDiffLineBrushConverter x:Key="WorkspaceDiffLineBrushConverter" />
     </UserControl.Resources>
 
     <Grid
@@ -14,12 +15,6 @@
         BorderBrush="{ThemeResource BorderSubtleBrush}"
         BorderThickness="1,0,0,0"
         AutomationProperties.Name="Changes and preview workbench">
-        <Grid.ChildrenTransitions>
-            <TransitionCollection>
-                <EntranceThemeTransition FromHorizontalOffset="12" IsStaggeringEnabled="False" />
-                <RepositionThemeTransition />
-            </TransitionCollection>
-        </Grid.ChildrenTransitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -69,7 +64,24 @@
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Text="CHANGES" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
-            <TextBlock Grid.Row="0" Grid.Column="1" Text="PREVIEW" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
+            <Grid Grid.Row="0" Grid.Column="1" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="PREVIEW" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextMutedBrush}" />
+                <Button
+                    Grid.Column="1"
+                    Click="CopyDiff_Click"
+                    Padding="6,2"
+                    Background="Transparent"
+                    Foreground="{ThemeResource TextMutedBrush}"
+                    BorderThickness="0"
+                    ToolTipService.ToolTip="Copy complete diff"
+                    AutomationProperties.Name="Copy complete diff">
+                    <FontIcon Glyph="&#xE8C8;" FontSize="13" />
+                </Button>
+            </Grid>
 
             <ListView
                 x:Name="ChangesList"
@@ -111,19 +123,48 @@
                 BorderBrush="{ThemeResource BorderSubtleBrush}"
                 BorderThickness="1"
                 CornerRadius="10">
-                <TextBox
-                    x:Name="DiffTextBox"
-                    IsReadOnly="True"
-                    IsSpellCheckEnabled="False"
-                    AcceptsReturn="True"
-                    TextWrapping="NoWrap"
-                    FontFamily="Cascadia Mono"
-                    FontSize="12"
-                    Padding="14"
-                    Background="Transparent"
-                    Foreground="{ThemeResource TextPrimaryBrush}"
-                    BorderThickness="0"
-                    AutomationProperties.Name="Selected file diff preview" />
+                <ScrollViewer
+                    Padding="0,10,0,10"
+                    VerticalScrollBarVisibility="Auto"
+                    VerticalScrollMode="Enabled"
+                    HorizontalScrollBarVisibility="Auto"
+                    HorizontalScrollMode="Enabled"
+                    IsScrollInertiaEnabled="True"
+                    ZoomMode="Disabled"
+                    AutomationProperties.Name="Selected file diff preview">
+                    <ItemsRepeater x:Name="DiffLinesRepeater">
+                        <ItemsRepeater.Layout>
+                            <StackLayout Spacing="0" />
+                        </ItemsRepeater.Layout>
+                        <ItemsRepeater.ItemTemplate>
+                            <DataTemplate>
+                                <Grid MinHeight="20" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="52" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        Text="{Binding Number}"
+                                        Padding="8,1,6,1"
+                                        HorizontalTextAlignment="Right"
+                                        FontFamily="Cascadia Mono"
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextMutedBrush}" />
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        Text="{Binding Text}"
+                                        Padding="0,1,14,1"
+                                        FontFamily="Cascadia Mono"
+                                        FontSize="12"
+                                        TextWrapping="NoWrap"
+                                        IsTextSelectionEnabled="True"
+                                        Foreground="{Binding Text, Converter={StaticResource WorkspaceDiffLineBrushConverter}}"
+                                        AutomationProperties.Name="{Binding AccessibleText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                </ScrollViewer>
             </Border>
         </Grid>
     </Grid>

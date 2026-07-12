@@ -35,6 +35,8 @@ public partial class ChatPageViewModel : ObservableObject
     private const int InitialMessagePageSize = 80;
     private const string AgentActivityPanelStorageKey = "tlah-agent-activity-panel-open";
     private const string AgentPermissionModeStorageKey = "tlah-agent-permission-mode";
+    private long _thinkingDepthUpdateVersion;
+    private readonly SemaphoreSlim _thinkingDepthWriteGate = new(1, 1);
 
     public ObservableCollection<Message> Messages { get; } = new();
     public ObservableCollection<AgentProgressLine> AgentProgressLines { get; } = new();
@@ -67,6 +69,9 @@ public partial class ChatPageViewModel : ObservableObject
     [ObservableProperty]
     private string _selectedAgentPermissionMode =
         AgentPermissionModes.Normalize(LocalStore.Get(AgentPermissionModeStorageKey));
+
+    [ObservableProperty]
+    private string _selectedThinkingDepth = ReasoningDepths.Auto;
 
     [ObservableProperty]
     private string _contextUsageText = "Context --";
@@ -174,15 +179,101 @@ public partial class ChatPageViewModel : ObservableObject
         LocalStore.Set(AgentPermissionModeStorageKey, SelectedAgentPermissionMode);
     }
 
+    /// <summary>
+    /// Refreshes the effective reasoning depth shown by the composer. A chat
+    /// uses its merged chat/profile/global settings; the empty workspace uses
+    /// the global default.
+    /// </summary>
+    public async Task RefreshThinkingDepthAsync(CancellationToken ct = default)
+    {
+        var chatId = _appState.CurrentChatId;
+        var version = Volatile.Read(ref _thinkingDepthUpdateVersion);
+        await _thinkingDepthWriteGate.WaitAsync(ct);
+        try
+        {
+            if (chatId != _appState.CurrentChatId ||
+                version != Volatile.Read(ref _thinkingDepthUpdateVersion))
+                return;
+
+            var depth = chatId.HasValue
+                ? (await _settingsService.GetEffectiveSettingsAsync(chatId.Value, ct)).ThinkingDepth
+                : (await _settingsService.GetGlobalSettingsRawAsync(ct)).ThinkingDepth;
+
+            if (chatId == _appState.CurrentChatId &&
+                version == Volatile.Read(ref _thinkingDepthUpdateVersion))
+                SelectedThinkingDepth = ReasoningDepths.Normalize(depth);
+        }
+        finally
+        {
+            _thinkingDepthWriteGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Applies a real reasoning setting. The current chat receives an
+    /// explicit override; with no selected chat the global default is updated.
+    /// </summary>
+    public async Task SetThinkingDepthAsync(string depth, CancellationToken ct = default)
+    {
+        var normalized = ReasoningDepths.Normalize(depth);
+        var previous = SelectedThinkingDepth;
+        var chatId = _appState.CurrentChatId;
+        var version = Interlocked.Increment(ref _thinkingDepthUpdateVersion);
+        SelectedThinkingDepth = normalized;
+        var enteredGate = false;
+
+        try
+        {
+            await _thinkingDepthWriteGate.WaitAsync(ct);
+            enteredGate = true;
+
+            // Slider changes can arrive faster than a settings write. Drop any
+            // queued stale value so the latest visible detent always wins.
+            if (version != Volatile.Read(ref _thinkingDepthUpdateVersion) ||
+                chatId != _appState.CurrentChatId)
+                return;
+
+            if (chatId.HasValue)
+            {
+                await _settingsService.UpdateChatSettingsAsync(
+                    chatId.Value,
+                    new ChatSettingsUpdateDto(ThinkingDepth: normalized),
+                    ct);
+            }
+            else
+            {
+                await _settingsService.UpdateGlobalSettingsAsync(
+                    new GlobalSettingsUpdateDto(ThinkingDepth: normalized),
+                    ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (version == Volatile.Read(ref _thinkingDepthUpdateVersion) &&
+                chatId == _appState.CurrentChatId)
+            {
+                SelectedThinkingDepth = ReasoningDepths.Normalize(previous);
+                ErrorMessage = ex.Message;
+            }
+            throw;
+        }
+        finally
+        {
+            if (enteredGate)
+                _thinkingDepthWriteGate.Release();
+        }
+    }
+
     private async void OnChatSelected(object? sender, Guid chatId)
     {
         await LoadChatAsync(chatId);
     }
 
-    private void OnChatDeselected(object? sender, EventArgs e)
+    private async void OnChatDeselected(object? sender, EventArgs e)
     {
         CancelPendingChatLoad();
         Interlocked.Increment(ref _chatLoadVersion);
+        Interlocked.Increment(ref _thinkingDepthUpdateVersion);
         CurrentChat = null;
         Messages.Clear();
         HasOlderMessages = false;
@@ -194,7 +285,16 @@ public partial class ChatPageViewModel : ObservableObject
         WorkspacePath = string.Empty;
         IsWorkspaceConfigured = false;
         WorkspaceToolTip = "Using this chat's private sandbox.";
+        SelectedThinkingDepth = ReasoningDepths.Auto;
         UpdateAgentStatus(null);
+        try
+        {
+            await RefreshThinkingDepthAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
     }
 
     [RelayCommand]
@@ -228,6 +328,9 @@ public partial class ChatPageViewModel : ObservableObject
             var chat = await chatTask;
             var page = await messagesTask;
             CurrentChat = chat;
+            await RefreshThinkingDepthAsync(cancellation.Token);
+            if (!IsCurrentChatLoad(chatId, version, cancellation))
+                return;
             await RefreshWorkspaceAsync(chatId, version);
             if (!IsCurrentChatLoad(chatId, version, cancellation))
                 return;

@@ -1,8 +1,11 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using System.ComponentModel;
+using TLAHStudio.App.Infrastructure;
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 using TLAHStudio.App.ViewModels;
 using Windows.Storage;
@@ -16,6 +19,9 @@ public sealed partial class MessageInputControl : UserControl
     private ChatPageViewModel? _vm;
     private bool _loaded;
     private bool _suppressSound;
+    private bool _slashFlyoutOpen;
+    private bool _syncingReasoningSpectrum;
+    private bool? _lastSendingState;
 
     // M4.9.5 Phase E1: command history stack + navigation index.
     // _historyIndex == -1 means "not navigating history" (current draft).
@@ -40,6 +46,19 @@ public sealed partial class MessageInputControl : UserControl
         InputBox.KeyDown += OnKeyDown;
         InputBox.TextChanged += OnTextChanged;
         InputRoot.SizeChanged += OnInputRootSizeChanged;
+        NocturneMotion.AttachPressFeedback(RoleButton);
+        NocturneMotion.AttachPressFeedback(AgentModeButton);
+        NocturneMotion.AttachPressFeedback(WorkspaceButton);
+        NocturneMotion.AttachPressFeedback(ReasoningDepthButton);
+        NocturneMotion.AttachPressFeedback(PermissionModeButton);
+        NocturneMotion.AttachPressFeedback(SendBtn);
+        NocturneMotion.AttachPressFeedback(StopBtn);
+        NocturneMotion.AttachPressFeedback(AskApprovalItem);
+        NocturneMotion.AttachPressFeedback(PlanItem);
+        NocturneMotion.AttachPressFeedback(AutoApproveItem);
+        NocturneMotion.AttachPressFeedback(FullAccessItem);
+        NocturneMotion.AttachPressFeedback(ReasoningAutoItem);
+        NocturneMotion.AttachPressFeedback(ReasoningOffItem);
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
@@ -62,6 +81,7 @@ public sealed partial class MessageInputControl : UserControl
             _suppressSound = false;
             UpdateSendingState();
             UpdateAgentModeVisualState();
+            _ = RefreshReasoningDepthAsync();
             UpdatePermissionModeButton();
             UpdatePlaceholder();
         }
@@ -69,6 +89,11 @@ public sealed partial class MessageInputControl : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        HideSlashPopup();
+        ReasoningFlyout.Hide();
+        PermissionFlyout.Hide();
+        NocturneMotion.StopBreathing(ReasoningPulse);
+        NocturneMotion.StopBreathing(StopPulse);
         if (_vm != null)
             _vm.PropertyChanged -= OnViewModelPropertyChanged;
         _vm = null;
@@ -88,6 +113,7 @@ public sealed partial class MessageInputControl : UserControl
         RoleButton.Margin = new Thickness(0);
         AgentModeButton.Margin = new Thickness(0);
         WorkspaceButton.Margin = new Thickness(0);
+        ReasoningDepthButton.Margin = new Thickness(0);
         PermissionModeButton.Margin = new Thickness(0);
         ActionGrid.Margin = new Thickness(0);
         SendBtn.MinWidth = compact ? 48 : 56;
@@ -97,6 +123,7 @@ public sealed partial class MessageInputControl : UserControl
             : new Thickness(14, 10, 14, 10);
         AgentModeLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
         WorkspaceLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
+        ReasoningDepthLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
         PermissionModeLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -104,7 +131,7 @@ public sealed partial class MessageInputControl : UserControl
     {
         // M4.9.5 Phase E2: when the slash popup is open, intercept navigation
         // keys (Tab/Enter accept, Up/Down move selection, Esc dismiss).
-        if (SlashPopup.IsOpen && HandleSlashPopupKeys(e))
+        if (_slashFlyoutOpen && HandleSlashPopupKeys(e))
             return;
         // M4.9.5 Phase E1: Up/Down arrow navigates command history when the
         // caret is on the first/last line of a multi-line input (so plain
@@ -220,8 +247,14 @@ public sealed partial class MessageInputControl : UserControl
         SlashList.ItemsSource = filtered;
         SlashList.SelectedIndex = 0;
         SlashList.ScrollIntoView(filtered[0]);
-        if (!SlashPopup.IsOpen)
-            SlashPopup.IsOpen = true;
+        if (!_slashFlyoutOpen)
+        {
+            SlashFlyout.ShowAt(InputBox, new FlyoutShowOptions
+            {
+                Placement = FlyoutPlacementMode.Top,
+                ShowMode = FlyoutShowMode.Transient
+            });
+        }
     }
 
     private async Task<IReadOnlyList<SlashCommand>> EnsureCommandsAsync()
@@ -248,9 +281,17 @@ public sealed partial class MessageInputControl : UserControl
 
     private void HideSlashPopup()
     {
-        if (SlashPopup.IsOpen)
-            SlashPopup.IsOpen = false;
+        if (_slashFlyoutOpen)
+            SlashFlyout.Hide();
     }
+
+    private void SlashFlyout_Opened(object sender, object e)
+    {
+        _slashFlyoutOpen = true;
+        NocturneMotion.RevealOverlay(SlashFlyoutSurface);
+    }
+
+    private void SlashFlyout_Closed(object sender, object e) => _slashFlyoutOpen = false;
 
     private void SlashList_ItemClick(object sender, ItemClickEventArgs e)
     {
@@ -399,14 +440,23 @@ public sealed partial class MessageInputControl : UserControl
         Play(InteractionSound.Toggle);
     }
 
-    private void FullAccess_Click(object sender, RoutedEventArgs e) =>
+    private void FullAccess_Click(object sender, RoutedEventArgs e)
+    {
         SetPermissionMode(AgentPermissionModes.BypassPermissions);
+        PermissionFlyout.Hide();
+    }
 
-    private void AutoApprove_Click(object sender, RoutedEventArgs e) =>
+    private void AutoApprove_Click(object sender, RoutedEventArgs e)
+    {
         SetPermissionMode(AgentPermissionModes.AutoApprove);
+        PermissionFlyout.Hide();
+    }
 
-    private void AskApproval_Click(object sender, RoutedEventArgs e) =>
+    private void AskApproval_Click(object sender, RoutedEventArgs e)
+    {
         SetPermissionMode(AgentPermissionModes.RequestApproval);
+        PermissionFlyout.Hide();
+    }
 
     private async void NewWorkspace_Click(object sender, RoutedEventArgs e)
     {
@@ -572,6 +622,8 @@ public sealed partial class MessageInputControl : UserControl
             DispatcherQueue.TryEnqueue(UpdateRoleButton);
         if (e.PropertyName == nameof(ChatPageViewModel.SelectedAgentPermissionMode))
             DispatcherQueue.TryEnqueue(() => SelectPermissionMode(_vm?.SelectedAgentPermissionMode));
+        if (e.PropertyName == nameof(ChatPageViewModel.SelectedThinkingDepth))
+            DispatcherQueue.TryEnqueue(UpdateReasoningDepthButton);
         if (e.PropertyName is nameof(ChatPageViewModel.WorkspaceDisplayName)
             or nameof(ChatPageViewModel.WorkspacePath)
             or nameof(ChatPageViewModel.IsWorkspaceConfigured)
@@ -585,14 +637,32 @@ public sealed partial class MessageInputControl : UserControl
     private void UpdateSendingState()
     {
         var sending = _vm?.IsSending == true;
+        var changed = _lastSendingState != sending;
         SendBtn.Visibility = sending ? Visibility.Collapsed : Visibility.Visible;
         StopBtn.Visibility = sending ? Visibility.Visible : Visibility.Collapsed;
-        SendingRing.Visibility = sending ? Visibility.Visible : Visibility.Collapsed;
+        SendingRing.Visibility = Visibility.Collapsed;
+        SendingRing.IsActive = false;
         SendBtn.IsEnabled = !sending;
         RoleButton.IsEnabled = !sending;
         AgentModeButton.IsEnabled = !sending;
         WorkspaceButton.IsEnabled = !sending;
+        ReasoningDepthButton.IsEnabled = !sending;
         PermissionModeButton.IsEnabled = !sending;
+
+        if (sending)
+        {
+            NocturneMotion.StartBreathing(StopPulse);
+            if (changed)
+                NocturneMotion.RevealOverlay(StopBtn, 150);
+        }
+        else
+        {
+            NocturneMotion.StopBreathing(StopPulse);
+            if (changed)
+                NocturneMotion.RevealOverlay(SendBtn, 150);
+        }
+
+        _lastSendingState = sending;
     }
 
     private void UpdateAgentModeVisualState()
@@ -660,6 +730,7 @@ public sealed partial class MessageInputControl : UserControl
     {
         var item = GetPermissionModeItem(_vm?.SelectedAgentPermissionMode);
         PermissionModeLabel.Text = item.Label;
+        PermissionFlyoutDescription.Text = item.Description;
         ToolTipService.SetToolTip(PermissionModeButton, $"Access: {item.Label}. {item.Description}");
         AutomationProperties.SetName(PermissionModeButton, $"Agent permission mode: {item.Label}");
     }
@@ -677,8 +748,122 @@ public sealed partial class MessageInputControl : UserControl
         UseSandboxItem.IsEnabled = _vm?.IsWorkspaceConfigured == true;
     }
 
-    private void Plan_Click(object sender, RoutedEventArgs e) =>
+    private void Plan_Click(object sender, RoutedEventArgs e)
+    {
         SetPermissionMode(AgentPermissionModes.Plan);
+        PermissionFlyout.Hide();
+    }
+
+    private void PermissionFlyout_Opened(object sender, object e)
+    {
+        UpdatePermissionModeButton();
+        NocturneMotion.RevealOverlay(PermissionFlyoutSurface);
+    }
+
+    private async Task RefreshReasoningDepthAsync()
+    {
+        if (_vm == null)
+            return;
+
+        try
+        {
+            await _vm.RefreshThinkingDepthAsync();
+            UpdateReasoningDepthButton();
+        }
+        catch
+        {
+            // The VM exposes the settings error. Keep the composer usable with
+            // its last known depth rather than failing the control load.
+            UpdateReasoningDepthButton();
+        }
+    }
+
+    private async void ReasoningSpectrum_ValueChanged(
+        object sender,
+        Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_syncingReasoningSpectrum || _vm == null)
+            return;
+
+        var depth = (int)Math.Round(e.NewValue) switch
+        {
+            0 => ReasoningDepths.Low,
+            1 => ReasoningDepths.Medium,
+            2 => ReasoningDepths.High,
+            _ => ReasoningDepths.Max
+        };
+
+        await SetThinkingDepthAsync(depth);
+    }
+
+    private async void ReasoningAuto_Click(object sender, RoutedEventArgs e)
+    {
+        await SetThinkingDepthAsync(ReasoningDepths.Auto);
+        ReasoningFlyout.Hide();
+    }
+
+    private async void ReasoningOff_Click(object sender, RoutedEventArgs e)
+    {
+        await SetThinkingDepthAsync(ReasoningDepths.Off);
+        ReasoningFlyout.Hide();
+    }
+
+    private async Task SetThinkingDepthAsync(string depth)
+    {
+        if (_vm == null)
+            return;
+
+        try
+        {
+            await _vm.SetThinkingDepthAsync(depth);
+            UpdateReasoningDepthButton();
+            Play(InteractionSound.Toggle);
+        }
+        catch
+        {
+            UpdateReasoningDepthButton();
+            Play(InteractionSound.Error);
+        }
+    }
+
+    private void ReasoningFlyout_Opened(object sender, object e)
+    {
+        UpdateReasoningDepthButton();
+        NocturneMotion.RevealOverlay(ReasoningFlyoutSurface);
+        NocturneMotion.StartBreathing(ReasoningPulse);
+    }
+
+    private void ReasoningFlyout_Closed(object sender, object e) =>
+        NocturneMotion.StopBreathing(ReasoningPulse);
+
+    private void UpdateReasoningDepthButton()
+    {
+        var depth = ReasoningDepths.Normalize(_vm?.SelectedThinkingDepth);
+        var (label, description) = depth switch
+        {
+            ReasoningDepths.Off => ("Off", "Reasoning is disabled when the selected model supports direct answers."),
+            ReasoningDepths.Low => ("Low", "Fast, lightweight reasoning for straightforward tasks."),
+            ReasoningDepths.Medium => ("Medium", "Balanced reasoning for everyday coding and analysis."),
+            ReasoningDepths.High => ("High", "Deeper reasoning for complex implementation work."),
+            ReasoningDepths.Max => ("Max", "Maximum available reasoning for the hardest tasks."),
+            _ => ("Auto", "The provider chooses an appropriate reasoning effort for this task.")
+        };
+
+        ReasoningDepthLabel.Text = label;
+        ReasoningDescription.Text = description;
+        ToolTipService.SetToolTip(ReasoningDepthButton, $"Reasoning: {label}. {description}");
+        AutomationProperties.SetName(ReasoningDepthButton, $"Reasoning effort: {label}");
+
+        _syncingReasoningSpectrum = true;
+        ReasoningSpectrum.Value = depth switch
+        {
+            ReasoningDepths.Low => 0,
+            ReasoningDepths.High => 2,
+            ReasoningDepths.Max => 3,
+            _ => 1
+        };
+        _syncingReasoningSpectrum = false;
+    }
 
     private static PermissionModeItem GetPermissionModeItem(string? mode)
     {
