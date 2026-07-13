@@ -194,6 +194,9 @@ public interface IProjectMemoryService
 
 public sealed class ProjectMemoryService : IProjectMemoryService
 {
+    private const string InitialMemoryContent =
+        "# Project Memory\n\nUse this file for stable project facts, preferences, and recurring instructions.\n";
+
     private readonly DbContext _db;
     private readonly string _appDataRoot;
 
@@ -218,14 +221,7 @@ public sealed class ProjectMemoryService : IProjectMemoryService
     public async Task<string> ReadAsync(Guid chatId, CancellationToken ct = default)
     {
         var path = await GetMemoryPathAsync(chatId, ct);
-        if (!File.Exists(path))
-        {
-            await File.WriteAllTextAsync(
-                path,
-                "# Project Memory\n\nUse this file for stable project facts, preferences, and recurring instructions.\n",
-                new UTF8Encoding(false),
-                ct);
-        }
+        await EnsureInitializedAsync(path, ct);
 
         return await ReadAllTextSharedAsync(path, ct);
     }
@@ -278,6 +274,47 @@ public sealed class ProjectMemoryService : IProjectMemoryService
             FileOptions.Asynchronous);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         return await reader.ReadToEndAsync(ct);
+    }
+
+    private static async Task EnsureInitializedAsync(string path, CancellationToken ct)
+    {
+        if (File.Exists(path))
+            return;
+
+        var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(
+                temporaryPath,
+                InitialMemoryContent,
+                new UTF8Encoding(false),
+                ct);
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                File.Move(temporaryPath, path, overwrite: false);
+            }
+            catch (IOException) when (File.Exists(path))
+            {
+                // Another service or process completed the atomic initialization first.
+            }
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (IOException)
+            {
+                // Cleanup is best-effort and must not hide the operation's result.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Cleanup is best-effort and must not hide the operation's result.
+            }
+        }
     }
 }
 
