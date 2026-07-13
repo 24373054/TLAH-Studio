@@ -776,7 +776,7 @@ public class FoundationServicesV2Tests : IDisposable
         Assert.Empty(second);
 
         var skills = await loader.LoadSkillsAsync();
-        Assert.Single(skills.Where(s => s.Name == "multi"));
+        Assert.Single(skills, s => s.Name == "multi");
     }
 
     [Fact]

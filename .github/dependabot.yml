@@ -11,6 +11,10 @@ updates:
     labels:
       - dependencies
       - needs-triage
+    ignore:
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+        update-types:
+          - "version-update:semver-major"
     groups:
       dotnet-runtime:
         patterns:

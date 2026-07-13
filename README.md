@@ -75,7 +75,7 @@ The app is local-first, not offline-only: chats and run records are persisted lo
 | Stable release | `4.12.0` |
 | Registered agent tools | `44` |
 | Bundled skills | `12` |
-| Automated test cases | `307` |
+| Automated test cases | `308` |
 | Test files | `31` |
 | MCP transports | STDIO + Streamable HTTP |
 | Official artifact | Windows x64, self-contained installer |

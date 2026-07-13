@@ -270,9 +270,9 @@ public class AgentServiceTests
             .Where(m => m.ChatId == chat.Id)
             .OrderBy(m => m.SequenceNum)
             .ToListAsync();
-        var fileSendMessage = Assert.Single(messages.Where(m =>
+        var fileSendMessage = Assert.Single(messages, m =>
             m.Role == "tool" &&
-            m.Content.Contains(MessageAttachmentFormatter.AttachmentsStart, StringComparison.Ordinal)));
+            m.Content.Contains(MessageAttachmentFormatter.AttachmentsStart, StringComparison.Ordinal));
         var parsed = MessageAttachmentFormatter.Extract(fileSendMessage.Content);
         var attachment = Assert.Single(parsed.Attachments);
         Assert.Equal("landscape.svg", attachment.RelativePath);

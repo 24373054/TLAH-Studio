@@ -27,10 +27,16 @@ Launch `TLAHStudio.App` from Visual Studio for a reliable WinUI debug environmen
 |---|---|
 | `dotnet test .\TLAHStudio.Core.Tests\TLAHStudio.Core.Tests.csproj -c Release` | Run all xUnit tests |
 | `dotnet test ... --filter "FullyQualifiedName~UpdateCryptoTests"` | Run a focused test class |
-| `.\tools\ci.ps1 -Configuration Release -Platform x64` | Restore, vulnerability audit, tests, App build, Updater build |
+| `.\tools\ci.ps1 -Configuration Release -Platform x64` | Restore, vulnerability audit, tests with Cobertura coverage, App build, Updater build |
 | `dotnet build .\TLAHStudio.App\TLAHStudio.App.csproj -c Release -p:Platform=x64 --no-restore` | Compile the release desktop app only |
 
-The CI gate must remain warning-free. It does not currently enforce a numeric code-coverage percentage.
+The CI gate must remain warning-free. Each run writes at least one
+`artifacts/test-results/coverage/**/coverage.cobertura.xml` report and fails if
+the collector produces no coverable lines. The test build enables portable
+symbols and isolates its binaries under `artifacts/test-results/build`, leaving
+release-package outputs unchanged. GitHub Actions retains the reports as the
+`coverage-cobertura` artifact for 14 days. The gate does not currently enforce
+a numeric code-coverage percentage.
 
 ## Style
 
@@ -45,7 +51,7 @@ No repository-wide formatter is configured. Match neighboring code and keep diff
 
 ## Test Strategy
 
-The 307-case suite covers agent state, permission modes, persistence, providers, tools, sandbox rules, privacy/redaction, updates, and release invariants. Add regression tests near the behavior being fixed. WinUI-only behavior should also receive a manual checklist covering:
+The 308-case suite covers agent state, permission modes, persistence, providers, tools, sandbox rules, privacy/redaction, updates, and release invariants. Add regression tests near the behavior being fixed. WinUI-only behavior should also receive a manual checklist covering:
 
 - Light and dark themes
 - 100%, 125%, 150%, and 200% display scaling where available
