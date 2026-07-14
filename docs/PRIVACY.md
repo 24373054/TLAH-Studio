@@ -1,6 +1,6 @@
 # Privacy and Data Flows
 
-Verified against TLAH Studio 4.12.0.
+Verified against TLAH Studio 4.13.0.
 
 TLAH Studio is local-first: its database, settings, run history, sandboxes, logs, and diagnostic exports are stored on the user's Windows profile by default. Local-first does not mean that all processing stays offline.
 
@@ -31,8 +31,10 @@ TLAH Studio does not currently include a general product telemetry SDK. External
 ## Permissions and Workspace Scope
 
 - The selected workspace or private sandbox determines the default filesystem scope.
-- Tool permission mode determines when reads, writes, commands, and risky operations require approval.
-- `Full access` intentionally allows broad host and network access and should be used only with trusted prompts and workspaces.
+- One authorization policy determines when reads, writes, commands, network access, and risky operations run, ask, or remain blocked at both preview and execution time.
+- Ask approval is scoped to the exact persisted tool invocation. Once approved, ordinary contextual policies cannot silently reject that invocation during resume or execution.
+- Approval arguments are read-only by default. Advanced edits require explicit opt-in, a valid JSON object, and the selected tool's input validation before persistence; never paste credentials into tool arguments unless the destination explicitly requires them.
+- `Full access` intentionally bypasses ordinary policy, host-path, network-allowlist, and sensitive-file restrictions. Only immutable catastrophic-operation guards and functional waits for user input remain. Use it only with trusted prompts and workspaces.
 - Restricted backends enforce application policies; they are not equivalent to VM isolation.
 
 ## Export, Diagnostics, and Deletion
@@ -51,4 +53,4 @@ Use [GitHub Private Vulnerability Reporting](https://github.com/24373054/TLAH-St
 
 TLAH Studio 采用本地优先存储，会话、设置、运行记录、沙箱和日志默认保存在当前 Windows 用户目录中。但模型请求会把提示词和所选上下文发送到用户配置的模型端点；MCP、网页/HTTP、远程执行和更新功能在使用时也会连接外部服务。
 
-API Key 使用 Windows DPAPI 支持的保护机制，调试和导出路径会在已实现的位置进行脱敏，但这不能抵御当前 Windows 用户会话已经被攻破的情况。`完全访问` 会按设计允许广泛的宿主机和网络访问。分享诊断导出前必须人工检查，隐私或安全问题请通过私密漏洞报告提交。
+API Key 使用 Windows DPAPI 支持的保护机制，调试和导出路径会在已实现的位置进行脱敏，但这不能抵御当前 Windows 用户会话已经被攻破的情况。Ask 批准只授权已持久化的精确工具调用；审批参数默认只读，显式编辑后必须通过 JSON 与工具输入校验。`完全访问` 会按设计绕过普通的策略、宿主机路径、网络允许列表与敏感文件限制，仅保留灾难级操作硬阻断和必要的用户交互等待。分享诊断导出前必须人工检查，隐私或安全问题请通过私密漏洞报告提交。

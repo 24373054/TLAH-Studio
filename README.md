@@ -41,7 +41,7 @@ TLAH Studio is designed for work that needs more than a chat box. It keeps agent
 
 | Native | Observable | Controlled | Extensible |
 |---|---|---|---|
-| WinUI 3 desktop shell with Windows-native input, theming, and window behavior | Agent steps, tool calls, checkpoints, artifacts, raw provider payloads, and debug traces | Ask, Plan, Auto approve, and Full access are separate from reasoning effort | OpenAI-compatible and Anthropic protocols, MCP, skills, and trusted local plugin manifests |
+| WinUI 3 desktop shell with Windows-native input, theming, and window behavior | Agent steps, tool calls, checkpoints, artifacts, raw provider payloads, and debug traces | One permission matrix keeps Ask approvals executable and Full access predictable | OpenAI-compatible and Anthropic protocols, MCP, skills, and trusted local plugin manifests |
 
 The app is local-first, not offline-only: chats and run records are persisted locally, while prompts or tool data leave the device only through providers, MCP servers, web/HTTP tools, remote execution, or update endpoints that the user configures or invokes.
 
@@ -49,11 +49,11 @@ The app is local-first, not offline-only: chats and run records are persisted lo
 
 | Area | What is included |
 |---|---|
-| **Agent runtime** | Multi-step execution, cancellation, pause/resume, checkpoints, artifacts, tasks, stop records, and Activity replay |
+| **Agent runtime** | Multi-step execution, bounded provider retry, failure-aware replanning, adaptive step budgets, pause/resume, checkpoints, artifacts, tasks, and Activity replay |
 | **Workspace tooling** | File and code operations, Git, PowerShell execution, private chat sandboxes, and a Changes review surface |
 | **Reasoning and permissions** | Independent `Auto / Off / Low / Medium / High / Max` reasoning controls plus four tool permission modes |
 | **Providers and MCP** | Anthropic and OpenAI-compatible HTTP protocols; MCP over STDIO and Streamable HTTP with tools and resources |
-| **Context and memory** | Token budgeting, reactive compaction, project/session memory, persistent large tool outputs, and slash commands |
+| **Context and memory** | Adaptive long-chain budgeting, reactive compaction, project/session memory, persistent large tool outputs, and slash commands |
 | **Debuggability** | Secret-redacted provider request/response capture, run events, diagnostics export, and local audit data |
 | **Desktop experience** | Light/dark themes, responsive right workbench, virtualized long conversations, settings search, sounds, and reduced-motion support |
 | **Updates** | ECDSA-signed update metadata, SHA-256 installer verification, staged rollout, minimum-version enforcement, and atomic deployment |
@@ -66,17 +66,22 @@ The app is local-first, not offline-only: chats and run records are persisted lo
 | Reasoning effort | Auto · Off · Low · Medium · High · Max | Selects model reasoning depth independently of permissions |
 | Workspace | Selected folder · Private sandbox | Contains file, Git, and command operations for each chat |
 
-`Full access` can reach the host and network. Restricted execution is policy- and backend-based; it is not a VM security boundary. Use trusted workspaces and review tool requests before approval.
+| Permission mode | Authorization behavior |
+|---|---|
+| Ask | Runs safe operations directly and requests a decision for risky or contextually restricted invocations. Approval authorizes that exact persisted invocation through execution and resume. |
+| Plan | Keeps exploration read-first and requests approval before write or destructive work. |
+| Auto approve | Runs ordinary operations automatically but still asks for contextual restrictions and sensitive repository, environment, or shell paths. |
+| Full access | Bypasses ordinary approval, stored-policy, host-path, network-allowlist, and sensitive-file restrictions. Only immutable catastrophic-operation guards and required user-interaction pauses remain. |
+
+Approval arguments are read-only by default. Advanced edits require explicit opt-in and must be a valid JSON object accepted by the target tool before they replace the persisted invocation. Restricted execution is policy- and backend-based; it is not a VM security boundary. Use Full access only with trusted prompts and workspaces.
 
 ## Project snapshot
 
 | Metric | Current repository state |
 |---|---:|
-| Stable release | `4.12.0` |
+| Stable release | `4.13.0` |
 | Registered agent tools | `44` |
 | Bundled skills | `12` |
-| Automated test cases | `308` |
-| Test files | `31` |
 | MCP transports | STDIO + Streamable HTTP |
 | Official artifact | Windows x64, self-contained installer |
 
@@ -116,7 +121,7 @@ The primary dependency direction is `App → Core + Data`, `Data → Core`, and 
 | CommunityToolkit.Mvvm | `8.4.0` |
 | Entity Framework Core | `8.0.28` |
 | SQLite | Local embedded persistence |
-| xUnit / coverlet | `2.5.3` / `6.0.0` |
+| xUnit / coverlet | `2.9.3` / `10.0.1` |
 | Inno Setup | User-level x64 installer |
 
 ## Install
@@ -168,7 +173,7 @@ deploy/download-page/    Download site assets and service configuration
 - API keys use Windows DPAPI-backed protection and are redacted from diagnostic payloads.
 - Conversations, settings, run history, and audit records are stored in local SQLite by default.
 - Provider prompts/responses are transmitted to the endpoint selected by the user; web, HTTP, MCP, remote execution, and update operations also communicate externally when used.
-- Tool requests pass through safety classification and permission gates, but `Full access` intentionally relaxes those restrictions.
+- Tool requests pass through centralized safety and authorization. `Full access` intentionally bypasses ordinary restrictions but never the immutable catastrophic-operation guard.
 - Security reports should use [GitHub Private Vulnerability Reporting](https://github.com/24373054/TLAH-Studio/security/advisories/new), not a public issue.
 
 Read [SECURITY.md](./SECURITY.md) and [Privacy and data flows](./docs/PRIVACY.md) before using sensitive workspaces.

@@ -1,6 +1,6 @@
 # Development Guide
 
-Verified against TLAH Studio 4.12.0.
+Verified against TLAH Studio 4.13.0.
 
 ## Prerequisites
 
@@ -27,6 +27,8 @@ Launch `TLAHStudio.App` from Visual Studio for a reliable WinUI debug environmen
 |---|---|
 | `dotnet test .\TLAHStudio.Core.Tests\TLAHStudio.Core.Tests.csproj -c Release` | Run all xUnit tests |
 | `dotnet test ... --filter "FullyQualifiedName~UpdateCryptoTests"` | Run a focused test class |
+| `dotnet test ... --filter "FullyQualifiedName~ToolAuthorizationPolicyTests"` | Run the centralized permission-matrix tests |
+| `dotnet test ... --filter "FullyQualifiedName~AgentToolApprovalTests"` | Run exact-invocation approval and argument-validation tests |
 | `.\tools\ci.ps1 -Configuration Release -Platform x64` | Restore, vulnerability audit, tests with Cobertura coverage, App build, Updater build |
 | `dotnet build .\TLAHStudio.App\TLAHStudio.App.csproj -c Release -p:Platform=x64 --no-restore` | Compile the release desktop app only |
 
@@ -51,7 +53,11 @@ No repository-wide formatter is configured. Match neighboring code and keep diff
 
 ## Test Strategy
 
-The 308-case suite covers agent state, permission modes, persistence, providers, tools, sandbox rules, privacy/redaction, updates, and release invariants. Add regression tests near the behavior being fixed. WinUI-only behavior should also receive a manual checklist covering:
+The automated suite covers agent state, permission modes, persistence, providers, tools, sandbox rules, privacy/redaction, updates, and release invariants. Add regression tests near the behavior being fixed. Permission changes must test the same operation at preview and execution boundaries, including exact Ask approval, Full access, immutable blocks, contextual restrictions, and edited arguments. Long-run changes must cover provider retry/reset, checkpointed pause/resume, repeated tool failure, explicit recovery questions, and soft-budget extension.
+
+The default command runtime limit is 120 seconds. Tests should use smaller explicit timeouts where possible so failure cases remain fast, while production paths must preserve cancellation and terminate child process trees.
+
+WinUI-only behavior should also receive a manual checklist covering:
 
 - Light and dark themes
 - 100%, 125%, 150%, and 200% display scaling where available
@@ -60,6 +66,9 @@ The 308-case suite covers agent state, permission modes, persistence, providers,
 - Keyboard focus and screen-reader names
 - Reduced motion
 - Long conversations, Activity runs, and large diffs
+- Ask approval followed by actual execution, including optional validated argument edits
+- Full access for ordinary host/network work and hard rejection of a catastrophic command fixture
+- Provider interruption, visible stream reset, paused state, and resume from the saved checkpoint
 
 ## Local Data
 

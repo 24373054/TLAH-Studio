@@ -6,10 +6,10 @@ This directory separates current operational guidance from historical design rec
 
 | Guide | Scope | Verified against |
 |---|---|---|
-| [Architecture](./ARCHITECTURE.md) | Runtime, persistence, tools, MCP, and update topology | 4.12.0 |
-| [Development](./DEVELOPMENT.md) | Environment, commands, conventions, and testing | 4.12.0 |
-| [Release and signing](./RELEASING.md) | Version sync, CI, Authenticode, manifest signing, and deployment | 4.12.0 |
-| [Privacy and data flows](./PRIVACY.md) | Local storage, external endpoints, export, and deletion | 4.12.0 |
+| [Architecture](./ARCHITECTURE.md) | Runtime, persistence, permissions, recovery, tools, MCP, and update topology | 4.13.0 |
+| [Development](./DEVELOPMENT.md) | Environment, commands, conventions, permission/recovery testing, and CI | 4.13.0 |
+| [Release and signing](./RELEASING.md) | Version sync, CI, Authenticode, manifest signing, and deployment | 4.13.0 |
+| [Privacy and data flows](./PRIVACY.md) | Local storage, external endpoints, permission boundaries, export, and deletion | 4.13.0 |
 | [Security policy](../SECURITY.md) | Supported versions and private reporting | Current stable |
 | [Contributing](../CONTRIBUTING.md) | Contribution workflow and quality gates | Current stable |
 

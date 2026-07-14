@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: TLAH Studio version
-      placeholder: 4.12.0
+      placeholder: 4.13.0
     validations:
       required: true
   - type: input
@@ -65,7 +65,7 @@ body:
     id: environment
     attributes:
       label: Relevant configuration
-      description: Provider protocol/model, permission mode, reasoning setting, workspace mode, and execution backend. Never include credentials.
+      description: Provider protocol/model, exact permission mode, approval result, reasoning setting, workspace mode, execution backend, whether the run retried or resumed, and any non-default timeout. Never include credentials.
   - type: textarea
     id: evidence
     attributes:

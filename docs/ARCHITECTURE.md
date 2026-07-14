@@ -1,6 +1,6 @@
 # Architecture
 
-Verified against TLAH Studio 4.12.0.
+Verified against TLAH Studio 4.13.0.
 
 ## System Context
 
@@ -47,7 +47,7 @@ sequenceDiagram
     participant L as LlmService
     participant E as AgentRunEngineV2
     participant P as Provider adapter
-    participant G as Safety / permission gate
+    participant G as Safety / authorization policy
     participant T as Tool lifecycle
     participant D as SQLite
 
@@ -65,7 +65,7 @@ sequenceDiagram
     E-->>UI: stream frames and final state
 ```
 
-`AgentRunEngineV2` owns the multi-step loop and emits typed frames. Activity subscribes to the current run and can reconstruct completed or cancelled runs from persisted events. Large tool outputs can be written under `.tlah_context/tool-results/` instead of retaining full text in memory.
+`AgentRunEngineV2` owns the multi-step loop and emits typed frames. Activity subscribes to the current run and can reconstruct completed, paused, or cancelled runs from persisted events. Large tool outputs can be written under `.tlah_context/tool-results/` instead of retaining full text in memory.
 
 ## Tool Lifecycle and Safety
 
@@ -75,7 +75,7 @@ Forty-four `IAgentTool` implementations are registered in the desktop host. They
 flowchart LR
     REQUEST[Model tool request] --> PARSE[Schema / protocol validation]
     PARSE --> CLASSIFY[Safety classification]
-    CLASSIFY --> PERMISSION[Permission mode gate]
+    CLASSIFY --> PERMISSION[Unified authorization policy]
     PERMISSION --> PREVIEW[Effect preview / hooks]
     PREVIEW --> ROUTE[Backend routing]
     ROUTE --> RUN[Execute]
@@ -83,18 +83,39 @@ flowchart LR
     RUN --> ROLLBACK[Rollback metadata when supported]
 ```
 
-The restricted local backend uses command, path, protocol, resource, and approval policies. It does not create a hardened OS isolation boundary. WSL and Docker require local installation; remote execution requires an explicitly configured endpoint and credential.
+`ToolAuthorizationPolicy` is the single decision matrix used by planning, approval, resume, lifecycle, and execution boundaries. Safety classification describes an operation; authorization decides whether the current mode may run it, must ask, or must block it.
+
+| Mode | Runtime contract |
+|---|---|
+| Ask | Safe operations may run immediately. A risky or contextually restricted invocation pauses for a decision; approval authorizes that exact persisted invocation through resume and execution. |
+| Plan | Exploration remains read-first; write or destructive operations require approval. |
+| Auto approve | Ordinary work runs automatically, while contextual restrictions and sensitive repository/environment/shell paths still require approval. |
+| Full access | Ordinary policy denies, host-path boundaries, network allowlists, and sensitive-path prompts are bypassed. Immutable catastrophic operations remain blocked; interaction tools may still pause because they require user input. |
+
+The immutable guard is deliberately narrow: catastrophic root-recursive deletion and disk, boot, or account destruction cannot be approved in any mode. Other high-risk or contextual restrictions remain reviewable instead of becoming accidental permanent blocks. Approval payloads are read-only by default; an explicit edit must parse as a JSON object and pass the selected tool's validator before the persisted invocation changes.
+
+The restricted local backend uses command, path, protocol, resource, and approval policies. It does not create a hardened OS isolation boundary. WSL and Docker require local installation; remote execution requires an explicitly configured endpoint and credential. The default command runtime limit is 120 seconds unless settings or a tool request select another supported value.
+
+## Long-Run Recovery
+
+- Anthropic and OpenAI-compatible streaming adapters require a terminal marker. A truncated stream is a provider failure, not a successful partial answer.
+- HTTP 408/429/5xx responses, network failures, timeouts, empty responses, and incomplete streams receive up to three bounded attempts. The UI stream is reset before a retry so discarded partial text is not duplicated.
+- Exhausted transient provider failures persist the latest checkpoint and place the run in `Paused`; resume retains the selected permission mode and continues from durable state.
+- A failed tool records a redacted failure summary and invocation signature. The next model step is instructed to change tool, command, arguments, or scope instead of repeating the same call.
+- If recovery still produces no viable action, the engine creates an `ask_user_question` choice rather than marking the run complete.
+- The normal 48-step budget is a soft boundary. Recent progress or unresolved recovery can extend it by 24 steps at a time up to 192; user-initiated resume may add budget, while approval completion does not.
 
 ## Context, Memory, and Persistence
 
 - `TlahDbContext` persists chats, messages, turns, provider traces, runs, steps, events, checkpoints, artifacts, tasks, settings, MCP configuration, and audit entries.
 - Reactive compaction progressively trims tool output, creates summaries, and finally applies emergency truncation when the token budget requires it.
+- Checkpoints include recovery counters, the latest failed invocation signature, permission state, resume count, and adaptive-budget state so reopening cannot erase failure or authorization context.
 - Project and session memory are injected as structured runtime context.
 - Migrations are forward-only lightweight SQL operations (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ADD COLUMN`) rather than standard EF migration bundles.
 
 ## Providers, MCP, and Plugins
 
-- Provider adapters directly use `HttpClient` for Anthropic and OpenAI-compatible protocols. Streaming and non-streaming paths share persistence and redaction behavior.
+- Provider adapters directly use `HttpClient` for Anthropic and OpenAI-compatible protocols. Streaming and non-streaming paths share persistence and redaction behavior; streamed responses additionally prove terminal completion before they are accepted.
 - MCP supports STDIO and Streamable HTTP, including tool discovery/calls and resource list/read.
 - Skills may be bundled, user-managed, project-scoped, or activated through trusted local plugin manifests.
 - Plugin support currently centers on skills and MCP activation; it should not be treated as a general marketplace or arbitrary managed-code extension boundary.
@@ -120,4 +141,4 @@ Authenticode is a separate executable signature. The current project certificate
 - Official release automation produces Windows x64 artifacts only, even though the app project declares additional runtime identifiers.
 - Code diagnostics and symbol discovery are lightweight and do not represent a complete LSP implementation.
 - Team/workspace configuration is local; there is no real-time cloud collaboration backend.
-- Full access intentionally bypasses most approval restrictions and must be treated as host-level access.
+- Full access intentionally bypasses ordinary approval and contextual restrictions and must be treated as host-level access; it is not a promise to execute immutable catastrophic operations.
