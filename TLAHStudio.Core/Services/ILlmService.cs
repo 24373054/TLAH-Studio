@@ -105,7 +105,7 @@ public record ConnectionTestResult(bool Success, string Message, int? StatusCode
 
 public sealed record AgentRunOptions(
     int MaxSteps = 48,
-    int CommandTimeoutSeconds = 20,
+    int CommandTimeoutSeconds = 120,
     int MaxCommandOutputChars = 12000,
     bool AutoApproveTools = false,
     IProgress<LlmStreamUpdate>? OutputStream = null,

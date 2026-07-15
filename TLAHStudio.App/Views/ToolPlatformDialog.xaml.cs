@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.Extensions.DependencyInjection;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.Core.Services.Plugins;
 
@@ -227,7 +228,8 @@ public sealed partial class ToolPlatformDialog : ContentDialog
     {
         try
         {
-            var pluginService = App.Services.GetService(typeof(IPluginManifestService)) as IPluginManifestService;
+            await using var scope = App.Services.CreateAsyncScope();
+            var pluginService = scope.ServiceProvider.GetService<IPluginManifestService>();
             if (pluginService == null)
             {
                 PluginSummaryText.Text = "Plugin service not available.";
@@ -256,8 +258,9 @@ public sealed partial class ToolPlatformDialog : ContentDialog
             return;
         try
         {
-            var pluginService = App.Services.GetService(typeof(IPluginManifestService)) as IPluginManifestService;
-            var activation = App.Services.GetService(typeof(IPluginActivationService)) as IPluginActivationService;
+            await using var scope = App.Services.CreateAsyncScope();
+            var pluginService = scope.ServiceProvider.GetService<IPluginManifestService>();
+            var activation = scope.ServiceProvider.GetService<IPluginActivationService>();
             if (pluginService == null)
                 return;
 
@@ -304,7 +307,8 @@ public sealed partial class ToolPlatformDialog : ContentDialog
         // plugins' skills/MCP servers are wired into the live subsystems.
         try
         {
-            if (App.Services.GetService(typeof(IPluginActivationService)) is IPluginActivationService activation)
+            await using var scope = App.Services.CreateAsyncScope();
+            if (scope.ServiceProvider.GetService<IPluginActivationService>() is { } activation)
                 await activation.ActivateAllAsync();
         }
         catch { }

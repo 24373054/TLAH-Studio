@@ -139,6 +139,8 @@ public sealed class SandboxCommandService : ISandboxCommandService
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
         var timedOut = false;
+        var processStarted = false;
+        string? uncertainError = null;
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 1, 120)));
@@ -149,6 +151,7 @@ public sealed class SandboxCommandService : ISandboxCommandService
         try
         {
             process.Start();
+            processStarted = true;
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             await process.WaitForExitAsync(timeoutCts.Token);
@@ -156,6 +159,30 @@ public sealed class SandboxCommandService : ISandboxCommandService
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             timedOut = true;
+            TryKill(process);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            if (processStarted)
+                TryKill(process);
+            throw;
+        }
+        catch (Exception ex) when (!processStarted)
+        {
+            return new SandboxCommandResult(
+                command,
+                sandboxRoot,
+                ExitCode: -1,
+                TimedOut: false,
+                Duration: sw.Elapsed,
+                StandardOutput: string.Empty,
+                StandardError: string.Empty,
+                BlockedReason: $"Sandbox process could not start: {SecretRedactor.RedactText(ex.Message)}",
+                DestructiveWarning: destructiveWarning);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            uncertainError = SecretRedactor.RedactText(ex.Message);
             TryKill(process);
         }
 
@@ -169,7 +196,14 @@ public sealed class SandboxCommandService : ISandboxCommandService
             sw.Elapsed,
             SecretRedactor.RedactText(stdout.ToString()),
             SecretRedactor.RedactText(stderr.ToString()),
-            DestructiveWarning: destructiveWarning);
+            BlockedReason: timedOut
+                ? "Sandbox command timed out."
+                : uncertainError == null
+                    ? null
+                    : $"Sandbox command transport failed: {uncertainError}",
+            DestructiveWarning: destructiveWarning,
+            OutcomeUncertain: timedOut || uncertainError != null,
+            MayHaveCommitted: timedOut || uncertainError != null);
     }
 
     private static string? ValidateCommand(string command, string sandboxRoot)

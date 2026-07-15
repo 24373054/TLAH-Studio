@@ -23,6 +23,41 @@ public sealed record AgentRunState
     public int TokenBudgetUsed { get; set; }
     public Guid? PendingToolInvocationId { get; set; }
     public int ContextErrorCount { get; set; }
+    // M4.13.0: Durable recovery state. These counters deliberately live in the
+    // checkpoint rather than local loop variables so approval/app restarts do
+    // not reset loop detection or silently forget an unresolved failure.
+    public int ConsecutiveToolFailures { get; set; }
+    public int ConsecutiveProviderFailures { get; set; }
+    public int RepeatedFailureCount { get; set; }
+    public int CompletionRecoveryAttempts { get; set; }
+    public int RecoveryAttempts { get; set; }
+    public int ResumeCount { get; set; }
+    public int BudgetExtensionCount { get; set; }
+    public int SuccessfulToolCalls { get; set; }
+    public int LastSuccessfulStep { get; set; } = -1;
+    public string? LastFailedInvocationSignature { get; set; }
+    public string? LastFailedToolName { get; set; }
+    public string? LastFailureSummary { get; set; }
+    public bool RecoveryDirectivePending { get; set; }
+    // A failure is resolved only by a materially different action taken after
+    // the corresponding recovery directive. Persist both sides of that proof
+    // so an approval/app restart cannot accidentally turn unrelated success
+    // into recovery.
+    public string? RecoveryDirectiveIssuedForFailureSignature { get; set; }
+    public string? LastRecoveryCandidateInvocationSignature { get; set; }
+    // Approval-mode batches are intentionally reduced to one provider call so
+    // every assistant tool_call remains paired with exactly one tool result.
+    // Siblings stay durable here and are re-proposed to the model as user
+    // context; they are never injected back as orphan provider tool calls.
+    public List<LlmToolCall> DeferredToolCalls { get; set; } = [];
+    public bool DeferredToolDirectivePending { get; set; }
+    public int DeferredToolRecoveryAttempts { get; set; }
+    public int InvalidToolCallRecoveryAttempts { get; set; }
+    public int OpenTaskCompletionRecoveryAttempts { get; set; }
+    // A tool may have produced side effects even if result/checkpoint
+    // persistence failed. This state prevents automatic replay on resume.
+    public Guid? UnknownOutcomeInvocationId { get; set; }
+    public string? UnknownOutcomeSummary { get; set; }
     public int LastCompactedStep { get; set; } = -100;
     public int LastCompactedTokenEstimate { get; set; }
     public bool CompactionDisabled { get; set; }
@@ -48,6 +83,7 @@ public sealed record AgentRunState
             ToolCalls = m.ToolCalls?.Select(tc => tc with { }).ToList(),
             ToolCallId = m.ToolCallId
         }).ToList(),
+        DeferredToolCalls = DeferredToolCalls.Select(tc => tc with { }).ToList(),
         // M4.9.0: Deep-copy SentSkillNames so resume doesn't share state.
         SentSkillNames = new HashSet<string>(SentSkillNames, SentSkillNames.Comparer)
     };
@@ -124,7 +160,7 @@ public sealed record StreamingMetricsSnapshot(
 /// </summary>
 public sealed record AgentEngineOptions(
     int MaxSteps = 48,
-    int CommandTimeoutSeconds = 20,
+    int CommandTimeoutSeconds = 120,
     int MaxCommandOutputChars = 12000,
     bool AutoApproveTools = false,
     int ContextBudgetTokens = 32_000,

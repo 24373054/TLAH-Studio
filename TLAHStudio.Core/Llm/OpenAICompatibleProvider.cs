@@ -253,6 +253,7 @@ public class OpenAICompatibleProvider : ILlmProvider
         var toolBuilders = new Dictionary<int, OpenAIToolCallBuilder>();
         Dictionary<string, int>? tokenUsage = null;
         var textStarted = false;
+        var sawTerminalMarker = false;
         var pendingDelta = new StringBuilder(); // M4.4.5: SSE batching accumulator
 
         await using var streamBody = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
@@ -266,7 +267,10 @@ public class OpenAICompatibleProvider : ILlmProvider
 
             var data = line["data:".Length..].Trim();
             if (data == "[DONE]")
+            {
+                sawTerminalMarker = true;
                 break;
+            }
 
             chunks.Add(data);
             try
@@ -282,6 +286,11 @@ public class OpenAICompatibleProvider : ILlmProvider
 
                 foreach (var choice in choices.EnumerateArray())
                 {
+                    if (choice.TryGetProperty("finish_reason", out var finishReason) &&
+                        finishReason.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+                    {
+                        sawTerminalMarker = true;
+                    }
                     if (!choice.TryGetProperty("delta", out var delta) ||
                         delta.ValueKind != JsonValueKind.Object)
                         continue;
@@ -389,6 +398,7 @@ public class OpenAICompatibleProvider : ILlmProvider
             rawResponse["reasoning_text"] = thinking.ToString();
         if (tokenUsage != null)
             rawResponse["usage"] = tokenUsage;
+        rawResponse["stream_complete"] = sawTerminalMarker;
 
         var toolCallsResult = toolBuilders
             .OrderBy(kv => kv.Key)
@@ -403,6 +413,7 @@ public class OpenAICompatibleProvider : ILlmProvider
             (int)sw.ElapsedMilliseconds,
             text.ToString(),
             tokenUsage,
+            Error: sawTerminalMarker ? null : "Provider stream ended before a terminal marker was received.",
             ToolCalls: toolCallsResult,
             ReasoningText: thinking.Length == 0 ? null : thinking.ToString());
     }

@@ -19,22 +19,36 @@ public sealed record ToolSafetyAssessment(
     bool IsWriteOperation,
     bool RequiresExplicitApproval,
     bool IsBlocked,
+    bool CanOverrideBlock,
     bool BypassImmune,
     string Summary,
     string? Warning,
     string PreviewJson)
 {
     public static ToolSafetyAssessment LowRead(string category, string summary, object? preview = null) =>
-        Create(ToolSafetyLevels.Low, category, true, false, false, false, false, summary, null, preview);
+        Create(ToolSafetyLevels.Low, category, true, false, false, false, false, false, summary, null, preview);
 
     public static ToolSafetyAssessment Medium(string category, bool isReadOnly, bool isWrite, string summary, object? preview = null) =>
-        Create(ToolSafetyLevels.Medium, category, isReadOnly, isWrite, false, false, false, summary, null, preview);
+        Create(ToolSafetyLevels.Medium, category, isReadOnly, isWrite, false, false, false, false, summary, null, preview);
 
     public static ToolSafetyAssessment High(string category, bool isWrite, string summary, string warning, object? preview = null, bool bypassImmune = false) =>
-        Create(ToolSafetyLevels.High, category, false, isWrite, true, false, bypassImmune, summary, warning, preview);
+        Create(ToolSafetyLevels.High, category, false, isWrite, true, false, false, bypassImmune, summary, warning, preview);
 
     public static ToolSafetyAssessment Blocked(string category, string summary, string warning, object? preview = null) =>
-        Create(ToolSafetyLevels.Blocked, category, false, true, false, true, false, summary, warning, preview);
+        Create(ToolSafetyLevels.Blocked, category, false, true, false, true, false, false, summary, warning, preview);
+
+    /// <summary>
+    /// A contextual restriction that Ask mode may override once and Full access
+    /// may bypass. Invalid input and catastrophic operations must use Blocked.
+    /// </summary>
+    public static ToolSafetyAssessment Restricted(
+        string category,
+        string summary,
+        string warning,
+        object? preview = null,
+        bool isReadOnly = false,
+        bool isWrite = true) =>
+        Create(ToolSafetyLevels.Blocked, category, isReadOnly, isWrite, true, true, true, false, summary, warning, preview);
 
     private static ToolSafetyAssessment Create(
         string level,
@@ -43,6 +57,7 @@ public sealed record ToolSafetyAssessment(
         bool isWrite,
         bool requiresExplicitApproval,
         bool isBlocked,
+        bool canOverrideBlock,
         bool bypassImmune,
         string summary,
         string? warning,
@@ -55,6 +70,7 @@ public sealed record ToolSafetyAssessment(
             isWrite,
             requiresExplicitApproval,
             isBlocked,
+            canOverrideBlock,
             bypassImmune,
             summary,
             warning,
@@ -144,19 +160,43 @@ public static partial class ToolSafetyKernel
         if (string.IsNullOrWhiteSpace(command))
             return ToolSafetyAssessment.Blocked("command", $"{label} is empty.", "The command argument is required.");
 
-        var lower = command.ToLowerInvariant();
+        var catastrophic = CatastrophicCommandAnalyzer.Analyze(command, sandboxRoot);
+        if (catastrophic.IsCatastrophic)
+        {
+            return ToolSafetyAssessment.Blocked(
+                "command",
+                $"{label} contains a catastrophic system or root deletion operation.",
+                "Catastrophic disk, boot, account, or root-recursive deletion commands cannot be approved in any permission mode.",
+                new { command, evidence = catastrophic.Evidence });
+        }
+
+        if (catastrophic.IsOpaque)
+        {
+            return ToolSafetyAssessment.High(
+                "command",
+                isWrite: true,
+                $"{label} uses a script or wrapper whose contents cannot be fully inspected.",
+                "Review the wrapper payload carefully. Full access may execute it, but static analysis cannot prove its effects.",
+                new { command, evidence = catastrophic.Evidence });
+        }
+
+        var pathScanText = PathRelevantCommandText(command);
+        var lowerPathScanText = pathScanText.ToLowerInvariant();
         foreach (var marker in ProtectedPathMarkers)
         {
-            if (lower.Contains(marker, StringComparison.Ordinal))
+            if (lowerPathScanText.Contains(marker, StringComparison.Ordinal))
             {
-                return ToolSafetyAssessment.Blocked(
+                return ToolSafetyAssessment.Restricted(
                     "path",
                     $"{label} references a protected host path marker.",
-                    $"Blocked marker: {marker}");
+                    $"Restricted marker: {marker}",
+                    new { command, marker },
+                    isReadOnly: ReadOnlyCommandRegex().IsMatch(command),
+                    isWrite: !ReadOnlyCommandRegex().IsMatch(command));
             }
         }
 
-        foreach (Match match in AbsoluteWindowsPathRegex().Matches(command))
+        foreach (Match match in AbsoluteWindowsPathRegex().Matches(pathScanText))
         {
             var rawPath = match.Groups[1].Value.Trim();
             try
@@ -164,10 +204,13 @@ public static partial class ToolSafetyKernel
                 var fullPath = Path.GetFullPath(rawPath);
                 if (!IsUnderDirectory(fullPath, sandboxRoot))
                 {
-                    return ToolSafetyAssessment.Blocked(
+                    return ToolSafetyAssessment.Restricted(
                         "path",
                         $"{label} references an absolute host path outside the sandbox.",
-                        rawPath);
+                        rawPath,
+                        new { command, path = rawPath },
+                        isReadOnly: ReadOnlyCommandRegex().IsMatch(command),
+                        isWrite: !ReadOnlyCommandRegex().IsMatch(command));
                 }
             }
             catch
@@ -181,11 +224,24 @@ public static partial class ToolSafetyKernel
 
         if (SystemDestructiveCommandRegex().IsMatch(command))
         {
-            return ToolSafetyAssessment.Blocked(
+            return ToolSafetyAssessment.High(
                 "command",
+                isWrite: true,
                 $"{label} contains a system-level destructive or privileged operation.",
-                "This command is blocked before execution.",
+                "Review the command carefully. Ask mode requires approval; Full access may execute it unless it is catastrophic.",
                 new { command });
+        }
+
+        if (BypassImmunePathRegex().IsMatch(pathScanText) &&
+            !ReadOnlyCommandRegex().IsMatch(command))
+        {
+            return ToolSafetyAssessment.High(
+                "path",
+                isWrite: true,
+                "This command targets a sensitive repository, environment, or shell configuration path.",
+                "Review the exact target. Ask and Auto modes require explicit approval.",
+                new { command },
+                bypassImmune: true);
         }
 
         if (DangerousCommandRegex().IsMatch(command))
@@ -216,21 +272,6 @@ public static partial class ToolSafetyKernel
                 new { command });
         }
 
-        // M4.6.0: Bypass-immune check — operations on .git/, .env, and shell
-        // config files ALWAYS require explicit approval, even in BypassPermissions
-        // mode. These are critical files whose modification can cause data loss or
-        // security issues regardless of the agent's permission level.
-        if (BypassImmunePathRegex().IsMatch(command))
-        {
-            return ToolSafetyAssessment.High(
-                "path",
-                isWrite: true,
-                $"This command targets a protected file or directory (.git/, .env, shell config).",
-                "Protected paths require explicit user approval in all permission modes.",
-                new { command },
-                bypassImmune: true);
-        }
-
         return ToolSafetyAssessment.Medium(
             "command",
             isReadOnly: false,
@@ -240,9 +281,9 @@ public static partial class ToolSafetyKernel
     }
 
     /// <summary>
-    /// M4.6.0: Returns a bypass-immune High assessment if the path targets a
-    /// protected file or directory (.git/, .env, shell configs). Returns null
-    /// if the path is safe.
+    /// Returns a sensitive-path High assessment for repository metadata,
+    /// environment files, and shell configuration. Ask/Auto require approval;
+    /// Full access may proceed because this is not a catastrophic hard deny.
     /// </summary>
     private static ToolSafetyAssessment? CheckBypassImmunePath(string fullPath)
     {
@@ -257,7 +298,7 @@ public static partial class ToolSafetyKernel
                 "path",
                 isWrite: true,
                 $"This operation targets a protected file or directory ({fileName}).",
-                "Protected paths require explicit user approval in all permission modes.",
+                "Ask and Auto modes require explicit approval for sensitive paths.",
                 new { path = fullPath },
                 bypassImmune: true);
         }
@@ -271,13 +312,24 @@ public static partial class ToolSafetyKernel
         string category)
     {
         var rawPath = ReadString(root, "path", ".");
-        var resolved = ResolvePath(sandbox, chatId, rawPath);
-        return resolved.Error == null
-            ? ToolSafetyAssessment.LowRead(category, $"{category} is constrained to the chat sandbox.", new
-            {
-                path = resolved.RelativePath
-            })
-            : ToolSafetyAssessment.Blocked("path", $"{category} path escapes the chat sandbox.", resolved.Error);
+        var resolved = ResolvePathForAuthorization(sandbox, chatId, rawPath);
+        if (resolved.Error != null)
+            return ToolSafetyAssessment.Blocked("path", $"{category} path is invalid.", resolved.Error);
+        if (resolved.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                $"{category} targets a host path outside the chat sandbox.",
+                "Ask mode requires approval for this exact path; Full access may proceed.",
+                new { path = resolved.FullPath },
+                isReadOnly: true,
+                isWrite: false);
+        }
+
+        return ToolSafetyAssessment.LowRead(category, $"{category} is constrained to the chat sandbox.", new
+        {
+            path = resolved.RelativePath
+        });
     }
 
     private static ToolSafetyAssessment AssessFileWrite(
@@ -286,12 +338,23 @@ public static partial class ToolSafetyKernel
         JsonElement root)
     {
         var rawPath = ReadString(root, "path");
-        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        var resolved = ResolvePathForAuthorization(sandbox, chatId, rawPath);
         if (resolved.Error != null)
-            return ToolSafetyAssessment.Blocked("path", "File write path escapes the chat sandbox.", resolved.Error);
+            return ToolSafetyAssessment.Blocked("path", "File write path is invalid.", resolved.Error);
+        if (resolved.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                "File write targets a host path outside the chat sandbox.",
+                "Ask mode requires approval for this exact path; Full access may proceed.",
+                new
+                {
+                    path = resolved.FullPath,
+                    operation = ReadBool(root, "append") ? "append" : File.Exists(resolved.FullPath) ? "replace" : "create"
+                });
+        }
 
-        // M4.6.0: Bypass-immune check for file tools — writing to .git/.env/shell configs
-        // always requires explicit approval regardless of permission mode.
+        // Sensitive path check for file tools.
         var bypassCheck = CheckBypassImmunePath(resolved.FullPath ?? "");
         if (bypassCheck != null)
             return bypassCheck;
@@ -326,9 +389,24 @@ public static partial class ToolSafetyKernel
         JsonElement root)
     {
         var rawPath = ReadString(root, "path");
-        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        var resolved = ResolvePathForAuthorization(sandbox, chatId, rawPath);
         if (resolved.Error != null)
-            return ToolSafetyAssessment.Blocked("path", "File send path escapes the chat sandbox.", resolved.Error);
+            return ToolSafetyAssessment.Blocked("path", "File send path is invalid.", resolved.Error);
+        if (resolved.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                "File send targets a host path outside the chat sandbox.",
+                "Ask mode requires approval for this exact file; Full access may proceed.",
+                new
+                {
+                    path = resolved.FullPath,
+                    exists = File.Exists(resolved.FullPath),
+                    sizeBytes = File.Exists(resolved.FullPath) ? new FileInfo(resolved.FullPath).Length : 0
+                },
+                isReadOnly: true,
+                isWrite: false);
+        }
 
         var exists = File.Exists(resolved.FullPath);
         var sizeBytes = exists ? new FileInfo(resolved.FullPath!).Length : 0;
@@ -353,9 +431,17 @@ public static partial class ToolSafetyKernel
         JsonElement root)
     {
         var rawPath = ReadString(root, "path");
-        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        var resolved = ResolvePathForAuthorization(sandbox, chatId, rawPath);
         if (resolved.Error != null)
-            return ToolSafetyAssessment.Blocked("path", "Directory creation path escapes the chat sandbox.", resolved.Error);
+            return ToolSafetyAssessment.Blocked("path", "Directory creation path is invalid.", resolved.Error);
+        if (resolved.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                "Directory creation targets a host path outside the chat sandbox.",
+                "Ask mode requires approval for this exact directory; Full access may proceed.",
+                new { path = resolved.FullPath, exists = Directory.Exists(resolved.FullPath) });
+        }
 
         var bypassImmuneMkdir = CheckBypassImmunePath(resolved.FullPath ?? "");
         if (bypassImmuneMkdir != null) return bypassImmuneMkdir;
@@ -377,16 +463,32 @@ public static partial class ToolSafetyKernel
         Guid chatId,
         JsonElement root)
     {
-        var from = ResolvePath(sandbox, chatId, ReadString(root, "from_path"));
+        var from = ResolvePathForAuthorization(sandbox, chatId, ReadString(root, "from_path"));
         if (from.Error != null)
-            return ToolSafetyAssessment.Blocked("path", "Source path escapes the chat sandbox.", from.Error);
+            return ToolSafetyAssessment.Blocked("path", "Source path is invalid.", from.Error);
 
-        var to = ResolvePath(sandbox, chatId, ReadString(root, "to_path"));
+        var to = ResolvePathForAuthorization(sandbox, chatId, ReadString(root, "to_path"));
         if (to.Error != null)
-            return ToolSafetyAssessment.Blocked("path", "Destination path escapes the chat sandbox.", to.Error);
+            return ToolSafetyAssessment.Blocked("path", "Destination path is invalid.", to.Error);
 
         var mode = ReadString(root, "mode", "move");
         var overwrite = ReadBool(root, "overwrite");
+        if (from.IsOutsideSandbox || to.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                $"File {mode} crosses the chat sandbox boundary.",
+                "Ask mode requires approval for these exact host paths; Full access may proceed.",
+                new
+                {
+                    mode,
+                    from = from.FullPath,
+                    to = to.FullPath,
+                    overwrite,
+                    sourceExists = File.Exists(from.FullPath) || Directory.Exists(from.FullPath),
+                    destinationExists = File.Exists(to.FullPath) || Directory.Exists(to.FullPath)
+                });
+        }
         var bypassImmuneMove = CheckBypassImmunePath(from.FullPath ?? "") ?? CheckBypassImmunePath(to.FullPath ?? "");
         if (bypassImmuneMove != null) return bypassImmuneMove;
 
@@ -412,9 +514,35 @@ public static partial class ToolSafetyKernel
         JsonElement root)
     {
         var rawPath = ReadString(root, "path");
-        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        var resolved = ResolvePathForAuthorization(sandbox, chatId, rawPath);
         if (resolved.Error != null)
-            return ToolSafetyAssessment.Blocked("path", "Delete path escapes the chat sandbox.", resolved.Error);
+            return ToolSafetyAssessment.Blocked("path", "Delete path is invalid.", resolved.Error);
+
+        var recursive = ReadBool(root, "recursive");
+        if (recursive && IsImmutableRecursiveDeleteTarget(resolved.FullPath!))
+        {
+            return ToolSafetyAssessment.Blocked(
+                "path",
+                "Recursive deletion of a critical host root is blocked.",
+                "Drive roots, Windows/System32, shared Users roots, user profiles, and system program-data roots cannot be recursively deleted in any permission mode.",
+                new { path = resolved.FullPath, recursive });
+        }
+
+        if (resolved.IsOutsideSandbox)
+        {
+            var existsOutside = File.Exists(resolved.FullPath) || Directory.Exists(resolved.FullPath);
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                "Delete targets a host path outside the chat sandbox.",
+                "Ask mode requires approval for this exact target; Full access may proceed unless the target is a critical recursive-delete root.",
+                new
+                {
+                    path = resolved.FullPath,
+                    exists = existsOutside,
+                    isDirectory = Directory.Exists(resolved.FullPath),
+                    recursive
+                });
+        }
 
         if (resolved.RelativePath is "." or "")
         {
@@ -424,7 +552,6 @@ public static partial class ToolSafetyKernel
                 "Choose a specific file or subdirectory.");
         }
 
-        var recursive = ReadBool(root, "recursive");
         var exists = File.Exists(resolved.FullPath) || Directory.Exists(resolved.FullPath);
         var isDirectory = Directory.Exists(resolved.FullPath);
         var bypassImmuneDel = CheckBypassImmunePath(resolved.FullPath ?? "");
@@ -469,7 +596,19 @@ public static partial class ToolSafetyKernel
                 new { operation, arguments = args });
         }
 
-        if (operation is "reset" or "clean" or "push")
+        if (operation is "fetch" or "pull" or "push" or "merge" or "rebase" or
+            "cherry-pick" or "revert" or "remote" or "tag")
+        {
+            return ToolSafetyAssessment.High(
+                "git",
+                isWrite: true,
+                $"git {operation} integrates repository or remote state.",
+                "Ask and Auto modes require approval for this exact operation; Full access may proceed.",
+                new { operation, arguments = args },
+                bypassImmune: true);
+        }
+
+        if (operation is "reset" or "clean")
         {
             return ToolSafetyAssessment.High(
                 "git",
@@ -503,9 +642,17 @@ public static partial class ToolSafetyKernel
         string toolName)
     {
         var rawPath = ReadString(root, "path");
-        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        var resolved = ResolvePathForAuthorization(sandbox, chatId, rawPath);
         if (resolved.Error != null)
-            return ToolSafetyAssessment.Blocked("path", $"{toolName} path escapes the chat sandbox.", resolved.Error);
+            return ToolSafetyAssessment.Blocked("path", $"{toolName} path is invalid.", resolved.Error);
+        if (resolved.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                $"{toolName} targets a host path outside the chat sandbox.",
+                "Ask mode requires approval for this exact path; Full access may proceed.",
+                new { path = resolved.FullPath });
+        }
 
         var oldBytes = File.Exists(resolved.FullPath!)
             ? new FileInfo(resolved.FullPath!).Length
@@ -573,9 +720,17 @@ public static partial class ToolSafetyKernel
         JsonElement root)
     {
         var rawPath = ReadString(root, "path");
-        var resolved = ResolvePath(sandbox, chatId, rawPath);
+        var resolved = ResolvePathForAuthorization(sandbox, chatId, rawPath);
         if (resolved.Error != null)
-            return ToolSafetyAssessment.Blocked("path", "Rollback path escapes the chat sandbox.", resolved.Error);
+            return ToolSafetyAssessment.Blocked("path", "Rollback path is invalid.", resolved.Error);
+        if (resolved.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                "Rollback targets a host path outside the chat sandbox.",
+                "Ask mode requires approval for this exact rollback; Full access may proceed.",
+                new { path = resolved.FullPath, backupId = ReadString(root, "backup_id") });
+        }
 
         var bypassImmuneRb = CheckBypassImmunePath(resolved.FullPath ?? "");
         if (bypassImmuneRb != null) return bypassImmuneRb;
@@ -630,6 +785,33 @@ public static partial class ToolSafetyKernel
         catch (Exception ex)
         {
             return (null, null, ex.Message);
+        }
+    }
+
+    private static (string? FullPath, string? RelativePath, string? Error, bool IsOutsideSandbox) ResolvePathForAuthorization(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        string path)
+    {
+        try
+        {
+            var value = path.Trim().Replace('/', Path.DirectorySeparatorChar);
+            if (string.IsNullOrWhiteSpace(value))
+                value = ".";
+            var sandboxRoot = Path.GetFullPath(sandbox.GetSandboxRoot(chatId));
+            var fullPath = Path.IsPathRooted(value)
+                ? Path.GetFullPath(value)
+                : Path.GetFullPath(Path.Combine(sandboxRoot, value));
+            var outside = !IsUnderDirectory(fullPath, sandboxRoot);
+            return (
+                fullPath,
+                outside ? fullPath : Path.GetRelativePath(sandboxRoot, fullPath),
+                null,
+                outside);
+        }
+        catch (Exception ex)
+        {
+            return (null, null, ex.Message, false);
         }
     }
 
@@ -690,6 +872,168 @@ public static partial class ToolSafetyKernel
                fullPath.StartsWith(fullParent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static bool IsImmutableRecursiveDeleteTarget(string path)
+    {
+        var canonicalPath = Path.GetFullPath(path);
+        var fullPath = canonicalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (string.IsNullOrWhiteSpace(fullPath))
+            return true;
+
+        var driveRoot = Path.GetPathRoot(canonicalPath);
+        if (!string.IsNullOrWhiteSpace(driveRoot) &&
+            fullPath.Equals(NormalizeComparisonPath(driveRoot), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var criticalRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddCriticalRoot(criticalRoots, Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        var systemDirectory = Environment.SystemDirectory;
+        AddCriticalRoot(criticalRoots, systemDirectory);
+        if (!string.IsNullOrWhiteSpace(systemDirectory) && IsUnderDirectory(fullPath, systemDirectory))
+            return true;
+        AddCriticalRoot(criticalRoots, Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
+        AddCriticalRoot(criticalRoots, Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+        AddCriticalRoot(criticalRoots, Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        AddCriticalRoot(criticalRoots, userProfile);
+        if (!string.IsNullOrWhiteSpace(userProfile))
+        {
+            var usersRoot = Directory.GetParent(userProfile)?.FullName;
+            AddCriticalRoot(criticalRoots, usersRoot);
+            if (!string.IsNullOrWhiteSpace(usersRoot))
+            {
+                var parent = Directory.GetParent(canonicalPath)?.FullName;
+                if (!string.IsNullOrWhiteSpace(parent) &&
+                    NormalizeComparisonPath(parent).Equals(
+                        NormalizeComparisonPath(usersRoot),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        return criticalRoots.Contains(fullPath);
+    }
+
+    private static void AddCriticalRoot(HashSet<string> roots, string? path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            roots.Add(NormalizeComparisonPath(path));
+    }
+
+    private static string NormalizeComparisonPath(string path) =>
+        Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private static string PathRelevantCommandText(string command)
+    {
+        var tokens = TokenizeCommand(command);
+        if (tokens.Count == 0)
+            return command;
+
+        var executable = Path.GetFileNameWithoutExtension(tokens[0]);
+        if (!executable.Equals("rg", StringComparison.OrdinalIgnoreCase) &&
+            !executable.Equals("grep", StringComparison.OrdinalIgnoreCase))
+        {
+            return command;
+        }
+
+        var pathTokens = new List<string>();
+        var patternSeen = false;
+        var positionalOnly = false;
+        for (var i = 1; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            if (!positionalOnly && token == "--")
+            {
+                positionalOnly = true;
+                continue;
+            }
+
+            if (!positionalOnly && token.StartsWith('-'))
+            {
+                if (SearchPatternOptions.Contains(token))
+                {
+                    if (i + 1 < tokens.Count)
+                        i++;
+                    patternSeen = true;
+                }
+                else if (SearchValueOptions.Contains(token) && i + 1 < tokens.Count)
+                {
+                    i++;
+                }
+                continue;
+            }
+
+            if (!patternSeen)
+            {
+                patternSeen = true;
+                continue;
+            }
+
+            pathTokens.Add(token);
+        }
+
+        return string.Join(' ', pathTokens);
+    }
+
+    private static List<string> TokenizeCommand(string command)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        char? quote = null;
+        foreach (var character in command)
+        {
+            if (quote.HasValue)
+            {
+                if (character == quote.Value)
+                    quote = null;
+                else
+                    current.Append(character);
+                continue;
+            }
+
+            if (character is '\'' or '"')
+            {
+                quote = character;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(character))
+            {
+                if (current.Length > 0)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                }
+                continue;
+            }
+
+            current.Append(character);
+        }
+
+        if (current.Length > 0)
+            tokens.Add(current.ToString());
+        return tokens;
+    }
+
+    private static readonly HashSet<string> SearchPatternOptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-e", "--regexp"
+    };
+
+    private static readonly HashSet<string> SearchValueOptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-A", "-B", "-C", "-f", "-g", "-j", "-m", "-r", "-t",
+        "--after-context", "--before-context", "--color", "--colors", "--context",
+        "--context-separator", "--encoding", "--engine", "--field-context-separator",
+        "--field-match-separator", "--file", "--glob", "--hostname-bin", "--iglob",
+        "--max-columns", "--max-count", "--max-depth", "--max-filesize", "--path-separator",
+        "--pre", "--pre-glob", "--replace", "--sort", "--sortr", "--threads", "--type",
+        "--type-add"
+    };
+
     private static string ReadString(JsonElement root, string name, string fallback = "") =>
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? fallback
@@ -701,20 +1045,19 @@ public static partial class ToolSafetyKernel
     [GeneratedRegex(@"(?<![\w])([A-Za-z]:\\[^""'\r\n;|&<>]*)", RegexOptions.CultureInvariant)]
     private static partial Regex AbsoluteWindowsPathRegex();
 
-    [GeneratedRegex(@"(?ix)\b(format|diskpart|shutdown|restart-computer|stop-computer|bcdedit|bootrec|takeown|icacls|set-executionpolicy|new-localuser|net\s+user|sc(?:\.exe)?|schtasks|start-process[\s\S]*-verb\s+runas|invoke-expression|iex|reg(?:\.exe)?\s+(?:add|delete|import|restore|save)|(?:curl|wget|invoke-webrequest|invoke-restmethod)[\s\S]*\|\s*(?:powershell|pwsh|cmd|sh|bash))\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?ix)\b(shutdown|restart-computer|stop-computer|takeown|icacls|set-executionpolicy|new-localuser|net\s+user|sc(?:\.exe)?|schtasks|start-process[\s\S]*-verb\s+runas|invoke-expression|iex|reg(?:\.exe)?\s+(?:add|delete|import|restore|save)|(?:curl|wget|invoke-webrequest|invoke-restmethod)[\s\S]*\|\s*(?:powershell|pwsh|cmd|sh|bash))\b", RegexOptions.CultureInvariant)]
     private static partial Regex SystemDestructiveCommandRegex();
 
-    [GeneratedRegex(@"(?ix)\b(remove-item|del|erase|rmdir|rd|git\s+reset\s+--hard|git\s+clean\s+-[dfx]+|git\s+push[\s\S]*--force)\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?ix)\b(remove-item|del|erase|rmdir|rd|rm\s+-[a-z]*(?:r[a-z]*f|f[a-z]*r)[a-z]*|git\s+reset\s+--hard|git\s+clean\s+-[dfx]+|git\s+push[\s\S]*--force)\b", RegexOptions.CultureInvariant)]
     private static partial Regex DangerousCommandRegex();
 
-    [GeneratedRegex(@"(?ix)^\s*(get-childitem|gci|dir|ls|pwd|get-location|get-content|cat|type|select-string|test-path|get-item|measure-object|git\s+(status|log|diff|show|rev-parse|branch))\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?ix)^\s*(get-childitem|gci|dir|ls|pwd|get-location|get-content|cat|type|select-string|test-path|get-item|get-date|get-command|get-process|get-service|get-ciminstance|get-variable|resolve-path|measure-object|rg|grep|findstr|whoami|hostname|git\s+(status|log|diff|show|rev-parse|branch))\b", RegexOptions.CultureInvariant)]
     private static partial Regex ReadOnlyCommandRegex();
 
     [GeneratedRegex(@"(?ix)\b(set-content|add-content|out-file|new-item|copy-item|move-item|git\s+(init|add|commit|branch))\b|(?<![<>])>(?!>)|>>", RegexOptions.CultureInvariant)]
     private static partial Regex WriteCommandRegex();
 
-    // M4.6.0: Bypass-immune path detection. Operations targeting these paths
-    // require explicit approval even in BypassPermissions mode.
+    // Sensitive-path detection used by Ask and Auto modes.
     [GeneratedRegex(@"(?ix)(?<!\w)(\.git[\\/]|\.git\b|\.gitconfig\b|\.env\b|\.bashrc\b|\.zshrc\b|\.profile\b|\.bash_profile\b|\.zshenv\b|\.claude[\\/]|\.tlah_context[\\/])", RegexOptions.CultureInvariant)]
     private static partial Regex BypassImmunePathRegex();
 

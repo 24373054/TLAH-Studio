@@ -12,7 +12,7 @@ When documents conflict, prefer this order:
 4. README files
 5. Historical milestone plans under `docs/`
 
-Current stable version: **4.12.0**. Official release automation produces a self-contained Windows x64 installer.
+Current stable version: **4.13.0**. Official release automation produces a self-contained Windows x64 installer.
 
 ## Commands
 
@@ -50,7 +50,13 @@ Dependency direction: `App → Core + Data`, `Data → Core`, `Tests → Core + 
 - `AgentRunEngineV2` owns the multi-step state loop and typed frames.
 - Tool requests must continue through schema/protocol validation, safety classification, permission gating, lifecycle hooks, and backend routing.
 - Tool permissions and reasoning effort are independent settings. Do not conflate them in UI or persistence.
-- `Full access` is host/network access by design. Restricted local execution is policy-based and is not a hardened VM boundary.
+- `ToolAuthorizationPolicy` is the single permission matrix for preview, approval, resume, lifecycle, and execution. Do not add a second gate with different mode semantics.
+- `Full access` is host/network access by design: ordinary policy, path, network, and sensitive-file restrictions are bypassed. Only immutable catastrophic-operation blocks and functional user-interaction pauses remain.
+- A one-time Ask decision authorizes the exact persisted invocation. Edited approval arguments must be opt-in, valid JSON objects, and accepted by the target tool before persistence.
+- Transient provider failures receive at most three attempts with a stream reset between attempts; exhaustion pauses a checkpointed run for resume instead of corrupting partial output.
+- After a tool failure, require a materially different recovery route or an explicit `ask_user_question`; never report completion while the failure remains unresolved.
+- The production 48-step soft budget may extend by 24 while useful progress or recovery is active, up to 192 steps. Approval resume must not grant a fresh budget; a user-initiated resume may.
+- The default command timeout is 120 seconds. Preserve configured overrides and cancellation/process-tree cleanup.
 - Preserve cancellation, pause/resume, checkpoint, artifact, task, stopped-run, and Activity replay behavior.
 
 ### Persistence and privacy

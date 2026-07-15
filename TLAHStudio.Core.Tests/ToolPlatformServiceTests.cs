@@ -136,6 +136,50 @@ public class ToolPlatformServiceTests
         Assert.Equal("api.example.com", domainAllowed.MatchedValue);
     }
 
+    [Fact]
+    public async Task CommandPolicyRulesRetainSubjectKindAndMatchExtractedCommands()
+    {
+        await using var db = TestDb.Create();
+        var chat = new Chat { Title = "Command policy chat" };
+        db.Set<Chat>().Add(chat);
+        await db.SaveChangesAsync();
+        var service = new ToolPlatformService(db);
+
+        await service.SavePolicyRuleAsync(new ToolPolicyRuleUpdate(
+            Id: null,
+            SubjectKind: ToolPolicySubjects.Command,
+            Pattern: "git status*",
+            Scope: ToolPolicyScopes.Global,
+            Decision: ToolPolicyDecisions.Allow,
+            Description: "Allow Git status commands."));
+
+        var allowed = await service.EvaluatePolicyAsync(
+            chat.Id,
+            AgentToolNames.TerminalExec,
+            """{"command":"git status --short"}""");
+
+        Assert.True(allowed.IsAllowed);
+        Assert.Equal(ToolPolicySubjects.Command, allowed.SubjectKind);
+        Assert.Equal("git status --short", allowed.MatchedValue);
+
+        await service.SavePolicyRuleAsync(new ToolPolicyRuleUpdate(
+            Id: null,
+            SubjectKind: ToolPolicySubjects.Command,
+            Pattern: "remove-item *",
+            Scope: ToolPolicyScopes.Global,
+            Decision: ToolPolicyDecisions.Deny,
+            Description: "Deny Remove-Item commands."));
+
+        var denied = await service.EvaluatePolicyAsync(
+            chat.Id,
+            AgentToolNames.SandboxExec,
+            """{"command":"Remove-Item .\\build -Recurse"}""");
+
+        Assert.True(denied.IsDenied);
+        Assert.Equal(ToolPolicySubjects.Command, denied.SubjectKind);
+        Assert.Equal("remove-item .\\build -recurse", denied.MatchedValue);
+    }
+
     [Theory]
     [InlineData("api.example.com", "*.example.com", true)]
     [InlineData("example.com", "*.example.com", false)]

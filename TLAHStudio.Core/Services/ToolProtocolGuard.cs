@@ -207,9 +207,9 @@ public static partial class ToolProtocolGuard
         {
             issues?.Add(new ToolProtocolGuardIssue(
                 "empty_tool_arguments",
-                "Empty tool arguments were replaced with an empty JSON object.",
-                "repair"));
-            return "{}";
+                "The tool call has empty arguments and will be returned to the model as a protocol error.",
+                "error"));
+            return argumentsJson;
         }
 
         try
@@ -224,9 +224,9 @@ public static partial class ToolProtocolGuard
 
         issues?.Add(new ToolProtocolGuardIssue(
             "invalid_tool_arguments",
-            "Tool arguments were not a valid JSON object and were replaced with an empty JSON object.",
-            "repair"));
-        return "{}";
+            "Tool arguments are not a valid JSON object. They were preserved so the tool lifecycle can return an explicit protocol error instead of executing different arguments.",
+            "error"));
+        return argumentsJson;
     }
 
     private static void FlushMissingToolResults(

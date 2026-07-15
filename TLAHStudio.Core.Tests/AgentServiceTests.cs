@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
@@ -45,7 +46,10 @@ public class AgentServiceTests
             "Continue.",
             options: new AgentRunOptions(MaxSteps: 1));
 
-        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        // The model received the task context but did not close the durable
+        // in-progress task, so the completion gate must pause rather than
+        // falsely report success.
+        Assert.Equal(AgentRunStatuses.Paused, result.AgentRun!.Status);
         var body = Assert.Single(bodies);
         Assert.Contains("Open tracked tasks", body);
         Assert.Contains("Verify runtime task injection", body);
@@ -315,6 +319,577 @@ public class AgentServiceTests
     }
 
     [Fact]
+    public async Task RunAgentTaskAsync_RetriesTransientProviderStatusesBeforeSucceeding()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Transient provider");
+        var calls = 0;
+        var handler = new MapHttpMessageHandler(_ =>
+        {
+            calls++;
+            return calls switch
+            {
+                1 => MapHttpMessageHandler.Json(HttpStatusCode.ServiceUnavailable,
+                    """{"error":{"message":"temporary outage"}}"""),
+                2 => MapHttpMessageHandler.Json(HttpStatusCode.TooManyRequests,
+                    """{"error":{"message":"rate limited"}}"""),
+                _ => MapHttpMessageHandler.Json(HttpStatusCode.OK,
+                    """{"choices":[{"message":{"content":"Recovered after retry."}}]}""")
+            };
+        });
+        using var client = new HttpClient(handler);
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client));
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id, "Retry transient provider errors.",
+            options: new AgentRunOptions(MaxSteps: 2));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Equal(3, calls);
+        Assert.Contains("Recovered after retry", result.AssistantMessage.Content);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_ExhaustedTransientProviderFailuresPauseWithCheckpoint()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Transient provider pause");
+        var calls = 0;
+        var handler = new MapHttpMessageHandler(_ =>
+        {
+            calls++;
+            return MapHttpMessageHandler.Json(
+                HttpStatusCode.ServiceUnavailable,
+                """{"error":{"message":"temporary outage"}}""");
+        });
+        using var client = new HttpClient(handler);
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client));
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id, "Pause after exhausted provider retries.",
+            options: new AgentRunOptions(MaxSteps: 2));
+
+        Assert.Equal(3, calls);
+        Assert.Equal(AgentRunStatuses.Paused, result.AgentRun!.Status);
+        Assert.NotNull(result.AgentRun.ErrorMessage);
+        Assert.Contains("resume", result.AssistantMessage.Content, StringComparison.OrdinalIgnoreCase);
+        var storedRun = await db.Set<AgentRun>().SingleAsync(r => r.Id == result.AgentRun.Id);
+        Assert.Equal(AgentRunStatuses.Paused, storedRun.Status);
+        Assert.Null(storedRun.CompletedAt);
+        var checkpoint = await db.Set<AgentCheckpoint>()
+            .Where(c => c.AgentRunId == storedRun.Id)
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstAsync();
+        var checkpointState = System.Text.Json.JsonSerializer.Deserialize<
+            TLAHStudio.Core.Services.AgentRuntime.AgentRunState>(
+                ProtectedLocalData.Reveal(checkpoint.StateJson));
+        Assert.NotNull(checkpointState);
+        Assert.Equal(AgentRunStatuses.Paused, checkpointState.Status);
+        Assert.Equal(3, checkpointState.ConsecutiveProviderFailures);
+        var events = await db.Set<AgentEvent>().ToListAsync();
+        Assert.Contains(events, e => e.EventType == AgentEventTypes.RunPaused);
+        Assert.DoesNotContain(events, e => e.EventType == AgentEventTypes.RunCompleted);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_RetriesIncompleteSuccessfulProviderResponse()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Incomplete provider response");
+        var calls = 0;
+        var streamUpdates = new List<LlmStreamUpdate>();
+        var handler = new MapHttpMessageHandler(_ =>
+        {
+            calls++;
+            return calls < 3
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+                        System.Text.Encoding.UTF8,
+                        "text/event-stream")
+                }
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"Recovered from incomplete response.\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                        "data: [DONE]\n\n",
+                        System.Text.Encoding.UTF8,
+                        "text/event-stream")
+                };
+        });
+        using var client = new HttpClient(handler);
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client));
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id, "Retry an incomplete response.",
+            options: new AgentRunOptions(
+                MaxSteps: 2,
+                OutputStream: new CollectingLlmStreamProgress(streamUpdates)));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Equal(3, calls);
+        Assert.Equal(2, streamUpdates.Count(u => u.EventType == LlmStreamEventTypes.RetryReset));
+        Assert.Contains("Recovered from incomplete response", result.AssistantMessage.Content);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_RetriesNonUserProviderTimeout()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Provider timeout");
+        var calls = 0;
+        var handler = new MapHttpMessageHandler(_ =>
+        {
+            calls++;
+            if (calls < 3)
+                throw new TaskCanceledException("synthetic provider timeout");
+            return MapHttpMessageHandler.Json(HttpStatusCode.OK,
+                """{"choices":[{"message":{"content":"Recovered from timeout."}}]}""");
+        });
+        using var client = new HttpClient(handler);
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client));
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id, "Retry a timeout.",
+            options: new AgentRunOptions(MaxSteps: 2));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Equal(3, calls);
+        Assert.Contains("Recovered from timeout", result.AssistantMessage.Content);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_RetriesProviderIOException()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Provider IO retry");
+        var adapter = new IOExceptionThenSuccessProviderStreamAdapter();
+        using var client = new HttpClient(new MapHttpMessageHandler(_ =>
+            throw new InvalidOperationException("The injected provider adapter should own this call.")));
+        var service = new LlmService(
+            db,
+            chatService,
+            settingsService,
+            new StaticHttpClientFactory(client),
+            providerStreamAdapter: adapter);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Retry an interrupted provider stream.",
+            options: new AgentRunOptions(MaxSteps: 2));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Equal(3, adapter.Calls);
+        Assert.Contains("Recovered from IO interruption", result.AssistantMessage.Content);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_ThrowingProgressObserversDoNotChangeCompletion()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Throwing telemetry");
+        var handler = new MapHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Telemetry did not own the run.\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                "data: [DONE]\n\n",
+                System.Text.Encoding.UTF8,
+                "text/event-stream")
+        });
+        using var client = new HttpClient(handler);
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client));
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Complete even if observers fail.",
+            options: new AgentRunOptions(
+                MaxSteps: 2,
+                OutputStream: new ThrowingProgress<LlmStreamUpdate>(),
+                Progress: new ThrowingProgress<AgentProgressUpdate>()));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Contains("Telemetry did not own", result.AssistantMessage.Content);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_UncertainWriteOutcomePausesWithoutReplay()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Uncertain write outcome");
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            """
+            {"choices":[{"message":{"content":null,"tool_calls":[{
+              "id":"uncertain-write-call","type":"function","function":{
+                "name":"uncertain_write_test","arguments":"{}"
+              }}]}}]}
+            """));
+        using var client = new HttpClient(handler);
+        var uncertainTool = new UncertainWriteAgentTool();
+        var registry = new AgentToolRegistry([uncertainTool]);
+        var service = new LlmService(
+            db,
+            chatService,
+            settingsService,
+            new StaticHttpClientFactory(client),
+            agentTools: registry);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Perform one write whose transport may disconnect.",
+            options: new AgentRunOptions(MaxSteps: 2, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.Paused, result.AgentRun!.Status);
+        Assert.Equal(1, uncertainTool.ExecutionCount);
+        Assert.Single(handler.Requests);
+        var invocation = await db.Set<ToolInvocation>().SingleAsync();
+        Assert.Equal(ToolInvocationStatuses.UnknownOutcome, invocation.Status);
+        Assert.Null(invocation.CompletedAt);
+        Assert.Contains("may have committed", invocation.ResultJson, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Do not replay", invocation.ResultJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_ThrowingTelemetryFlushDoesNotReplaceCompletion()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Throwing telemetry flush");
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            """{"choices":[{"message":{"content":"The main run completed."}}]}"""));
+        using var client = new HttpClient(handler);
+        var service = new LlmService(
+            db,
+            chatService,
+            settingsService,
+            new StaticHttpClientFactory(client),
+            agentEventStream: new ThrowingFlushEventStream());
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Ignore telemetry flush failure.",
+            options: new AgentRunOptions(MaxSteps: 2));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Contains("main run completed", result.AssistantMessage.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_UncertainReadOnlyOutcomeRemainsOrdinaryFailure()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Uncertain read outcome");
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            """
+            {"choices":[{"message":{"content":null,"tool_calls":[{
+              "id":"uncertain-read-call","type":"function","function":{
+                "name":"uncertain_read_test","arguments":"{}"
+              }}]}}]}
+            """));
+        using var client = new HttpClient(handler);
+        var uncertainTool = new UncertainReadAgentTool();
+        var service = new LlmService(
+            db,
+            chatService,
+            settingsService,
+            new StaticHttpClientFactory(client),
+            agentTools: new AgentToolRegistry([uncertainTool]));
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Perform one uncertain read.",
+            options: new AgentRunOptions(MaxSteps: 1, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.Paused, result.AgentRun!.Status);
+        Assert.Equal(1, uncertainTool.ExecutionCount);
+        var invocation = await db.Set<ToolInvocation>().SingleAsync();
+        Assert.Equal(ToolInvocationStatuses.Failed, invocation.Status);
+        Assert.NotNull(invocation.CompletedAt);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_UnresolvedToolFailureAsksUserInsteadOfCompleting()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Failure recovery");
+        var responses = new Queue<string>([
+            """
+            {"choices":[{"message":{"content":null,"tool_calls":[{
+              "id":"call-fail","type":"function","function":{
+                "name":"sandbox_exec",
+                "arguments":"{\"command\":\"Write-Error 'boom'; exit 1\",\"reason\":\"Exercise recovery.\"}"
+              }}]}}]}
+            """,
+            """{"choices":[{"message":{"content":"The command failed, so I am stopping."}}]}""",
+            """{"choices":[{"message":{"content":"I still cannot recover automatically."}}]}"""
+        ]);
+        var handler = new MapHttpMessageHandler(_ =>
+            MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Run a command and recover if it fails.",
+            options: new AgentRunOptions(MaxSteps: 6, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.AskUserQuestion, result.AgentRun.PendingApproval!.ToolName);
+        Assert.Empty(responses);
+        Assert.DoesNotContain(
+            await db.Set<AgentEvent>().ToListAsync(),
+            e => e.EventType == AgentEventTypes.RunCompleted);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_SuppressesIdenticalFailedInvocationAndAsksUser()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Repeated failure suppression");
+        const string arguments =
+            "{\"command\":\"'x' | Add-Content attempts.txt; exit 1\",\"reason\":\"Exercise repeated failure suppression.\"}";
+        string ToolCallResponse(string id) => System.Text.Json.JsonSerializer.Serialize(new
+        {
+            choices = new[]
+            {
+                new
+                {
+                    message = new
+                    {
+                        content = (string?)null,
+                        tool_calls = new[]
+                        {
+                            new
+                            {
+                                id,
+                                type = "function",
+                                function = new { name = "sandbox_exec", arguments }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        var responses = new Queue<string>([
+            ToolCallResponse("call-fail-1"),
+            ToolCallResponse("call-fail-2"),
+            """{"choices":[{"message":{"content":"The repeated command is still failing."}}]}""",
+            """{"choices":[{"message":{"content":"I need the user to choose another route."}}]}"""
+        ]);
+        var handler = new MapHttpMessageHandler(_ =>
+            MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Do not loop forever on the same failed command.",
+            options: new AgentRunOptions(MaxSteps: 6, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.AskUserQuestion, result.AgentRun.PendingApproval!.ToolName);
+        var attemptsPath = Path.Combine(sandbox.GetSandboxRoot(chat.Id), "attempts.txt");
+        Assert.True(File.Exists(attemptsPath));
+        Assert.Single(await File.ReadAllLinesAsync(attemptsPath));
+        Assert.Contains(
+            await db.Set<AgentEvent>().ToListAsync(),
+            e => e.EventType == AgentEventTypes.ProtocolRepair &&
+                 e.Summary.Contains("identical failed invocation", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(
+            await db.Set<ToolInvocation>()
+                .Where(i => i.ToolName == AgentToolNames.SandboxExec)
+                .ToListAsync());
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_HousekeepingSuccessDoesNotEraseUnresolvedFailure()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Housekeeping recovery gate");
+        var responses = new Queue<string>([
+            """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"fail","type":"function","function":{"name":"sandbox_exec","arguments":"{\"command\":\"exit 1\",\"reason\":\"Create an unresolved failure.\"}"}}]}}]}""",
+            """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"list","type":"function","function":{"name":"file_list","arguments":"{\"path\":\".\",\"recursive\":false}"}}]}}]}""",
+            """{"choices":[{"message":{"content":"I listed the directory, so I am done."}}]}""",
+            """{"choices":[{"message":{"content":"No recovery action was completed."}}]}"""
+        ]);
+        var handler = new MapHttpMessageHandler(_ =>
+            MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Do not confuse housekeeping with recovery.",
+            options: new AgentRunOptions(MaxSteps: 6, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.AskUserQuestion, result.AgentRun.PendingApproval!.ToolName);
+        Assert.DoesNotContain(
+            await db.Set<AgentEvent>().ToListAsync(),
+            e => e.EventType == AgentEventTypes.RunCompleted);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_ReadOnlyTerminalDiagnosticDoesNotEraseUnresolvedFailure()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Read-only recovery gate");
+        var responses = new Queue<string>([
+            """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"fail","type":"function","function":{"name":"sandbox_exec","arguments":"{\"command\":\"exit 1\",\"reason\":\"Create an unresolved failure.\"}"}}]}}]}""",
+            """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"inspect","type":"function","function":{"name":"sandbox_exec","arguments":"{\"command\":\"Get-Command dotnet\",\"reason\":\"Inspect the environment after the failure.\"}"}}]}}]}""",
+            """{"choices":[{"message":{"content":"The diagnostic succeeded, so I am done."}}]}""",
+            """{"choices":[{"message":{"content":"The failed operation is still unresolved."}}]}"""
+        ]);
+        var handler = new MapHttpMessageHandler(_ =>
+            MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Do not confuse a terminal diagnostic with recovery.",
+            options: new AgentRunOptions(MaxSteps: 6, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.AskUserQuestion, result.AgentRun.PendingApproval!.ToolName);
+        Assert.Empty(responses);
+        Assert.DoesNotContain(
+            await db.Set<AgentEvent>().ToListAsync(),
+            e => e.EventType == AgentEventTypes.RunCompleted);
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_UnresolvedFailureAtBudgetPausesWithoutFalseSummary()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Failure at budget");
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(
+            HttpStatusCode.OK,
+            """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"fail","type":"function","function":{"name":"sandbox_exec","arguments":"{\"command\":\"exit 1\",\"reason\":\"Fail at the step boundary.\"}"}}]}}]}"""));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Pause rather than claim success.",
+            options: new AgentRunOptions(MaxSteps: 1, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.Paused, result.AgentRun!.Status);
+        Assert.Single(handler.Requests);
+        Assert.Contains("unresolved failure", result.AssistantMessage.Content, StringComparison.OrdinalIgnoreCase);
+        var events = await db.Set<AgentEvent>().ToListAsync();
+        Assert.Contains(events, e => e.EventType == AgentEventTypes.RunPaused);
+        Assert.DoesNotContain(events, e => e.EventType == AgentEventTypes.RunCompleted);
+    }
+
+    [Fact]
     public async Task RunAgentTaskAsync_FinalizesWithSummaryWhenStepBudgetIsReached()
     {
         if (!OperatingSystem.IsWindows())
@@ -462,6 +1037,51 @@ public class AgentServiceTests
     }
 
     [Fact]
+    public async Task RunAgentTaskAsync_FullAccessIsolatesUserQuestionFromSiblingTools()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Full access user question batch");
+        var handler = new MapHttpMessageHandler(_ => MapHttpMessageHandler.Json(HttpStatusCode.OK, """
+        { "choices": [{ "message": { "content": null, "tool_calls": [
+          { "id": "call-write", "type": "function", "function": {
+            "name": "file_write", "arguments": "{\"path\":\"must-not-run.txt\",\"content\":\"unexpected\",\"reason\":\"Sibling call.\"}"
+          }},
+          { "id": "call-question", "type": "function", "function": {
+            "name": "ask_user_question", "arguments": "{\"questions\":[{\"question\":\"Continue?\",\"header\":\"Confirm\",\"options\":[{\"label\":\"Yes\",\"description\":\"Proceed.\"},{\"label\":\"No\",\"description\":\"Stop.\"}]}]}"
+          }}
+        ] } }] }
+        """));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Ask before continuing.",
+            options: new AgentRunOptions(
+                MaxSteps: 2,
+                PermissionMode: AgentPermissionModes.BypassPermissions));
+
+        Assert.Equal(AgentRunStatuses.AwaitingApproval, result.AgentRun!.Status);
+        Assert.Equal(AgentToolNames.AskUserQuestion, result.AgentRun.PendingApproval!.ToolName);
+        Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "must-not-run.txt")));
+        Assert.DoesNotContain(
+            await db.Set<ToolInvocation>().ToListAsync(),
+            i => i.ToolName == AgentToolNames.FileWrite);
+        Assert.Contains(
+            await db.Set<AgentEvent>().ToListAsync(),
+            e => e.EventType == AgentEventTypes.ProtocolRepair &&
+                 e.Summary.Contains("Isolated user question", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RunAgentTaskAsync_PlanModeBlocksAllowedFileWriteUntilApproval()
     {
         await using var db = TestDb.Create();
@@ -542,7 +1162,7 @@ public class AgentServiceTests
     }
 
     [Fact]
-    public async Task RunAgentTaskAsync_BypassModeCannotOverrideDeniedPolicy()
+    public async Task RunAgentTaskAsync_FullAccessOverridesOrdinaryDeniedPolicy()
     {
         await using var db = TestDb.Create();
         var chatService = new ChatService(db);
@@ -568,8 +1188,80 @@ public class AgentServiceTests
             chat.Id, "Write despite the deny rule.",
             options: new AgentRunOptions(MaxSteps: 1, PermissionMode: AgentPermissionModes.BypassPermissions));
 
-        Assert.False(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "policy-blocked.txt")));
-        Assert.Contains(await db.Set<AgentEvent>().ToListAsync(), e => e.Summary.Contains("denied_by_policy", StringComparison.Ordinal));
+        Assert.True(File.Exists(Path.Combine(sandbox.GetSandboxRoot(chat.Id), "policy-blocked.txt")));
+        Assert.DoesNotContain(await db.Set<AgentEvent>().ToListAsync(), e => e.Summary.Contains("denied_by_policy", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunAgentTaskAsync_StoredAllowReachesHostPathExecutionBoundary()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Stored allow host path");
+        await new ToolPlatformService(db).SavePolicyAsync(
+            chat.Id,
+            AgentToolNames.FileRead,
+            ToolPolicyScopes.Chat,
+            ToolPolicyDecisions.Allow);
+
+        var hostRoot = Path.Combine(
+            Path.GetTempPath(),
+            "TLAHStudio.StoredPolicy.Tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(hostRoot);
+        var hostFile = Path.Combine(hostRoot, "allowed.txt");
+        await File.WriteAllTextAsync(hostFile, "policy-host-content");
+        var argumentsJson = JsonSerializer.Serialize(new
+        {
+            path = hostFile,
+            reason = "Verify stored policy execution propagation."
+        });
+        var responses = new Queue<string>([
+            $$"""
+            { "choices": [{ "message": { "content": null, "tool_calls": [{
+              "id": "call-policy-host-read", "type": "function", "function": {
+                "name": "file_read", "arguments": {{JsonSerializer.Serialize(argumentsJson)}}
+              }
+            }] } }] }
+            """,
+            """{ "choices": [{ "message": { "content": "The approved host file was read." } }] }"""
+        ]);
+        var handler = new MapHttpMessageHandler(_ =>
+            MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(Path.Combine(
+            Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var service = new LlmService(
+            db, chatService, settingsService, new StaticHttpClientFactory(client), sandbox);
+
+        try
+        {
+            var result = await service.RunAgentTaskAsync(
+                chat.Id,
+                "Read the stored-policy host file.",
+                options: new AgentRunOptions(
+                    MaxSteps: 2,
+                    PermissionMode: AgentPermissionModes.RequestApproval));
+
+            Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+            Assert.Contains("policy-host-content", string.Join(
+                "\n",
+                await db.Set<Message>()
+                    .Where(message => message.ChatId == chat.Id && message.Role == "tool")
+                    .Select(message => message.Content)
+                    .ToListAsync()));
+            Assert.DoesNotContain(
+                await db.Set<ToolInvocation>().Where(i => i.AgentRunId == result.AgentRun.Id).ToListAsync(),
+                invocation => invocation.Status == ToolInvocationStatuses.AwaitingApproval);
+        }
+        finally
+        {
+            Directory.Delete(hostRoot, recursive: true);
+        }
     }
 
     [Fact]
@@ -700,5 +1392,141 @@ public class AgentServiceTests
     private sealed class CollectingAgentProgress(List<AgentProgressUpdate> events) : IProgress<AgentProgressUpdate>
     {
         public void Report(AgentProgressUpdate value) => events.Add(value);
+    }
+
+    private sealed class CollectingLlmStreamProgress(List<LlmStreamUpdate> updates) : IProgress<LlmStreamUpdate>
+    {
+        public void Report(LlmStreamUpdate value) => updates.Add(value);
+    }
+
+    private sealed class ThrowingProgress<T> : IProgress<T>
+    {
+        public void Report(T value) =>
+            throw new InvalidOperationException("Synthetic telemetry observer failure.");
+    }
+
+    private sealed class IOExceptionThenSuccessProviderStreamAdapter : IProviderStreamAdapter
+    {
+        public int Calls { get; private set; }
+
+        public Task<LlmResponse> ChatAsync(
+            ProviderStreamRequest request,
+            CancellationToken ct = default)
+        {
+            Calls++;
+            if (Calls < 3)
+                throw new IOException("Synthetic interrupted response stream.");
+
+            return Task.FromResult(new LlmResponse(
+                new Dictionary<string, object>(),
+                new Dictionary<string, object>(),
+                200,
+                1,
+                "Recovered from IO interruption."));
+        }
+    }
+
+    private sealed class UncertainWriteAgentTool : IAgentTool
+    {
+        public int ExecutionCount { get; private set; }
+
+        public LlmToolDefinition Definition { get; } = new(
+            "uncertain_write_test",
+            "Test-only write operation whose remote outcome is uncertain.",
+            new Dictionary<string, object>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object>()
+            });
+
+        public bool RequiresApproval => false;
+
+        public Task<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            string argumentsJson,
+            CancellationToken ct = default)
+        {
+            ExecutionCount++;
+            return Task.FromResult(new AgentToolResult(
+                false,
+                string.Empty,
+                "Remote connection closed after dispatch.",
+                OutcomeUncertain: true,
+                MayHaveCommitted: true));
+        }
+    }
+
+    private sealed class ThrowingFlushEventStream : IAgentEventStream
+    {
+        private int _sequence;
+
+        public Task<AgentEvent> AppendAsync(
+            AgentEventAppendRequest request,
+            CancellationToken ct = default) =>
+            Task.FromResult(new AgentEvent
+            {
+                AgentRunId = request.Run.Id,
+                AgentStepId = request.StepId,
+                ToolInvocationId = request.ToolInvocationId,
+                SequenceNumber = ++_sequence,
+                EventType = request.EventType,
+                Severity = request.Severity,
+                Summary = request.Summary,
+                DataJson = "{}"
+            });
+
+        public IDisposable BeginRun(AgentRun run) => new NoopScope();
+
+        public Task FlushAsync(CancellationToken ct = default) =>
+            throw new IOException("Synthetic telemetry flush failure.");
+
+        public AgentEventStreamMetrics GetMetrics() => AgentEventStreamMetrics.Empty;
+
+        private sealed class NoopScope : IDisposable
+        {
+            public void Dispose()
+            {
+            }
+        }
+    }
+
+    private sealed class UncertainReadAgentTool : IAgentTool
+    {
+        public int ExecutionCount { get; private set; }
+
+        public LlmToolDefinition Definition { get; } = new(
+            "uncertain_read_test",
+            "Test-only read whose transport result is uncertain.",
+            new Dictionary<string, object>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object>()
+            });
+
+        public bool RequiresApproval => false;
+
+        public AgentToolMetadata Metadata { get; } = new(
+            "uncertain_read_test",
+            RequiresApproval: false,
+            IsReadOnly: true,
+            IsConcurrencySafe: true,
+            IsDestructive: false,
+            AgentToolRenderHints.Text,
+            2_000,
+            AgentToolResultPersistenceModes.Inline);
+
+        public Task<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            string argumentsJson,
+            CancellationToken ct = default)
+        {
+            ExecutionCount++;
+            return Task.FromResult(new AgentToolResult(
+                false,
+                string.Empty,
+                "Read response stream closed early.",
+                OutcomeUncertain: true,
+                MayHaveCommitted: true));
+        }
     }
 }

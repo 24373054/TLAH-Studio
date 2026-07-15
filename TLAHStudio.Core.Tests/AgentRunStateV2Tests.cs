@@ -1,3 +1,4 @@
+using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 using TLAHStudio.Core.Services.AgentRuntime;
 
@@ -9,6 +10,97 @@ namespace TLAHStudio.Core.Tests;
 /// </summary>
 public class AgentRunStateV2Tests
 {
+    [Theory]
+    [InlineData("{\"answers\":{\"Recovery\":\"Stop and summarize\"}}", "Stop and summarize")]
+    [InlineData("{\"answers\":{\"The agent could not recover. How should it continue?\":\"Try another way\"}}", "Try another way")]
+    [InlineData("{\"answers\":{\"Recovery\":[\"Try another way\"]}}", "Try another way")]
+    public void SyntheticRecoveryAnswer_ParsesHeaderAndLegacyQuestionKeys(
+        string argumentsJson,
+        string expected)
+    {
+        var call = new LlmToolCall(
+            "recovery-test",
+            AgentToolNames.AskUserQuestion,
+            argumentsJson);
+
+        Assert.Equal(
+            expected,
+            AgentRunEngineV2.ReadSyntheticQuestionAnswer(call, "Recovery"));
+    }
+
+    [Theory]
+    [InlineData("Try another way", false)]
+    [InlineData("Stop and summarize", true)]
+    public void SyntheticRecoveryChoice_OnlyStopResolvesFailure(
+        string choice,
+        bool expectedResolution)
+    {
+        var state = new AgentRunState
+        {
+            ConsecutiveToolFailures = 1,
+            LastFailureSummary = "A tool failed.",
+            RecoveryDirectivePending = true
+        };
+        var call = new LlmToolCall(
+            "recovery-test",
+            AgentToolNames.AskUserQuestion,
+            $"{{\"answers\":{{\"Recovery\":{System.Text.Json.JsonSerializer.Serialize(choice)}}}}}");
+
+        Assert.Equal(
+            expectedResolution,
+            AgentRunEngineV2.ApplySyntheticQuestionResolution(state, call));
+        Assert.Equal(1, state.ConsecutiveToolFailures);
+    }
+
+    [Theory]
+    [InlineData("Reassess and run", 1, true)]
+    [InlineData("Skip deferred work", 0, false)]
+    public void SyntheticDeferredChoice_OnlySkipClearsDurableWork(
+        string choice,
+        int expectedCount,
+        bool expectedDirective)
+    {
+        var state = new AgentRunState
+        {
+            DeferredToolCalls =
+            [
+                new LlmToolCall(
+                    "deferred-one",
+                    AgentToolNames.FileRead,
+                    "{\"path\":\"README.md\"}")
+            ],
+            DeferredToolDirectivePending = true,
+            DeferredToolRecoveryAttempts = 2
+        };
+        var call = new LlmToolCall(
+            "recovery-deferred-test",
+            AgentToolNames.AskUserQuestion,
+            $"{{\"answers\":{{\"Deferred work\":{System.Text.Json.JsonSerializer.Serialize(choice)}}}}}");
+
+        Assert.False(AgentRunEngineV2.ApplySyntheticQuestionResolution(state, call));
+        Assert.Equal(expectedCount, state.DeferredToolCalls.Count);
+        Assert.Equal(expectedDirective, state.DeferredToolDirectivePending);
+        Assert.Equal(expectedCount == 0 ? 0 : 2, state.DeferredToolRecoveryAttempts);
+    }
+
+    [Fact]
+    public void OrdinaryQuestion_DoesNotClaimToResolveAnUnrelatedFailure()
+    {
+        var state = new AgentRunState
+        {
+            ConsecutiveToolFailures = 2,
+            RecoveryDirectivePending = true
+        };
+        var call = new LlmToolCall(
+            "question-user-input",
+            AgentToolNames.AskUserQuestion,
+            "{\"answers\":{\"Choice\":\"Continue\"}}");
+
+        Assert.Null(AgentRunEngineV2.ApplySyntheticQuestionResolution(state, call));
+        Assert.Equal(2, state.ConsecutiveToolFailures);
+        Assert.True(state.RecoveryDirectivePending);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // 4.8.0: CompactionDisabled
     // ═══════════════════════════════════════════════════════════════
@@ -292,6 +384,93 @@ public class AgentRunStateV2Tests
         Assert.True(clone.PrePlanAutoApproveTools);
         Assert.Contains("init", clone.SentSkillNames);
         Assert.Single(clone.Messages);
+    }
+
+    [Fact]
+    public void RecoveryState_SurvivesCheckpointJsonRoundTrip()
+    {
+        var state = new AgentRunState
+        {
+            ConsecutiveToolFailures = 2,
+            ConsecutiveProviderFailures = 1,
+            RepeatedFailureCount = 2,
+            CompletionRecoveryAttempts = 1,
+            RecoveryAttempts = 4,
+            ResumeCount = 3,
+            BudgetExtensionCount = 2,
+            SuccessfulToolCalls = 7,
+            LastSuccessfulStep = 41,
+            LastFailedInvocationSignature = "ABC123",
+            LastFailedToolName = AgentToolNames.SandboxExec,
+            LastFailureSummary = "command failed",
+            RecoveryDirectivePending = true
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(state);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<AgentRunState>(json);
+
+        Assert.NotNull(restored);
+        Assert.Equal(2, restored.ConsecutiveToolFailures);
+        Assert.Equal(1, restored.ConsecutiveProviderFailures);
+        Assert.Equal(2, restored.RepeatedFailureCount);
+        Assert.Equal(1, restored.CompletionRecoveryAttempts);
+        Assert.Equal(4, restored.RecoveryAttempts);
+        Assert.Equal(3, restored.ResumeCount);
+        Assert.Equal(2, restored.BudgetExtensionCount);
+        Assert.Equal(7, restored.SuccessfulToolCalls);
+        Assert.Equal(41, restored.LastSuccessfulStep);
+        Assert.Equal("ABC123", restored.LastFailedInvocationSignature);
+        Assert.Equal(AgentToolNames.SandboxExec, restored.LastFailedToolName);
+        Assert.Equal("command failed", restored.LastFailureSummary);
+        Assert.True(restored.RecoveryDirectivePending);
+    }
+
+    [Fact]
+    public void SoftStepBudget_ExtendsOnlyProductionRunsWithRecentProgress()
+    {
+        var progressing = new AgentRunState
+        {
+            CurrentStep = 48,
+            MaxSteps = 48,
+            LastSuccessfulStep = 46
+        };
+        var smallTestRun = new AgentRunState
+        {
+            CurrentStep = 3,
+            MaxSteps = 3,
+            LastSuccessfulStep = 3
+        };
+        var stalled = new AgentRunState
+        {
+            CurrentStep = 48,
+            MaxSteps = 48,
+            LastSuccessfulStep = 30
+        };
+
+        Assert.Equal(72, AgentRunEngineV2.CalculateExtendedSoftStepBudget(progressing));
+        Assert.Equal(3, AgentRunEngineV2.CalculateExtendedSoftStepBudget(smallTestRun));
+        Assert.Equal(48, AgentRunEngineV2.CalculateExtendedSoftStepBudget(stalled));
+    }
+
+    [Fact]
+    public void SoftStepBudget_ExtendsForFirstFailureRecoveryAndHonorsHardCap()
+    {
+        var recovery = new AgentRunState
+        {
+            CurrentStep = 48,
+            MaxSteps = 48,
+            ConsecutiveToolFailures = 1,
+            CompletionRecoveryAttempts = 0
+        };
+        var hardCapped = new AgentRunState
+        {
+            CurrentStep = 192,
+            MaxSteps = 192,
+            LastSuccessfulStep = 192
+        };
+
+        Assert.Equal(72, AgentRunEngineV2.CalculateExtendedSoftStepBudget(recovery));
+        Assert.Equal(192, AgentRunEngineV2.CalculateExtendedSoftStepBudget(hardCapped));
     }
 
     // ═══════════════════════════════════════════════════════════════

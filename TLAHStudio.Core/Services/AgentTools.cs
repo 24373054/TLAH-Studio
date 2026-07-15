@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
+using TLAHStudio.Core.Models;
 
 namespace TLAHStudio.Core.Services;
 
@@ -67,7 +68,14 @@ public sealed record AgentToolExecutionContext(
     Guid InvocationId,
     int TimeoutSeconds,
     int MaxOutputChars,
-    string PermissionMode = AgentPermissionModes.RequestApproval);
+    string PermissionMode = AgentPermissionModes.RequestApproval,
+    bool HasInvocationAuthorization = false,
+    bool HasPolicyAuthorization = false)
+{
+    public string EffectivePermissionMode => HasInvocationAuthorization || HasPolicyAuthorization
+        ? AgentPermissionModes.BypassPermissions
+        : AgentPermissionModes.Normalize(PermissionMode);
+}
 
 public sealed record AgentToolArtifact(
     string RelativePath,
@@ -549,15 +557,341 @@ public sealed record AgentToolResult(
     string Output,
     string? Error = null,
     IReadOnlyList<AgentToolArtifact>? Artifacts = null,
-    string? Warning = null)
+    string? Warning = null,
+    bool OutcomeUncertain = false,
+    bool MayHaveCommitted = false)
 {
     public string ToJson() => JsonSerializer.Serialize(new
     {
         success = Success,
         output = SecretRedactor.RedactText(Output),
         error = SecretRedactor.RedactText(Error ?? string.Empty),
+        warning = SecretRedactor.RedactText(Warning ?? string.Empty),
+        outcomeUncertain = OutcomeUncertain,
+        mayHaveCommitted = MayHaveCommitted,
         artifacts = Artifacts ?? []
     });
+}
+
+internal static class AgentToolInputValidator
+{
+    private static readonly HashSet<string> SupportedTypes = new(
+        ["string", "integer", "number", "boolean", "object", "array", "null"],
+        StringComparer.Ordinal);
+
+    public static AgentToolValidationResult ValidateRequiredProperties(
+        LlmToolDefinition definition,
+        JsonElement root)
+    {
+        return ValidateValue(definition.InputSchema, root, "$", definition.Name);
+    }
+
+    private static AgentToolValidationResult ValidateValue(
+        object? schema,
+        JsonElement value,
+        string path,
+        string toolName)
+    {
+        if (TryGetSchemaValue(schema, "type", out var typeValue))
+        {
+            var expectedTypes = EnumerateSchemaStrings(typeValue)
+                .Where(SupportedTypes.Contains)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            // Ignore malformed/unknown schema types for plugin compatibility.
+            if (expectedTypes.Length > 0 &&
+                !expectedTypes.Any(type => MatchesType(value, type)))
+            {
+                return AgentToolValidationResult.Fail(
+                    $"Tool argument '{path}' for '{toolName}' must be {FormatTypes(expectedTypes)}; " +
+                    $"received {DescribeKind(value)}.");
+            }
+        }
+
+        if (TryGetSchemaValue(schema, "enum", out var enumValue) &&
+            TryEnumerateEnumValues(enumValue, out var allowedValues) &&
+            !allowedValues.Any(candidate => JsonValuesEquivalent(value, candidate)))
+        {
+            var choices = string.Join(", ", allowedValues.Select(item => item.GetRawText()));
+            if (choices.Length > 160)
+                choices = choices[..157] + "...";
+            return AgentToolValidationResult.Fail(
+                $"Tool argument '{path}' for '{toolName}' must be one of: {choices}.");
+        }
+
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var objectResult = ValidateObject(schema, value, path, toolName);
+            if (!objectResult.Success)
+                return objectResult;
+        }
+        else if (value.ValueKind == JsonValueKind.Array &&
+                 TryGetSchemaValue(schema, "items", out var itemSchema))
+        {
+            var index = 0;
+            foreach (var item in value.EnumerateArray())
+            {
+                var itemResult = ValidateValue(
+                    itemSchema,
+                    item,
+                    $"{path}[{index}]",
+                    toolName);
+                if (!itemResult.Success)
+                    return itemResult;
+                index++;
+            }
+        }
+
+        return AgentToolValidationResult.Ok;
+    }
+
+    private static AgentToolValidationResult ValidateObject(
+        object? schema,
+        JsonElement value,
+        string path,
+        string toolName)
+    {
+        if (TryGetSchemaValue(schema, "required", out var requiredValue) &&
+            requiredValue != null)
+        {
+            foreach (var propertyName in EnumerateSchemaStrings(requiredValue))
+            {
+                if (string.IsNullOrWhiteSpace(propertyName))
+                    continue;
+
+                if (!value.TryGetProperty(propertyName, out var requiredProperty) ||
+                    requiredProperty.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ||
+                    (requiredProperty.ValueKind == JsonValueKind.String &&
+                     string.IsNullOrWhiteSpace(requiredProperty.GetString())))
+                {
+                    return AgentToolValidationResult.Fail(
+                        $"Required tool argument '{AppendPath(path, propertyName)}' is missing or empty.");
+                }
+            }
+        }
+
+        TryGetSchemaValue(schema, "properties", out var propertiesSchema);
+        var rejectUnknown =
+            TryGetSchemaValue(schema, "additionalProperties", out var additionalProperties) &&
+            IsExplicitFalse(additionalProperties);
+
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!TryGetSchemaValue(propertiesSchema, property.Name, out var propertySchema))
+            {
+                if (rejectUnknown)
+                {
+                    return AgentToolValidationResult.Fail(
+                        $"Tool argument '{AppendPath(path, property.Name)}' is not allowed by the schema.");
+                }
+
+                continue;
+            }
+
+            var propertyResult = ValidateValue(
+                propertySchema,
+                property.Value,
+                AppendPath(path, property.Name),
+                toolName);
+            if (!propertyResult.Success)
+                return propertyResult;
+        }
+
+        return AgentToolValidationResult.Ok;
+    }
+
+    private static bool TryGetSchemaValue(object? schema, string name, out object? value)
+    {
+        if (schema is JsonElement element && element.ValueKind == JsonValueKind.Object &&
+            element.TryGetProperty(name, out var property))
+        {
+            value = property;
+            return true;
+        }
+
+        if (schema is IReadOnlyDictionary<string, object> readOnly &&
+            readOnly.TryGetValue(name, out var readOnlyValue))
+        {
+            value = readOnlyValue;
+            return true;
+        }
+
+        if (schema is System.Collections.IDictionary dictionary && dictionary.Contains(name))
+        {
+            value = dictionary[name];
+            return true;
+        }
+
+        value = null;
+        return false;
+    }
+
+    private static IEnumerable<string> EnumerateSchemaStrings(object? value)
+    {
+        if (value is string text)
+        {
+            yield return text;
+            yield break;
+        }
+
+        if (value is JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.String && element.GetString() is { } item)
+                yield return item;
+            else if (element.ValueKind == JsonValueKind.Array)
+                foreach (var child in element.EnumerateArray())
+                    if (child.ValueKind == JsonValueKind.String && child.GetString() is { } childText)
+                        yield return childText;
+            yield break;
+        }
+
+        if (value is System.Collections.IEnumerable values)
+        {
+            foreach (var item in values)
+            {
+                if (item is string itemText)
+                    yield return itemText;
+                else if (item is JsonElement itemElement &&
+                         itemElement.ValueKind == JsonValueKind.String &&
+                         itemElement.GetString() is { } elementText)
+                    yield return elementText;
+            }
+        }
+    }
+
+    private static bool TryEnumerateEnumValues(
+        object? value,
+        out IReadOnlyList<JsonElement> elements)
+    {
+        var parsed = new List<JsonElement>();
+        if (value is JsonElement json)
+        {
+            if (json.ValueKind != JsonValueKind.Array)
+            {
+                elements = [];
+                return false;
+            }
+
+            parsed.AddRange(json.EnumerateArray().Select(item => item.Clone()));
+            elements = parsed;
+            return true;
+        }
+
+        if (value is not System.Collections.IEnumerable values ||
+            value is string or System.Collections.IDictionary)
+        {
+            elements = [];
+            return false;
+        }
+
+        try
+        {
+            foreach (var item in values)
+            {
+                parsed.Add(item is JsonElement itemElement
+                    ? itemElement.Clone()
+                    : JsonSerializer.SerializeToElement<object?>(item));
+            }
+        }
+        catch (Exception ex) when (ex is NotSupportedException or JsonException)
+        {
+            elements = [];
+            return false;
+        }
+
+        elements = parsed;
+        return true;
+    }
+
+    private static bool MatchesType(JsonElement value, string type) => type switch
+    {
+        "string" => value.ValueKind == JsonValueKind.String,
+        "integer" => IsInteger(value),
+        "number" => value.ValueKind == JsonValueKind.Number,
+        "boolean" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+        "object" => value.ValueKind == JsonValueKind.Object,
+        "array" => value.ValueKind == JsonValueKind.Array,
+        "null" => value.ValueKind == JsonValueKind.Null,
+        _ => true
+    };
+
+    private static bool IsInteger(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Number)
+            return false;
+        if (value.TryGetInt64(out _) || value.TryGetUInt64(out _))
+            return true;
+        if (value.TryGetDecimal(out var decimalValue))
+            return decimalValue == decimal.Truncate(decimalValue);
+        return value.TryGetDouble(out var doubleValue) &&
+               double.IsFinite(doubleValue) &&
+               doubleValue == Math.Truncate(doubleValue);
+    }
+
+    private static bool JsonValuesEquivalent(JsonElement left, JsonElement right)
+    {
+        if (left.ValueKind == JsonValueKind.Number && right.ValueKind == JsonValueKind.Number)
+        {
+            if (left.TryGetDecimal(out var leftDecimal) &&
+                right.TryGetDecimal(out var rightDecimal))
+                return leftDecimal == rightDecimal;
+            return left.GetDouble().Equals(right.GetDouble());
+        }
+
+        if (left.ValueKind != right.ValueKind)
+            return false;
+
+        return left.ValueKind switch
+        {
+            JsonValueKind.Object => ObjectsEquivalent(left, right),
+            JsonValueKind.Array => left.GetArrayLength() == right.GetArrayLength() &&
+                                   left.EnumerateArray().Zip(right.EnumerateArray())
+                                       .All(pair => JsonValuesEquivalent(pair.First, pair.Second)),
+            JsonValueKind.String => string.Equals(left.GetString(), right.GetString(), StringComparison.Ordinal),
+            JsonValueKind.True or JsonValueKind.False => left.GetBoolean() == right.GetBoolean(),
+            JsonValueKind.Null or JsonValueKind.Undefined => true,
+            _ => string.Equals(left.GetRawText(), right.GetRawText(), StringComparison.Ordinal)
+        };
+    }
+
+    private static bool ObjectsEquivalent(JsonElement left, JsonElement right)
+    {
+        var leftProperties = left.EnumerateObject().ToArray();
+        var rightProperties = right.EnumerateObject().ToArray();
+        if (leftProperties.Length != rightProperties.Length)
+            return false;
+
+        return leftProperties.All(property =>
+            right.TryGetProperty(property.Name, out var other) &&
+            JsonValuesEquivalent(property.Value, other));
+    }
+
+    private static bool IsExplicitFalse(object? value) => value switch
+    {
+        bool flag => !flag,
+        JsonElement { ValueKind: JsonValueKind.False } => true,
+        _ => false
+    };
+
+    private static string AppendPath(string path, string propertyName) =>
+        path == "$" ? $"$.{propertyName}" : $"{path}.{propertyName}";
+
+    private static string FormatTypes(IReadOnlyList<string> types) =>
+        types.Count == 1
+            ? $"a{(types[0][0] is 'a' or 'e' or 'i' or 'o' or 'u' ? "n" : string.Empty)} {types[0]}"
+            : string.Join(" or ", types);
+
+    private static string DescribeKind(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.True or JsonValueKind.False => "boolean",
+        JsonValueKind.Number => IsInteger(value) ? "integer" : "number",
+        JsonValueKind.String => "string",
+        JsonValueKind.Object => "object",
+        JsonValueKind.Array => "array",
+        JsonValueKind.Null => "null",
+        _ => value.ValueKind.ToString().ToLowerInvariant()
+    };
 }
 
 public interface IAgentTool
@@ -581,9 +915,9 @@ public interface IAgentTool
     {
         if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
             return AgentToolValidationResult.Fail(error ?? "Invalid tool arguments.");
-        return root.ValueKind == JsonValueKind.Object
-            ? AgentToolValidationResult.Ok
-            : AgentToolValidationResult.Fail("Tool arguments must be a JSON object.");
+        if (root.ValueKind != JsonValueKind.Object)
+            return AgentToolValidationResult.Fail("Tool arguments must be a JSON object.");
+        return AgentToolInputValidator.ValidateRequiredProperties(Definition, root);
     }
 
     Task<AgentToolResult> ExecuteAsync(
@@ -696,15 +1030,19 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
 public sealed class SandboxExecAgentTool : IAgentTool
 {
     private readonly ISandboxCommandService _sandbox;
+    private readonly IExecutionBackendRouter _router;
 
-    public SandboxExecAgentTool(ISandboxCommandService sandbox)
+    public SandboxExecAgentTool(
+        ISandboxCommandService sandbox,
+        IExecutionBackendRouter router)
     {
         _sandbox = sandbox;
+        _router = router;
     }
 
     public LlmToolDefinition Definition { get; } = new(
         AgentToolNames.SandboxExec,
-        "Execute one restricted PowerShell command inside the chat sandbox. Host files, privileged operations, nested shells, and destructive system commands are blocked.",
+        "Execute one PowerShell command from the chat workspace. Ask and Auto use the restricted sandbox; Full access or an exactly approved Ask invocation uses the unrestricted local backend. Catastrophic operations remain blocked by the safety policy.",
         new Dictionary<string, object>
         {
             ["type"] = "object",
@@ -713,7 +1051,7 @@ public sealed class SandboxExecAgentTool : IAgentTool
                 ["command"] = new Dictionary<string, object>
                 {
                     ["type"] = "string",
-                    ["description"] = "A PowerShell command that only reads or writes inside the sandbox working directory."
+                    ["description"] = "A PowerShell command started from the workspace. Ask and Auto are restricted to the sandbox; Full access or an exactly approved Ask invocation may access the host, subject to the catastrophic-operation guard."
                 },
                 ["reason"] = new Dictionary<string, object>
                 {
@@ -748,14 +1086,22 @@ public sealed class SandboxExecAgentTool : IAgentTool
         if (string.IsNullOrWhiteSpace(command))
             return new AgentToolResult(false, string.Empty, "The command argument is required.");
 
-        var result = await _sandbox.ExecuteAsync(
-            context.ChatId,
-            command,
-            new SandboxCommandOptions(context.TimeoutSeconds, context.MaxOutputChars),
+        var backend = AgentPermissionModes.IsBypass(context.EffectivePermissionMode)
+            ? ToolExecutionBackends.UnrestrictedLocal
+            : ToolExecutionBackends.RestrictedLocal;
+        var result = await _router.ExecuteAsync(
+            new ExecutionRequest(
+                context.ChatId,
+                command,
+                context.TimeoutSeconds,
+                context.MaxOutputChars,
+                context.EffectivePermissionMode),
+            backend,
             ct);
 
         var artifacts = await DiscoverArtifactsAsync(context.ChatId, ct);
         var output = $"""
+            Backend: {result.Backend}
             Exit code: {result.ExitCode}
             Timed out: {result.TimedOut}
             Duration: {result.Duration.TotalMilliseconds:F0} ms
@@ -768,15 +1114,18 @@ public sealed class SandboxExecAgentTool : IAgentTool
             {result.StandardError}
             """;
 
-        if (result.WasBlocked)
+        if (result.BlockedReason != null)
             output += $"\nBlocked: {result.BlockedReason}";
 
         return new AgentToolResult(
-            !result.WasBlocked && !result.TimedOut && result.ExitCode == 0,
+            result.Success,
             output,
-            result.WasBlocked ? result.BlockedReason : result.TimedOut ? "Command timed out." : null,
+            result.BlockedReason ??
+            (result.TimedOut ? "Command timed out." :
+             result.ExitCode != 0 ? $"Command exited with code {result.ExitCode}." : null),
             artifacts,
-            Warning: result.DestructiveWarning);
+            OutcomeUncertain: result.OutcomeUncertain,
+            MayHaveCommitted: result.MayHaveCommitted);
     }
 
     private async Task<IReadOnlyList<AgentToolArtifact>> DiscoverArtifactsAsync(

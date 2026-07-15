@@ -21,34 +21,51 @@ public sealed record McpResourceInfo(
     string Description,
     string MimeType);
 
+/// <summary>
+/// A mutating MCP request crossed the transport boundary, but no trustworthy
+/// response was received. Callers must not automatically replay the request.
+/// </summary>
+public sealed class McpOutcomeUncertainException : InvalidOperationException
+{
+    public McpOutcomeUncertainException(string message, Exception? innerException = null)
+        : base(message, innerException)
+    {
+    }
+}
+
 public interface IMcpClientService
 {
     Task<IReadOnlyList<McpToolInfo>> TestServerAsync(
         McpServerConfigDto server,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval);
 
     Task<IReadOnlyList<McpToolInfo>> ListToolsAsync(
         Guid chatId,
         string? serverName = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval);
 
     Task<IReadOnlyList<McpResourceInfo>> ListResourcesAsync(
         Guid chatId,
         string? serverName = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval);
 
     Task<string> ReadResourceAsync(
         Guid chatId,
         string serverName,
         string uri,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval);
 
     Task<string> CallToolAsync(
         Guid chatId,
         string serverName,
         string toolName,
         JsonElement arguments,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval);
 }
 
 public sealed class McpClientService : IMcpClientService
@@ -76,24 +93,26 @@ public sealed class McpClientService : IMcpClientService
     public async Task<IReadOnlyList<McpToolInfo>> ListToolsAsync(
         Guid chatId,
         string? serverName = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval)
     {
         var servers = await ResolveServersAsync(chatId, serverName, ct);
         var results = new List<McpToolInfo>();
         foreach (var server in servers)
-            results.AddRange(await TestServerAsync(server, ct));
+            results.AddRange(await TestServerAsync(server, ct, permissionMode));
         return results;
     }
 
     public async Task<IReadOnlyList<McpResourceInfo>> ListResourcesAsync(
         Guid chatId,
         string? serverName = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval)
     {
         var servers = await ResolveServersAsync(chatId, serverName, ct);
         var results = new List<McpResourceInfo>();
         foreach (var server in servers)
-            results.AddRange(await ListServerResourcesAsync(server, ct));
+            results.AddRange(await ListServerResourcesAsync(server, ct, permissionMode));
         return results;
     }
 
@@ -101,21 +120,23 @@ public sealed class McpClientService : IMcpClientService
         Guid chatId,
         string serverName,
         string uri,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval)
     {
         if (string.IsNullOrWhiteSpace(uri))
             throw new InvalidOperationException("MCP resource uri is required.");
 
         var server = (await ResolveServersAsync(chatId, serverName, ct)).Single();
-        var response = await InvokeAsync(server, "resources/read", new { uri }, ct);
+        var response = await InvokeAsync(server, "resources/read", new { uri }, ct, permissionMode);
         return SecretRedactor.RedactJson(response.GetRawText());
     }
 
     public async Task<IReadOnlyList<McpToolInfo>> TestServerAsync(
         McpServerConfigDto server,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval)
     {
-        var response = await InvokeAsync(server, "tools/list", new { }, ct);
+        var response = await InvokeAsync(server, "tools/list", new { }, ct, permissionMode);
         var results = new List<McpToolInfo>();
         if (!response.TryGetProperty("tools", out var tools) || tools.ValueKind != JsonValueKind.Array)
             return results;
@@ -139,9 +160,10 @@ public sealed class McpClientService : IMcpClientService
 
     private async Task<IReadOnlyList<McpResourceInfo>> ListServerResourcesAsync(
         McpServerConfigDto server,
-        CancellationToken ct)
+        CancellationToken ct,
+        string permissionMode)
     {
-        var response = await InvokeAsync(server, "resources/list", new { }, ct);
+        var response = await InvokeAsync(server, "resources/list", new { }, ct, permissionMode);
         var results = new List<McpResourceInfo>();
         if (!response.TryGetProperty("resources", out var resources) || resources.ValueKind != JsonValueKind.Array)
             return results;
@@ -172,14 +194,15 @@ public sealed class McpClientService : IMcpClientService
         string serverName,
         string toolName,
         JsonElement arguments,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string permissionMode = AgentPermissionModes.RequestApproval)
     {
         var server = (await ResolveServersAsync(chatId, serverName, ct)).Single();
         var response = await InvokeAsync(server, "tools/call", new
         {
             name = toolName,
             arguments
-        }, ct);
+        }, ct, permissionMode);
         return SecretRedactor.RedactJson(response.GetRawText());
     }
 
@@ -207,16 +230,22 @@ public sealed class McpClientService : IMcpClientService
         McpServerConfigDto server,
         string method,
         object parameters,
-        CancellationToken ct) =>
+        CancellationToken ct,
+        string permissionMode)
+    {
+        var mayMutate = string.Equals(method, "tools/call", StringComparison.Ordinal);
+        return
         server.Transport == McpTransportTypes.StreamableHttp
-            ? InvokeHttpAsync(server, method, parameters, ct)
-            : InvokeStdioAsync(server, method, parameters, ct);
+            ? InvokeHttpAsync(server, method, parameters, ct, permissionMode, mayMutate)
+            : InvokeStdioAsync(server, method, parameters, ct, mayMutate);
+    }
 
     private async Task<JsonElement> InvokeStdioAsync(
         McpServerConfigDto server,
         string method,
         object parameters,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool mayMutate)
     {
         if (string.IsNullOrWhiteSpace(server.Command) ||
             server.Command.IndexOfAny([';', '|', '&', '\r', '\n']) >= 0)
@@ -248,6 +277,7 @@ public sealed class McpClientService : IMcpClientService
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var settings = await _platform.GetSettingsAsync(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(settings.MaxRuntimeSeconds));
+        var operationDispatched = false;
         try
         {
             var nextId = 1;
@@ -259,14 +289,28 @@ public sealed class McpClientService : IMcpClientService
             }), timeoutCts.Token);
             _ = await ReadStdioResponseAsync(process, nextId++, timeoutCts.Token);
             await WriteStdioAsync(process, Notification("notifications/initialized", new { }), timeoutCts.Token);
+            // Mark before writing: a pipe/flush error cannot prove the server
+            // did not receive and execute the complete request.
+            operationDispatched = true;
             await WriteStdioAsync(process, Request(nextId, method, parameters), timeoutCts.Token);
             return await ReadStdioResponseAsync(process, nextId, timeoutCts.Token);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            if (operationDispatched && mayMutate)
+            {
+                throw new McpOutcomeUncertainException(
+                    $"MCP tool call on \"{server.Name}\" timed out after dispatch; it may have completed.");
+            }
             throw new InvalidOperationException(
                 $"MCP server \"{server.Name}\" did not reply within {settings.MaxRuntimeSeconds} seconds. " +
                 "Verify the command, arguments, UTF-8 output, and that the process implements MCP over STDIO.");
+        }
+        catch (IOException ex) when (operationDispatched && mayMutate)
+        {
+            throw new McpOutcomeUncertainException(
+                $"MCP tool call on \"{server.Name}\" lost its STDIO response after dispatch; it may have completed.",
+                ex);
         }
         finally
         {
@@ -286,10 +330,16 @@ public sealed class McpClientService : IMcpClientService
         McpServerConfigDto server,
         string method,
         object parameters,
-        CancellationToken ct)
+        CancellationToken ct,
+        string permissionMode,
+        bool mayMutate)
     {
         var settings = await _platform.GetSettingsAsync(ct);
-        var endpoint = await _network.ValidateAsync(server.Endpoint, settings, ct);
+        var endpoint = await _network.ValidateAsync(
+            server.Endpoint,
+            settings,
+            ct,
+            bypassRestrictions: AgentPermissionModes.IsBypass(permissionMode));
         var headers = await ParseHeadersAsync(server.HeadersJson, endpoint.IdnHost, ct);
         var sessionId = string.Empty;
         var nextId = 1;
@@ -305,7 +355,8 @@ public sealed class McpClientService : IMcpClientService
             headers,
             sessionId,
             settings.MaxRuntimeSeconds,
-            ct);
+            ct,
+            outcomeUncertainOnTransportFailure: false);
         sessionId = initialize.SessionId;
         await SendHttpAsync(
             endpoint,
@@ -313,14 +364,16 @@ public sealed class McpClientService : IMcpClientService
             headers,
             sessionId,
             settings.MaxRuntimeSeconds,
-            ct);
+            ct,
+            outcomeUncertainOnTransportFailure: false);
         var response = await SendHttpAsync(
             endpoint,
             Request(nextId, method, parameters),
             headers,
             sessionId,
             settings.MaxRuntimeSeconds,
-            ct);
+            ct,
+            outcomeUncertainOnTransportFailure: mayMutate);
         return ExtractResult(response.Payload, nextId);
     }
 
@@ -330,7 +383,8 @@ public sealed class McpClientService : IMcpClientService
         IReadOnlyDictionary<string, string> headers,
         string sessionId,
         int timeoutSeconds,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool outcomeUncertainOnTransportFailure)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -353,8 +407,21 @@ public sealed class McpClientService : IMcpClientService
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            if (outcomeUncertainOnTransportFailure)
+            {
+                throw new McpOutcomeUncertainException(
+                    $"MCP HTTP tool call to {endpoint} timed out after dispatch; it may have completed.");
+            }
             throw new InvalidOperationException(
                 $"MCP HTTP endpoint {endpoint} did not reply within {timeoutSeconds} seconds.");
+        }
+        catch (Exception ex) when (
+            outcomeUncertainOnTransportFailure &&
+            ex is HttpRequestException or IOException)
+        {
+            throw new McpOutcomeUncertainException(
+                $"MCP HTTP tool call to {endpoint} lost its response after dispatch; it may have completed.",
+                ex);
         }
         using (response)
         {
@@ -364,7 +431,17 @@ public sealed class McpClientService : IMcpClientService
         var json = contentType.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase)
             ? ParseSseJson(text)
             : text;
-        var element = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json).RootElement.Clone();
+        JsonElement element;
+        try
+        {
+            element = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json).RootElement.Clone();
+        }
+        catch (JsonException ex) when (outcomeUncertainOnTransportFailure)
+        {
+            throw new McpOutcomeUncertainException(
+                $"MCP HTTP tool call to {endpoint} returned an incomplete response after dispatch; it may have completed.",
+                ex);
+        }
         var returnedSession = response.Headers.TryGetValues("Mcp-Session-Id", out var values)
             ? values.FirstOrDefault() ?? sessionId
             : sessionId;
@@ -392,7 +469,7 @@ public sealed class McpClientService : IMcpClientService
             if (line == null)
             {
                 var error = await process.StandardError.ReadToEndAsync(ct);
-                throw new InvalidOperationException($"MCP STDIO server exited before replying: {SecretRedactor.RedactText(error)}");
+                throw new IOException($"MCP STDIO server exited before replying: {SecretRedactor.RedactText(error)}");
             }
             if (string.IsNullOrWhiteSpace(line))
                 continue;

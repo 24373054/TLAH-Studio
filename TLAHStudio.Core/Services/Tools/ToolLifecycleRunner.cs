@@ -50,60 +50,85 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
         CancellationToken ct = default)
     {
         var normalizedTool = AgentToolNames.Normalize(toolName);
-        if (!_registry.TryGet(normalizedTool, out var tool))
+        IAgentTool? tool = null;
+        try
         {
-            var metadata = AgentToolMetadata.For(normalizedTool, requiresApproval: true);
-            var safety = ToolSafetyAssessment.Blocked(
-                "tool",
-                $"Unknown tool: {normalizedTool}",
-                "The requested tool is not registered.");
-            return new ToolLifecyclePreview(tool, metadata, safety, null);
-        }
+            if (!_registry.TryGet(normalizedTool, out tool))
+            {
+                var metadata = AgentToolMetadata.For(normalizedTool, requiresApproval: true);
+                var safety = ToolSafetyAssessment.Blocked(
+                    "tool",
+                    $"Unknown tool: {normalizedTool}",
+                    "The requested tool is not registered.");
+                return new ToolLifecyclePreview(tool, metadata, safety, null);
+            }
 
-        var validation = tool.ValidateInput(argumentsJson);
-        if (!validation.Success)
-        {
-            var safety = ToolSafetyAssessment.Blocked(
-                "protocol",
-                "Tool arguments failed validation.",
-                validation.Error ?? "Invalid tool arguments.");
+            var validation = tool.ValidateInput(argumentsJson);
+            if (!validation.Success)
+            {
+                var safety = ToolSafetyAssessment.Blocked(
+                    "protocol",
+                    "Tool arguments failed validation.",
+                    validation.Error ?? "Invalid tool arguments.");
+                return new ToolLifecyclePreview(
+                    tool,
+                    tool.Metadata,
+                    safety,
+                    null,
+                    new AgentToolResult(false, string.Empty, validation.Error));
+            }
+
+            if (tool is IAgentToolV3 v3)
+            {
+                var classification = await v3.ClassifySafetyAsync(argumentsJson, chatId, _sandbox, ct);
+                var effectPlan = await v3.PlanEffectsAsync(argumentsJson, chatId, _sandbox, ct);
+                if (classification.EffectPlan != null)
+                    effectPlan = classification.EffectPlan;
+
+                return new ToolLifecyclePreview(
+                    tool,
+                    tool.Metadata,
+                    FromV3SafetyClassification(classification, effectPlan),
+                    effectPlan);
+            }
+
+            var safetyAssessment = ToolSafetyKernel.Assess(
+                _sandbox,
+                chatId,
+                normalizedTool,
+                argumentsJson);
+            if (safetyAssessment.IsBlocked &&
+                string.Equals(safetyAssessment.Category, "tool", StringComparison.OrdinalIgnoreCase))
+            {
+                safetyAssessment = SafetyFromRegisteredToolMetadata(tool);
+            }
             return new ToolLifecyclePreview(
                 tool,
                 tool.Metadata,
+                safetyAssessment,
+                EffectPlanFromLegacySafety(safetyAssessment));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var detail = SecretRedactor.RedactText(ex.Message);
+            var error = $"Tool preview failed: {detail}";
+            var metadata = tool?.Metadata ??
+                AgentToolMetadata.For(normalizedTool, requiresApproval: true);
+            var safety = ToolSafetyAssessment.Blocked(
+                "lifecycle",
+                $"Could not preview {normalizedTool}.",
+                error);
+            return new ToolLifecyclePreview(
+                tool,
+                metadata,
                 safety,
                 null,
-                new AgentToolResult(false, string.Empty, validation.Error));
+                new AgentToolResult(false, string.Empty, error));
         }
-
-        if (tool is IAgentToolV3 v3)
-        {
-            var classification = await v3.ClassifySafetyAsync(argumentsJson, chatId, _sandbox, ct);
-            var effectPlan = await v3.PlanEffectsAsync(argumentsJson, chatId, _sandbox, ct);
-            if (classification.EffectPlan != null)
-                effectPlan = classification.EffectPlan;
-
-            return new ToolLifecyclePreview(
-                tool,
-                tool.Metadata,
-                FromV3SafetyClassification(classification, effectPlan),
-                effectPlan);
-        }
-
-        var safetyAssessment = ToolSafetyKernel.Assess(
-            _sandbox,
-            chatId,
-            normalizedTool,
-            argumentsJson);
-        if (safetyAssessment.IsBlocked &&
-            string.Equals(safetyAssessment.Category, "tool", StringComparison.OrdinalIgnoreCase))
-        {
-            safetyAssessment = SafetyFromRegisteredToolMetadata(tool);
-        }
-        return new ToolLifecyclePreview(
-            tool,
-            tool.Metadata,
-            safetyAssessment,
-            EffectPlanFromLegacySafety(safetyAssessment));
     }
 
     public async Task<ToolExecutionOutcome> ExecuteAsync(
@@ -141,21 +166,65 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
 
         var tool = preview.Tool;
         var progressEvents = new List<AgentToolProgress>();
-        var beforeHook = await RunHooksAsync(
-            tool,
-            ToolHookTriggers.BeforeUse,
-            new ToolHookContext(
-                request.Run.ChatId,
-                request.Run.Id,
-                request.Invocation.ToolName,
-                argumentsJson,
+        var argumentsChangedByHook = false;
+        var hasPolicyAuthorization = request.PolicyAuthorization;
+        ToolHookResult beforeHook;
+        try
+        {
+            beforeHook = await RunHooksAsync(
+                tool,
+                ToolHookTriggers.BeforeUse,
+                new ToolHookContext(
+                    request.Run.ChatId,
+                    request.Run.Id,
+                    request.Invocation.ToolName,
+                    argumentsJson,
+                    null,
+                    preview.EffectPlan),
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var error = $"Before-use hook failed: {SecretRedactor.RedactText(ex.Message)}";
+            progressEvents.Add(new AgentToolProgress("hook_failed", 0, error));
+            return new ToolExecutionOutcome(
+                request,
+                tool,
+                preview.Metadata,
+                preview.Safety,
+                new AgentToolResult(false, string.Empty, error),
+                preview.EffectPlan,
                 null,
-                preview.EffectPlan),
-            ct);
+                progressEvents);
+        }
 
         if (beforeHook.ModifiedArgumentsJson != null &&
             !preview.Tool.InputsEquivalent(argumentsJson, beforeHook.ModifiedArgumentsJson))
         {
+            argumentsChangedByHook = true;
+            // A stored rule authorized the original evaluated subject. Hooks
+            // that materially change arguments must not inherit that decision
+            // without a fresh policy evaluation by the engine.
+            hasPolicyAuthorization = false;
+            if (request.ExplicitUserApproval)
+            {
+                const string reason = "Approved tool arguments changed before execution. Review the updated invocation again.";
+                progressEvents.Add(new AgentToolProgress("hook_blocked", 0, reason));
+                return new ToolExecutionOutcome(
+                    request,
+                    tool,
+                    preview.Metadata,
+                    preview.Safety,
+                    new AgentToolResult(false, string.Empty, reason),
+                    preview.EffectPlan,
+                    null,
+                    progressEvents);
+            }
+
             argumentsJson = beforeHook.ModifiedArgumentsJson;
             request.Invocation.ArgumentsJson = SecretRedactor.RedactJson(beforeHook.ModifiedArgumentsJson);
             request.Invocation.ProtectedArgumentsJson = ProtectedLocalData.Protect(beforeHook.ModifiedArgumentsJson);
@@ -208,7 +277,43 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
                 progressEvents);
         }
 
-        if (preview.Safety.IsBlocked)
+        if (argumentsChangedByHook)
+        {
+            var mode = AgentPermissionModes.Normalize(request.PermissionMode);
+            var changedAuthorization = ToolAuthorizationPolicy.Evaluate(
+                mode,
+                preview.Safety,
+                policy: null,
+                preview.Metadata.RequiresApproval,
+                preview.Metadata.RequiresUserInteraction,
+                preview.Metadata.IsDestructive,
+                isPlanMode: mode == AgentPermissionModes.Plan,
+                autoApproveTools: AgentPermissionModes.IsAutoApprove(mode));
+            if (changedAuthorization.IsBlocked || changedAuthorization.RequiresApproval)
+            {
+                var reason = changedAuthorization.IsBlocked
+                    ? changedAuthorization.Message ?? preview.Safety.Warning ?? preview.Safety.Summary
+                    : "Tool arguments changed to an operation that requires a fresh approval.";
+                progressEvents.Add(new AgentToolProgress("hook_blocked", 0, reason));
+                return new ToolExecutionOutcome(
+                    request,
+                    tool,
+                    preview.Metadata,
+                    preview.Safety,
+                    new AgentToolResult(false, string.Empty, reason),
+                    preview.EffectPlan,
+                    null,
+                    progressEvents);
+            }
+        }
+
+        if (preview.Safety.IsBlocked &&
+            !ToolAuthorizationPolicy.CanExecuteAtBoundary(
+                preview.Safety,
+                hasPolicyAuthorization
+                    ? AgentPermissionModes.BypassPermissions
+                    : request.PermissionMode,
+                request.ExplicitUserApproval))
         {
             return new ToolExecutionOutcome(
                 request,
@@ -228,57 +333,132 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
             1,
             Math.Min(request.MaxOutputChars, preview.Metadata.MaxResultSizeChars));
         var progress = new InlineProgress<AgentToolProgress>(p => progressEvents.Add(p));
-        var result = tool is IAgentToolV3 v3Tool
-            ? await v3Tool.ExecuteWithProgressAsync(
-                new AgentToolExecutionContext(
-                    request.Run.ChatId,
-                    request.Run.Id,
-                    request.Invocation.Id,
-                    request.TimeoutSeconds,
-                    maxOutputChars,
-                    request.PermissionMode),
-                argumentsJson,
-                progress,
-                ct)
-            : await tool.ExecuteAsync(
-                new AgentToolExecutionContext(
-                    request.Run.ChatId,
-                    request.Run.Id,
-                    request.Invocation.Id,
-                    request.TimeoutSeconds,
-                    maxOutputChars,
-                    request.PermissionMode),
-                argumentsJson,
-                ct);
+        AgentToolResult result;
+        try
+        {
+            result = tool is IAgentToolV3 v3Tool
+                ? await v3Tool.ExecuteWithProgressAsync(
+                    new AgentToolExecutionContext(
+                        request.Run.ChatId,
+                        request.Run.Id,
+                        request.Invocation.Id,
+                        request.TimeoutSeconds,
+                        maxOutputChars,
+                        request.PermissionMode,
+                        request.ExplicitUserApproval,
+                        hasPolicyAuthorization),
+                    argumentsJson,
+                    progress,
+                    ct)
+                : await tool.ExecuteAsync(
+                    new AgentToolExecutionContext(
+                        request.Run.ChatId,
+                        request.Run.Id,
+                        request.Invocation.Id,
+                        request.TimeoutSeconds,
+                        maxOutputChars,
+                        request.PermissionMode,
+                        request.ExplicitUserApproval,
+                        hasPolicyAuthorization),
+                    argumentsJson,
+                    ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            var mayHaveCommitted = !preview.Safety.IsReadOnly;
+            result = new AgentToolResult(
+                false,
+                string.Empty,
+                $"Tool execution timed out after {request.TimeoutSeconds} seconds.",
+                OutcomeUncertain: mayHaveCommitted,
+                MayHaveCommitted: mayHaveCommitted);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // A single integration/tool defect must be observable by the model,
+            // but must not tear down the durable agent run. Once a mutating
+            // tool body has been dispatched, an unexpected exception cannot
+            // prove that no side effect occurred, so the engine must fence it
+            // from automatic replay.
+            var mayHaveCommitted = !preview.Safety.IsReadOnly;
+            result = new AgentToolResult(
+                false,
+                string.Empty,
+                $"Tool execution failed: {SecretRedactor.RedactText(ex.Message)}",
+                OutcomeUncertain: mayHaveCommitted,
+                MayHaveCommitted: mayHaveCommitted);
+        }
 
         result = LimitResult(result, maxOutputChars);
 
-        var afterHook = await RunHooksAsync(
-            tool,
-            result.Success ? ToolHookTriggers.AfterUse : ToolHookTriggers.AfterFailedUse,
-            new ToolHookContext(
-                request.Run.ChatId,
-                request.Run.Id,
-                request.Invocation.ToolName,
-                argumentsJson,
-                result,
-                preview.EffectPlan),
-            ct);
+        ToolHookResult afterHook;
+        try
+        {
+            afterHook = await RunHooksAsync(
+                tool,
+                result.Success ? ToolHookTriggers.AfterUse : ToolHookTriggers.AfterFailedUse,
+                new ToolHookContext(
+                    request.Run.ChatId,
+                    request.Run.Id,
+                    request.Invocation.ToolName,
+                    argumentsJson,
+                    result,
+                    preview.EffectPlan),
+                ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var hookError = $"After-use hook failed: {SecretRedactor.RedactText(ex.Message)}";
+            progressEvents.Add(new AgentToolProgress("hook_failed", 100, hookError));
+            result = result with
+            {
+                Warning = AppendWarning(result.Warning, hookError)
+            };
+            afterHook = ToolHookResult.Allow();
+        }
 
         if (!afterHook.Allowed)
         {
             var reason = afterHook.Reason ?? "Tool hook rejected the completed invocation.";
             progressEvents.Add(new AgentToolProgress("hook_blocked", 100, reason));
-            result = new AgentToolResult(false, result.Output, reason, result.Artifacts);
+            // The side effect has already happened. Preserve its real outcome
+            // and surface the post-use hook problem as a warning so the model
+            // does not replay a successful mutation.
+            result = result with { Warning = AppendWarning(result.Warning, reason) };
         }
 
         ToolRollbackPlan? rollbackPlan = null;
         if (result.Success && tool is IAgentToolV3 rollbackTool)
         {
-            rollbackPlan = await rollbackTool.CreateRollbackPlanAsync(
-                argumentsJson,
-                result,
-                ct);
+            try
+            {
+                rollbackPlan = await rollbackTool.CreateRollbackPlanAsync(
+                    argumentsJson,
+                    result,
+                    ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                var rollbackError =
+                    $"Tool execution succeeded, but rollback planning failed: {SecretRedactor.RedactText(ex.Message)}";
+                progressEvents.Add(new AgentToolProgress("rollback_failed", 100, rollbackError));
+                result = result with
+                {
+                    Warning = AppendWarning(result.Warning, rollbackError)
+                };
+            }
         }
 
         return new ToolExecutionOutcome(
@@ -291,6 +471,11 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
             rollbackPlan,
             progressEvents);
     }
+
+    private static string AppendWarning(string? existing, string warning) =>
+        string.IsNullOrWhiteSpace(existing)
+            ? warning
+            : $"{existing}\n{warning}";
 
     private async Task<ToolHookResult> RunHooksAsync(
         IAgentTool tool,
@@ -349,7 +534,8 @@ public sealed class DefaultToolLifecycleRunner : IToolLifecycleRunner
             classification.IsDestructive,
             classification.RequiresExplicitApproval,
             classification.IsBlocked,
-            BypassImmune: false,
+            classification.CanOverrideBlock,
+            classification.BypassImmune,
             classification.Summary,
             classification.Warning,
             preview);

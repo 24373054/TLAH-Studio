@@ -28,6 +28,12 @@ public static class ToolInvocationStatuses
     public const string AwaitingApproval = "awaiting_approval";
     public const string Approved = "approved";
     public const string Running = "running";
+    /// <summary>
+    /// Execution started, but the runtime could not durably record its result.
+    /// The operation must not be replayed automatically because it may already
+    /// have produced non-idempotent side effects.
+    /// </summary>
+    public const string UnknownOutcome = "unknown_outcome";
     public const string Completed = "completed";
     public const string Denied = "denied";
     public const string Failed = "failed";
@@ -212,6 +218,13 @@ public class ToolInvocation
 
     public bool RequiresApproval { get; set; }
     public bool? Approved { get; set; }
+    /// <summary>
+    /// True only when the user explicitly approved this exact persisted
+    /// invocation. Automatic Full/Auto decisions must never set this flag,
+    /// otherwise a crash-and-resume could upgrade an automatic decision into a
+    /// one-time user authorization that bypasses contextual restrictions.
+    /// </summary>
+    public bool ExplicitUserApproval { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ApprovedAt { get; set; }
     public DateTime? StartedAt { get; set; }

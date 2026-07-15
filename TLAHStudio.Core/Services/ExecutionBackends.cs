@@ -22,7 +22,9 @@ public sealed record ExecutionResult(
     TimeSpan Duration,
     string StandardOutput,
     string StandardError,
-    string? BlockedReason = null)
+    string? BlockedReason = null,
+    bool OutcomeUncertain = false,
+    bool MayHaveCommitted = false)
 {
     public bool Success => BlockedReason == null && !TimedOut && ExitCode == 0;
 }
@@ -120,7 +122,9 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
             result.Duration,
             result.StandardOutput,
             result.StandardError,
-            result.BlockedReason);
+            result.BlockedReason,
+            result.OutcomeUncertain,
+            result.MayHaveCommitted);
     }
 
     private async Task<ExecutionResult> ExecuteUnrestrictedLocalAsync(
@@ -199,7 +203,12 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
         if (string.IsNullOrWhiteSpace(settings.RemoteEndpoint))
             return Blocked(ToolExecutionBackends.Remote, string.Empty, "Remote sandbox endpoint is not configured.");
 
-        var uri = await _network.ValidateAsync(settings.RemoteEndpoint, settings, ct);
+        var normalizedPermissionMode = AgentPermissionModes.Normalize(request.PermissionMode);
+        var uri = await _network.ValidateAsync(
+            settings.RemoteEndpoint,
+            settings,
+            ct,
+            bypassRestrictions: AgentPermissionModes.IsBypass(normalizedPermissionMode));
         using var message = new HttpRequestMessage(HttpMethod.Post, uri);
         message.Content = new StringContent(JsonSerializer.Serialize(new
         {
@@ -208,7 +217,8 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
             maxOutputChars = request.MaxOutputChars,
             maxMemoryMb = settings.MaxMemoryMb,
             maxProcesses = settings.MaxProcesses,
-            workspace = request.ChatId.ToString("N")
+            workspace = request.ChatId.ToString("N"),
+            permissionMode = normalizedPermissionMode
         }), Encoding.UTF8, "application/json");
 
         if (!string.IsNullOrWhiteSpace(settings.RemoteCredentialName))
@@ -241,13 +251,34 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
                 started.Elapsed,
                 Limit(root.TryGetProperty("stdout", out var stdout) ? stdout.GetString() ?? string.Empty : text, request.MaxOutputChars),
                 Limit(root.TryGetProperty("stderr", out var stderr) ? stderr.GetString() ?? string.Empty : string.Empty, request.MaxOutputChars),
-                response.IsSuccessStatusCode ? null : $"Remote sandbox returned HTTP {(int)response.StatusCode}.");
+                response.IsSuccessStatusCode ? null : $"Remote sandbox returned HTTP {(int)response.StatusCode}.",
+                root.TryGetProperty("timedOut", out var uncertainTimeout) && uncertainTimeout.GetBoolean(),
+                root.TryGetProperty("timedOut", out var mayHaveCommitted) && mayHaveCommitted.GetBoolean());
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             return new ExecutionResult(
                 ToolExecutionBackends.Remote, string.Empty, -1, true, started.Elapsed,
-                string.Empty, string.Empty, "Remote sandbox request timed out.");
+                string.Empty, string.Empty, "Remote sandbox request timed out.",
+                OutcomeUncertain: true,
+                MayHaveCommitted: true);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or InvalidOperationException)
+        {
+            // Once SendAsync has been entered, a transport/protocol failure
+            // cannot prove that the remote command did not run. Preserve that
+            // uncertainty so non-read-only invocations are never replayed.
+            return new ExecutionResult(
+                ToolExecutionBackends.Remote,
+                string.Empty,
+                -1,
+                false,
+                started.Elapsed,
+                string.Empty,
+                string.Empty,
+                $"Remote sandbox transport failed: {SecretRedactor.RedactText(ex.Message)}",
+                OutcomeUncertain: true,
+                MayHaveCommitted: true);
         }
     }
 
@@ -291,6 +322,7 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds));
         var timedOut = false;
+        string? uncertainError = null;
         try
         {
             await process.WaitForExitAsync(timeoutCts.Token);
@@ -298,6 +330,16 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             timedOut = true;
+            TryKill(process);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            uncertainError = SecretRedactor.RedactText(ex.Message);
             TryKill(process);
         }
 
@@ -311,7 +353,13 @@ public sealed class ExecutionBackendRouter : IExecutionBackendRouter
             started.Elapsed,
             SecretRedactor.RedactText(Limit(stdout, request.MaxOutputChars)),
             SecretRedactor.RedactText(Limit(stderr, request.MaxOutputChars)),
-            timedOut ? "Execution timed out." : null);
+            timedOut
+                ? "Execution timed out."
+                : uncertainError == null
+                    ? null
+                    : $"Execution transport failed: {uncertainError}",
+            OutcomeUncertain: timedOut || uncertainError != null,
+            MayHaveCommitted: timedOut || uncertainError != null);
     }
 
     private static async Task<bool> CanStartAsync(

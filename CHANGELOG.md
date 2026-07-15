@@ -2,6 +2,28 @@
 
 All notable user-visible changes are recorded here. The project follows semantic versioning for stable releases.
 
+## [4.13.0] - 2026-07-15
+
+### Fixed
+
+- Unified permission decisions across tool preview, approval, resume, lifecycle, and final execution so an approved exact invocation can no longer be rejected by a second, inconsistent gate.
+- Made approval argument editing explicit and read-only by default; edited payloads must be valid JSON objects and pass the selected tool's input validation before replacing persisted arguments.
+- Detect incomplete Anthropic and OpenAI-compatible streams instead of treating truncated output as a successful response.
+- Prevent unresolved or repeated tool failures from being reported as successful completion.
+- Fence timed-out or disconnected mutating operations as unknown outcomes so Resume never replays a side effect that may already have completed.
+- Resolve background command backends inside a fresh dependency scope instead of retaining disposed foreground database services.
+- Isolate the local SDK and long-lived chat, sidebar, debug, and window services so concurrent UI refreshes no longer share one EF database context.
+- Close immutable-guard bypasses involving PowerShell delete aliases, abbreviated switches, nested script blocks, Windows root wildcards, and WSL/POSIX system roots.
+
+### Changed
+
+- `Full access` now bypasses ordinary policy, host-path, network-allowlist, and sensitive-file prompts; only immutable catastrophic-operation guards and required user-interaction pauses remain.
+- Added bounded transient-provider retry with stream reset, checkpointed pause after three failed attempts, and permission-preserving resume.
+- Added failure-aware replanning and an explicit recovery question when the agent cannot safely make further progress.
+- Made persisted chat, project, and global allow rules reach the inner file, network, Git, MCP, typed, and V3 execution gates instead of stopping at preview.
+- Added adaptive long-chain budgets: useful runs extend automatically from the 48-step soft budget up to 192 steps, while an explicit Resume can add further bounded work without approval callbacks inflating the budget.
+- Increased the default command runtime limit from 30 to 120 seconds.
+
 ## [4.12.0] - 2026-07-13
 
 ### Fixed
@@ -44,6 +66,7 @@ All notable user-visible changes are recorded here. The project follows semantic
 
 Earlier milestones are retained as historical design records in [`docs/`](./docs/README.md). Release artifacts and notes are available on the [GitHub Releases page](https://github.com/24373054/TLAH-Studio/releases).
 
+[4.13.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.13.0
 [4.12.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.12.0
 [4.11.1]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.11.1
 [4.11.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.11.0

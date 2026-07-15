@@ -220,6 +220,10 @@ public class TlahDbContext : DbContext
             entity.HasIndex(i => i.AgentRunId);
             entity.HasIndex(i => i.AgentStepId);
             entity.HasIndex(i => i.Status);
+            // Approval is a one-way state transition. Treat the current status
+            // as an optimistic-concurrency token so concurrent approve/deny
+            // callbacks cannot overwrite one another (last writer wins).
+            entity.Property(i => i.Status).IsConcurrencyToken();
             entity.HasOne(i => i.AgentRun)
                   .WithMany(r => r.ToolInvocations)
                   .HasForeignKey(i => i.AgentRunId)
@@ -497,6 +501,7 @@ public class TlahDbContext : DbContext
                 "Status" TEXT NOT NULL,
                 "RequiresApproval" INTEGER NOT NULL,
                 "Approved" INTEGER NULL,
+                "ExplicitUserApproval" INTEGER NOT NULL DEFAULT 0,
                 "CreatedAt" TEXT NOT NULL,
                 "ApprovedAt" TEXT NULL,
                 "StartedAt" TEXT NULL,
@@ -509,6 +514,7 @@ public class TlahDbContext : DbContext
         AddColumnIfMissing(connection, "ToolInvocations", "SafetySummary", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(connection, "ToolInvocations", "SafetyJson", "TEXT NOT NULL DEFAULT '{}'");
         AddColumnIfMissing(connection, "ToolInvocations", "ProtectedArgumentsJson", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing(connection, "ToolInvocations", "ExplicitUserApproval", "INTEGER NOT NULL DEFAULT 0");
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "AgentCheckpoints" (
                 "Id" TEXT NOT NULL CONSTRAINT "PK_AgentCheckpoints" PRIMARY KEY,
@@ -623,9 +629,19 @@ public class TlahDbContext : DbContext
             github.com
             raw.githubusercontent.com
             html.duckduckgo.com',
-                30, 20000, 10485760, 512, 8, '',
+                120, 20000, 10485760, 512, 8, '',
                 'mcr.microsoft.com/powershell:latest', '', '', CURRENT_TIMESTAMP
             );
+            """);
+        // 4.13.0 raises the untouched legacy 30-second ceiling so builds,
+        // package installs, and test suites do not fail by default. UpdatedAt
+        // makes this a one-time migration and preserves later user choices.
+        ExecuteNonQuery(connection, """
+            UPDATE "ToolPlatformSettings"
+            SET "MaxRuntimeSeconds" = 120,
+                "UpdatedAt" = CURRENT_TIMESTAMP
+            WHERE "MaxRuntimeSeconds" = 30
+              AND datetime("UpdatedAt") < datetime('2026-07-14');
             """);
         ExecuteNonQuery(connection, """
             CREATE TABLE IF NOT EXISTS "ToolPolicyRules" (

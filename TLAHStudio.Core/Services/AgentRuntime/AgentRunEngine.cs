@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -124,6 +125,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         CancellationToken ct = default)
     {
         var run = await _db.Set<AgentRun>().FirstAsync(r => r.Id == state.RunId, ct);
+        // A resumed run starts a fresh execution attempt. Do not keep rendering
+        // a stale provider/tool error after the resume itself succeeded.
+        if (state.Status == AgentRunStatuses.Running)
+            state.ErrorMessage = null;
         // M4.9.2: A fresh run (step 0) means the user actively continued —
         // reset the compaction circuit breaker so auto-compaction can resume.
         if (state.CurrentStep == 0)
@@ -167,20 +172,37 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 effective.Model);
 
             // Pre-loop: handle pending approval from resume
-            var pending = await _db.Set<ToolInvocation>()
-                .Include(i => i.AgentStep)
-                .Where(i => i.AgentRunId == state.RunId &&
-                    (i.Status == ToolInvocationStatuses.Approved ||
-                     i.Status == ToolInvocationStatuses.Denied))
-                .OrderBy(i => i.CreatedAt)
-                .FirstOrDefaultAsync(ct);
-            if (pending != null)
+            ToolInvocation? pending = null;
+            var pendingInvocationId = state.PendingToolInvocationId ?? state.UnknownOutcomeInvocationId;
+            if (pendingInvocationId is { } durableInvocationId)
+            {
+                pending = await _db.Set<ToolInvocation>()
+                    .Include(i => i.AgentStep)
+                    .FirstOrDefaultAsync(i =>
+                        i.Id == durableInvocationId &&
+                        i.AgentRunId == state.RunId, ct);
+            }
+            if (pending != null &&
+                pending.Status is ToolInvocationStatuses.Running or ToolInvocationStatuses.UnknownOutcome)
+            {
+                assistantContent = await PauseForUnknownInvocationOutcomeAsync(
+                    run, state, pending, options, events, ct);
+                return new AgentRunResult(state.DeepClone(), assistantContent, lastResponse, events);
+            }
+            if (pending != null &&
+                pending.Status is ToolInvocationStatuses.Approved or ToolInvocationStatuses.Denied)
             {
                 var pendingResult = await ExecuteSingleInvocationAsync(
                     state, pending, options, ct);
                 events.AddRange(pendingResult.Events);
                 if (pendingResult.Frame != null)
-                    frameProgress?.Report(pendingResult.Frame);
+                    ReportSafely(frameProgress, pendingResult.Frame);
+
+                if (state.Status == AgentRunStatuses.Paused)
+                {
+                    assistantContent = state.ErrorMessage;
+                    return new AgentRunResult(state.DeepClone(), assistantContent, lastResponse, events);
+                }
 
                 options = ApplyPersistedPermissionOptions(state, options);
                 systemPrompt = await BuildSystemPromptAsync(state, options.PermissionMode, ct);
@@ -190,6 +212,27 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             while (state.CurrentStep < state.MaxSteps)
             {
                 ct.ThrowIfCancellationRequested();
+                var directiveStateChanged = false;
+                if (state.DeferredToolDirectivePending && state.DeferredToolCalls.Count > 0)
+                {
+                    state.Messages.Add(new MessagePayload(
+                        "user",
+                        BuildDeferredToolDirective(state.DeferredToolCalls)));
+                    state.DeferredToolDirectivePending = false;
+                    directiveStateChanged = true;
+                }
+                if (state.RecoveryDirectivePending)
+                {
+                    state.Messages.Add(new MessagePayload(
+                        "user",
+                        BuildFailureRecoveryDirective(state, completionWasAttempted: false)));
+                    state.RecoveryDirectiveIssuedForFailureSignature =
+                        state.LastFailedInvocationSignature;
+                    state.RecoveryDirectivePending = false;
+                    directiveStateChanged = true;
+                }
+                if (directiveStateChanged)
+                    await SaveCheckpointAsync(state, ct);
                 var stepNumber = state.CurrentStep + 1;
                 state.CurrentStep = stepNumber;
                 SyncRunState(run, state);
@@ -306,14 +349,15 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     new { stepNumber, messageCount = modelMessages.Count, toolCount = guard.Tools.Count, runtimeContextInjected = true },
                     step.Id), events, ct);
 
-                frameProgress?.Report(new AgentRunFrame(stepNumber, AgentRunFrameKinds.ModelRequest, events.ToArray()));
+                ReportSafely(frameProgress,
+                    new AgentRunFrame(stepNumber, AgentRunFrameKinds.ModelRequest, events.ToArray()));
 
                 var streamMetrics = CreateStreamMetrics();
                 var outputStream = CreateTrackedStream(options.OutputStream, streamMetrics);
-                lastResponse = await _providerStreamAdapter.ChatAsync(
+                lastResponse = await ChatWithTransientRetryAsync(
                     new ProviderStreamRequest(provider, modelMessages, systemPrompt,
                         effective.Temperature, effective.MaxTokens, guard.Tools, outputStream,
-                        Reasoning: BuildReasoningOptions(effective)), ct);
+                        Reasoning: BuildReasoningOptions(effective)), state, ct);
 
                 // M4.8.0: Context limit retry with PTL truncation.
                 if (_contextManager.IsContextLimitError(lastResponse))
@@ -406,10 +450,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                                 var retryMessages = await BuildModelMessagesWithRuntimeContextAsync(
                                     state.ChatId, state.RunId, retryGuard.Messages, ct);
                                 outputStream = CreateTrackedStream(options.OutputStream, streamMetrics);
-                                lastResponse = await _providerStreamAdapter.ChatAsync(
+                                lastResponse = await ChatWithTransientRetryAsync(
                                     new ProviderStreamRequest(provider, retryMessages, systemPrompt,
                                         effective.Temperature, effective.MaxTokens, retryGuard.Tools, outputStream,
-                                        Reasoning: BuildReasoningOptions(effective)), ct);
+                                        Reasoning: BuildReasoningOptions(effective)), state, ct);
                             }
                         }
                     }
@@ -451,10 +495,10 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             var truncMessages = await BuildModelMessagesWithRuntimeContextAsync(
                                 state.ChatId, state.RunId, truncGuard.Messages, ct);
                             outputStream = CreateTrackedStream(options.OutputStream, streamMetrics);
-                            lastResponse = await _providerStreamAdapter.ChatAsync(
+                            lastResponse = await ChatWithTransientRetryAsync(
                                 new ProviderStreamRequest(provider, truncMessages, systemPrompt,
                                     effective.Temperature, effective.MaxTokens, truncGuard.Tools, outputStream,
-                                    Reasoning: BuildReasoningOptions(effective)), ct);
+                                    Reasoning: BuildReasoningOptions(effective)), state, ct);
                             await AppendEventAsync(state, options, new AgentEventAppendRequest(
                                 new AgentRun { Id = state.RunId },
                                 AgentEventTypes.ContextCompacted,
@@ -482,9 +526,22 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 // Provider error
                 if (lastResponse.HttpStatus is < 200 or >= 300 || !string.IsNullOrWhiteSpace(lastResponse.Error))
                 {
-                    await FinalizeStepFailed(run, step, state, options,
-                        lastResponse.Error ?? $"HTTP {lastResponse.HttpStatus}", events, ct);
-                    assistantContent = lastResponse.AssistantText;
+                    var providerError = lastResponse.Error ?? $"HTTP {lastResponse.HttpStatus}";
+                    if (IsTransientProviderResponse(lastResponse))
+                    {
+                        await PauseForTransientProviderFailureAsync(
+                            run, step, state, options, providerError, events, ct);
+                        assistantContent =
+                            "The model provider is temporarily unavailable. Progress was saved; resume the run to continue.";
+                    }
+                    else
+                    {
+                        // Deterministic request errors cannot be repaired by
+                        // blindly resuming with the same malformed request.
+                        await FinalizeStepFailed(
+                            run, step, state, options, providerError, events, ct);
+                        assistantContent = lastResponse.AssistantText;
+                    }
                     break;
                 }
 
@@ -499,37 +556,308 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 if (allToolCalls.Count == 0)
                 {
-                    // Final answer — no tool calls
-                    step.Kind = "final";
-                    step.Status = AgentStepStatuses.Completed;
-                    step.Summary = "Agent completed the task.";
-                    step.CompletedAt = DateTime.UtcNow;
-                    state.CurrentStep = stepNumber;
-                    state.Status = AgentRunStatuses.Completed;
-                    SyncRunState(run, state, terminal: true);
-                    state.Messages.Add(new MessagePayload("assistant", lastResponse.AssistantText, ReasoningContent: lastResponse.ReasoningText));
-                    await AppendEventAsync(state, options, new AgentEventAppendRequest(
-                        new AgentRun { Id = state.RunId }, AgentEventTypes.RunCompleted,
-                        "Run completed.", new { state.CurrentStep, state.MaxSteps }, step.Id), events, ct);
-                    assistantContent = lastResponse.AssistantText;
-                    await SaveCheckpointAsync(state, ct);
-                    break;
+                    if (state.ConsecutiveToolFailures > 0)
+                    {
+                        if (state.CompletionRecoveryAttempts == 0)
+                        {
+                            // A plain response immediately after an unresolved
+                            // tool failure is not proof of completion. Give the
+                            // model one explicit opportunity to change route.
+                            step.Kind = "recovery";
+                            step.Status = AgentStepStatuses.Completed;
+                            step.Summary = "Completion deferred after an unresolved tool failure.";
+                            step.CompletedAt = DateTime.UtcNow;
+                            state.CurrentStep = stepNumber;
+                            state.CompletionRecoveryAttempts++;
+                            state.RecoveryAttempts++;
+                            if (!string.IsNullOrWhiteSpace(lastResponse.AssistantText))
+                            {
+                                state.Messages.Add(new MessagePayload(
+                                    "assistant",
+                                    lastResponse.AssistantText,
+                                    ReasoningContent: lastResponse.ReasoningText));
+                            }
+                            state.Messages.Add(new MessagePayload(
+                                "user",
+                                BuildFailureRecoveryDirective(state, completionWasAttempted: true)));
+                            state.RecoveryDirectiveIssuedForFailureSignature =
+                                state.LastFailedInvocationSignature;
+                            state.RecoveryDirectivePending = false;
+                            SyncRunState(run, state);
+                            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                                new AgentRun { Id = state.RunId },
+                                AgentEventTypes.ProtocolRepair,
+                                "Completion deferred; recovering from the latest tool failure.",
+                                new
+                                {
+                                    state.ConsecutiveToolFailures,
+                                    state.RepeatedFailureCount,
+                                    state.LastFailureSummary
+                                },
+                                step.Id,
+                                Severity: AgentEventSeverities.Warning), events, ct);
+                            await SaveCheckpointAsync(state, ct);
+                            await _db.SaveChangesAsync(ct);
+                            continue;
+                        }
+
+                        // The recovery prompt also ended without a viable action.
+                        // Convert that ambiguous stop into an explicit user choice
+                        // instead of reporting a false-successful completion.
+                        allToolCalls.Add(CreateRecoveryQuestionCall(state));
+                    }
+                    else if (state.DeferredToolCalls.Count > 0)
+                    {
+                        if (state.DeferredToolRecoveryAttempts < 2)
+                        {
+                            step.Kind = "recovery";
+                            step.Status = AgentStepStatuses.Completed;
+                            step.Summary = "Completion deferred until sibling tool calls are reconsidered.";
+                            step.CompletedAt = DateTime.UtcNow;
+                            state.CurrentStep = stepNumber;
+                            state.DeferredToolRecoveryAttempts++;
+                            if (!string.IsNullOrWhiteSpace(lastResponse.AssistantText))
+                            {
+                                state.Messages.Add(new MessagePayload(
+                                    "assistant",
+                                    lastResponse.AssistantText,
+                                    ReasoningContent: lastResponse.ReasoningText));
+                            }
+                            state.Messages.Add(new MessagePayload(
+                                "user",
+                                BuildDeferredToolDirective(state.DeferredToolCalls, completionWasAttempted: true)));
+                            state.DeferredToolDirectivePending = false;
+                            SyncRunState(run, state);
+                            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                                new AgentRun { Id = state.RunId },
+                                AgentEventTypes.ProtocolRepair,
+                                "Completion deferred because sibling tool calls have not been reconsidered.",
+                                new
+                                {
+                                    deferredCount = state.DeferredToolCalls.Count,
+                                    state.DeferredToolRecoveryAttempts
+                                },
+                                step.Id,
+                                Severity: AgentEventSeverities.Warning), events, ct);
+                            await SaveCheckpointAsync(state, ct);
+                            await _db.SaveChangesAsync(ct);
+                            continue;
+                        }
+
+                        allToolCalls.Add(CreateDeferredToolQuestionCall(state));
+                    }
+                    else
+                    {
+                        var openTasks = await GetOpenCompletionTasksAsync(state.ChatId, ct);
+                        if (openTasks.Count > 0)
+                        {
+                            if (state.OpenTaskCompletionRecoveryAttempts == 0)
+                            {
+                                step.Kind = "recovery";
+                                step.Status = AgentStepStatuses.Completed;
+                                step.Summary = "Completion deferred while tracked tasks remain open.";
+                                step.CompletedAt = DateTime.UtcNow;
+                                state.CurrentStep = stepNumber;
+                                state.OpenTaskCompletionRecoveryAttempts++;
+                                if (!string.IsNullOrWhiteSpace(lastResponse.AssistantText))
+                                {
+                                    state.Messages.Add(new MessagePayload(
+                                        "assistant",
+                                        lastResponse.AssistantText,
+                                        ReasoningContent: lastResponse.ReasoningText));
+                                }
+                                state.Messages.Add(new MessagePayload(
+                                    "user",
+                                    BuildOpenTaskRecoveryDirective(openTasks)));
+                                SyncRunState(run, state);
+                                await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                                    new AgentRun { Id = state.RunId },
+                                    AgentEventTypes.ProtocolRepair,
+                                    "Completion deferred because tracked tasks remain open.",
+                                    new
+                                    {
+                                        openTaskCount = openTasks.Count,
+                                        tasks = openTasks.Select(t => new { t.Id, t.Title, t.Status }).ToArray()
+                                    },
+                                    step.Id,
+                                    Severity: AgentEventSeverities.Warning), events, ct);
+                                await SaveCheckpointAsync(state, ct);
+                                await _db.SaveChangesAsync(ct);
+                                continue;
+                            }
+
+                            allToolCalls.Add(CreateOpenTaskQuestionCall(openTasks));
+                        }
+                        else
+                        {
+                            state.OpenTaskCompletionRecoveryAttempts = 0;
+                            // Final answer — no tool calls and no durable work remains.
+                            step.Kind = "final";
+                            step.Status = AgentStepStatuses.Completed;
+                            step.Summary = "Agent completed the task.";
+                            step.CompletedAt = DateTime.UtcNow;
+                            state.CurrentStep = stepNumber;
+                            state.Status = AgentRunStatuses.Completed;
+                            state.ErrorMessage = null;
+                            SyncRunState(run, state, terminal: true);
+                            state.Messages.Add(new MessagePayload("assistant", lastResponse.AssistantText, ReasoningContent: lastResponse.ReasoningText));
+                            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                                new AgentRun { Id = state.RunId }, AgentEventTypes.RunCompleted,
+                                "Run completed.", new { state.CurrentStep, state.MaxSteps }, step.Id), events, ct);
+                            assistantContent = lastResponse.AssistantText;
+                            await SaveCheckpointAsync(state, ct);
+                            break;
+                        }
+                    }
+                }
+
+                if (state.ConsecutiveToolFailures > 0 && allToolCalls.Count > 0)
+                {
+                    var repeatedCalls = allToolCalls
+                        .Where(call => IsRepeatedFailedInvocation(state, call))
+                        .ToList();
+                    if (repeatedCalls.Count > 0)
+                    {
+                        allToolCalls = allToolCalls
+                            .Where(call => !IsRepeatedFailedInvocation(state, call))
+                            .ToList();
+                        state.ConsecutiveToolFailures += repeatedCalls.Count;
+                        state.RepeatedFailureCount += repeatedCalls.Count;
+                        state.RecoveryAttempts++;
+                        state.RecoveryDirectivePending = false;
+
+                        // When the model offers no materially different action,
+                        // replace the loop with an explicit user decision now.
+                        if (allToolCalls.Count == 0)
+                            allToolCalls.Add(CreateRecoveryQuestionCall(state));
+
+                        await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                            new AgentRun { Id = state.RunId },
+                            AgentEventTypes.ProtocolRepair,
+                            $"Suppressed {repeatedCalls.Count} identical failed invocation(s); requesting a different route.",
+                            new
+                            {
+                                repeatedCount = repeatedCalls.Count,
+                                state.RepeatedFailureCount,
+                                replacement = allToolCalls.Count == 1 &&
+                                    string.Equals(allToolCalls[0].Name, AgentToolNames.AskUserQuestion, StringComparison.OrdinalIgnoreCase)
+                                        ? AgentToolNames.AskUserQuestion
+                                        : "materially_different_calls"
+                            },
+                            step.Id,
+                            Severity: AgentEventSeverities.Warning), events, ct);
+                    }
                 }
 
                 // Sanitize all tool calls
                 var validToolCalls = new List<LlmToolCall>();
+                var invalidToolCallIssues = new List<ToolProtocolGuardIssue>();
                 foreach (var tc in allToolCalls)
                 {
-                    var issues = new List<ToolProtocolGuardIssue>();
-                    var safe = ToolProtocolGuard.SanitizeToolCall(tc, issues);
-                    if (safe != null) validToolCalls.Add(safe);
+                    var safe = ToolProtocolGuard.SanitizeToolCall(tc, invalidToolCallIssues);
+                    if (safe == null)
+                        continue;
+                    if (!_agentTools.TryGet(safe.Name, out _))
+                    {
+                        invalidToolCallIssues.Add(new ToolProtocolGuardIssue(
+                            "unknown_tool_name",
+                            $"The model requested an unregistered tool: {safe.Name}",
+                            "error"));
+                        continue;
+                    }
+                    validToolCalls.Add(safe);
                 }
 
                 if (validToolCalls.Count == 0)
                 {
-                    await FinalizeStepFailed(run, step, state, options, "All tool calls were invalid.", events, ct);
-                    assistantContent = "Agent stopped: invalid tool requests.";
-                    break;
+                    if (state.InvalidToolCallRecoveryAttempts < 2)
+                    {
+                        step.Kind = "protocol_recovery";
+                        step.Status = AgentStepStatuses.Completed;
+                        step.Summary = "Invalid tool calls rejected; requesting a corrected call.";
+                        step.CompletedAt = DateTime.UtcNow;
+                        state.CurrentStep = stepNumber;
+                        state.InvalidToolCallRecoveryAttempts++;
+                        state.RecoveryAttempts++;
+                        if (!string.IsNullOrWhiteSpace(lastResponse.AssistantText))
+                        {
+                            state.Messages.Add(new MessagePayload(
+                                "assistant",
+                                lastResponse.AssistantText,
+                                ReasoningContent: lastResponse.ReasoningText));
+                        }
+                        state.Messages.Add(new MessagePayload(
+                            "user",
+                            BuildInvalidToolRecoveryDirective(
+                                invalidToolCallIssues,
+                                state.InvalidToolCallRecoveryAttempts)));
+                        if (state.DeferredToolCalls.Count > 0)
+                            state.DeferredToolDirectivePending = true;
+                        SyncRunState(run, state);
+                        await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                            new AgentRun { Id = state.RunId },
+                            AgentEventTypes.ProtocolRepair,
+                            "All tool calls were invalid; requesting protocol repair.",
+                            new
+                            {
+                                attempt = state.InvalidToolCallRecoveryAttempts,
+                                maxAttempts = 2,
+                                issues = invalidToolCallIssues.Select(i => new { i.Code, i.Summary }).ToArray()
+                            },
+                            step.Id,
+                            Severity: AgentEventSeverities.Warning), events, ct);
+                        await SaveCheckpointAsync(state, ct);
+                        await _db.SaveChangesAsync(ct);
+                        continue;
+                    }
+
+                    validToolCalls.Add(CreateProtocolRepairQuestionCall(invalidToolCallIssues));
+                }
+                else
+                {
+                    state.InvalidToolCallRecoveryAttempts = 0;
+                    AcknowledgeDeferredToolReRequests(state, validToolCalls);
+                }
+
+                // User-interaction calls are always isolated, including Full
+                // Access. Pausing an ask_user_question batch while retaining
+                // sibling calls would leave provider calls without results.
+                var userInteractionCall = validToolCalls.FirstOrDefault(call =>
+                    string.Equals(call.Name, AgentToolNames.AskUserQuestion, StringComparison.OrdinalIgnoreCase));
+                if (validToolCalls.Count > 1 && userInteractionCall != null)
+                {
+                    var deferredCalls = validToolCalls
+                        .Where(call => !ReferenceEquals(call, userInteractionCall))
+                        .ToList();
+                    var deferredCount = deferredCalls.Count;
+                    EnqueueDeferredToolCalls(state, deferredCalls);
+                    validToolCalls = [userInteractionCall];
+                    await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                        new AgentRun { Id = state.RunId },
+                        AgentEventTypes.ProtocolRepair,
+                        $"Isolated user question and deferred {deferredCount} sibling tool call(s).",
+                        new { deferredCount, strategy = "isolate_user_interaction" },
+                        step.Id,
+                        Severity: AgentEventSeverities.Warning), events, ct);
+                }
+                // Other approval-mode batches remain single-invocation until
+                // durable batch grants are supported. Full/Auto ordinary tool
+                // batches continue to execute together.
+                else if (validToolCalls.Count > 1 &&
+                         !options.AutoApproveTools &&
+                         !AgentPermissionModes.IsBypass(options.PermissionMode))
+                {
+                    var deferredCalls = validToolCalls.Skip(1).ToList();
+                    var deferredCount = deferredCalls.Count;
+                    EnqueueDeferredToolCalls(state, deferredCalls);
+                    validToolCalls = [validToolCalls[0]];
+                    await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                        new AgentRun { Id = state.RunId },
+                        AgentEventTypes.ProtocolRepair,
+                        $"Deferred {deferredCount} additional tool call(s) to preserve approval and resume integrity.",
+                        new { deferredCount, strategy = "single_invocation" },
+                        step.Id,
+                        Severity: AgentEventSeverities.Warning), events, ct);
                 }
 
                 // Plan batches for multi-tool execution
@@ -537,8 +865,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                     new ToolExecutionPlanItem(tc.Name, tc.ArgumentsJson, tc.Id)).ToList();
                 var batches = _toolExecutionScheduler.PlanBatches(planItems);
 
-                frameProgress?.Report(new AgentRunFrame(stepNumber, AgentRunFrameKinds.ToolBatchPlanned, events.ToArray(),
-                    new { batchCount = batches.Count, totalTools = validToolCalls.Count }));
+                ReportSafely(frameProgress,
+                    new AgentRunFrame(stepNumber, AgentRunFrameKinds.ToolBatchPlanned, events.ToArray(),
+                        new { batchCount = batches.Count, totalTools = validToolCalls.Count }));
 
                 // Save the assistant tool-request message
                 var requestContent = FormatMultiToolRequestMessage(stepNumber, validToolCalls);
@@ -625,36 +954,47 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         var policy = await _toolPlatform.EvaluatePolicyAsync(
                             state.ChatId, item.ToolCall.Name, item.ToolCall.ArgumentsJson, item.Safety, ct);
 
-                        if (policy.IsDenied || item.Safety.IsBlocked)
+                        var authorization = ToolAuthorizationPolicy.Evaluate(
+                            options.PermissionMode,
+                            item.Safety,
+                            policy,
+                            item.Tool.Metadata.RequiresApproval,
+                            item.Tool.RequiresUserInteraction,
+                            item.Tool.Metadata.IsDestructive,
+                            state.IsPlanMode,
+                            options.AutoApproveTools);
+
+                        if (authorization.IsBlocked)
                         {
-                            await HandleDeniedInvocationAsync(state, item, step, policy.IsDenied ? "denied_by_policy" : "blocked_by_safety", options, events, ct);
+                            await HandleDeniedInvocationAsync(
+                                state,
+                                item,
+                                step,
+                                authorization.ReasonCode,
+                                options,
+                                events,
+                                ct);
                             continue;
                         }
 
-                        // M4.6.0: Bypass-immune safety checks survive even AutoApproveTools
-                        // mode. Operations on .git/, .env, shell configs always need approval.
-                        var safetyRequiresApproval = item.Safety.RequiresExplicitApproval ||
-                                                     (item.Safety.BypassImmune && options.AutoApproveTools);
-
-                        // M4.9.0: In Plan mode, all write/destructive operations require
-                        // explicit user approval — even if the mode is BypassPermissions.
-                        if (state.IsPlanMode &&
-                            (item.Safety.IsWriteOperation || item.Tool.Metadata.IsDestructive ||
-                             !item.Safety.IsReadOnly))
+                        if (IsRepeatedFailedInvocation(state, item.ToolCall))
                         {
-                            safetyRequiresApproval = true;
+                            item.Invocation.Status = ToolInvocationStatuses.Failed;
+                            await CompleteInvocationWithResultAsync(
+                                state,
+                                item,
+                                step,
+                                new AgentToolResult(
+                                    false,
+                                    string.Empty,
+                                    "Identical failed invocation suppressed. Choose a materially different tool, command, or set of arguments."),
+                                options,
+                                events,
+                                ct);
+                            continue;
                         }
 
-                        var needsApproval = item.Tool.RequiresUserInteraction ||
-                            (state.IsPlanMode &&
-                             (item.Safety.IsWriteOperation || item.Tool.Metadata.IsDestructive ||
-                              !item.Safety.IsReadOnly)) ||
-                            (!options.AutoApproveTools
-                                ? ((item.Tool.Metadata.RequiresApproval && !policy.IsAllowed) ||
-                                   (safetyRequiresApproval && !policy.IsAllowed))
-                                : (item.Safety.BypassImmune && !policy.IsAllowed));
-
-                        if (needsApproval)
+                        if (authorization.RequiresApproval)
                         {
                             item.Invocation.Status = ToolInvocationStatuses.AwaitingApproval;
                             step.Status = AgentStepStatuses.AwaitingApproval;
@@ -682,7 +1022,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                                 }, step.Id, item.Invocation.Id,
                                 Severity: item.Safety.RequiresExplicitApproval ? AgentEventSeverities.Warning : AgentEventSeverities.Info), events, ct);
 
-                            frameProgress?.Report(new AgentRunFrame(stepNumber, AgentRunFrameKinds.ApprovalNeeded, events.ToArray()));
+                            ReportSafely(frameProgress,
+                                new AgentRunFrame(stepNumber, AgentRunFrameKinds.ApprovalNeeded, events.ToArray()));
                             approvalNeeded = true;
                             break;
                         }
@@ -693,7 +1034,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         item.Invocation.Status = ToolInvocationStatuses.Approved;
 
                         var execResult = await ExecuteSingleInvocationAsync(state, item, step, options, events, ct);
-                        frameProgress?.Report(execResult.Frame ?? AgentRunFrame.Empty(stepNumber, AgentRunFrameKinds.ToolResult));
+                        ReportSafely(frameProgress,
+                            execResult.Frame ?? AgentRunFrame.Empty(stepNumber, AgentRunFrameKinds.ToolResult));
+
+                        if (state.Status == AgentRunStatuses.Paused)
+                        {
+                            assistantContent = state.ErrorMessage;
+                            return new AgentRunResult(state.DeepClone(), assistantContent, lastResponse, events);
+                        }
 
                         var priorPermissionMode = options.PermissionMode;
                         var priorAutoApprove = options.AutoApproveTools;
@@ -714,6 +1062,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
                 state.CurrentStep = stepNumber;
                 SyncRunState(run, state);
+                await ExtendSoftStepBudgetIfUsefulAsync(state, run, step, options, events, ct);
 
                 // M4.8.0: Throttled session memory extraction.
                 // Not every step — init at 10K tokens, update every 5K or 3 steps.
@@ -755,13 +1104,30 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 }
                 else
                 {
+                    var unresolvedFailure = state.ConsecutiveToolFailures > 0;
                     state.Status = AgentRunStatuses.Paused;
+                    if (unresolvedFailure)
+                        state.ErrorMessage = state.LastFailureSummary;
                     SyncRunState(run, state);
                     await AppendEventAsync(state, options, new AgentEventAppendRequest(
                         new AgentRun { Id = state.RunId }, AgentEventTypes.RunPaused,
-                        "Step budget reached.", new { state.CurrentStep, state.MaxSteps },
+                        unresolvedFailure
+                            ? "Step budget reached with an unresolved tool failure. Progress was saved."
+                            : "Step budget reached.",
+                        new
+                        {
+                            state.CurrentStep,
+                            state.MaxSteps,
+                            unresolvedFailure,
+                            state.LastFailureSummary,
+                            resumable = true
+                        },
                         Severity: AgentEventSeverities.Warning), events, ct);
-                    assistantContent = $"Agent paused at step {state.CurrentStep}/{state.MaxSteps}.";
+                    await SaveCheckpointAsync(state, ct);
+                    await _db.SaveChangesAsync(ct);
+                    assistantContent = unresolvedFailure
+                        ? $"Agent paused at step {state.CurrentStep}/{state.MaxSteps} with an unresolved failure. Resume to try another route."
+                        : $"Agent paused at step {state.CurrentStep}/{state.MaxSteps}.";
                 }
             }
 
@@ -795,7 +1161,22 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         }
         finally
         {
-            await _eventStream.FlushAsync(CancellationToken.None);
+            try
+            {
+                await _eventStream.FlushAsync(CancellationToken.None);
+            }
+            catch
+            {
+                // Event flushing is observability, not a terminal transition.
+                // Preserve the state produced by the run even when telemetry
+                // storage is temporarily unavailable.
+                foreach (var entry in _db.ChangeTracker.Entries<AgentEvent>()
+                             .Where(entry => entry.State == EntityState.Added)
+                             .ToArray())
+                {
+                    entry.State = EntityState.Detached;
+                }
+            }
         }
     }
 
@@ -806,6 +1187,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         CancellationToken ct = default)
     {
         // Resume is essentially the same as RunAsync — the engine handles pending invocations in the pre-loop
+        state.ErrorMessage = null;
         return await RunAsync(state, options, frameProgress, ct);
     }
 
@@ -1353,13 +1735,17 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             : normalizedMode == AgentPermissionModes.AutoApprove
                 ? "Permission mode: Auto approve. The app approves detected tool directions automatically, but safety and policy blocks still apply."
                 : "Permission mode: Ask approval. High-risk or policy-relevant tool calls must wait for explicit user approval.";
+        var safetyBoundaryLine = AgentPermissionModes.IsBypass(normalizedMode)
+            ? "Full access may use host paths, installed programs, network endpoints, package managers, Git, and privileged commands when they are necessary for the task. The runtime still rejects catastrophic root, disk, boot, or account-destruction operations."
+            : "Work only inside the workspace unless an exact operation is approved. Do not access unrelated host files or run destructive, privileged, registry, service, shutdown, or system-configuration operations without the permission flow.";
         return $"""
 
         TLAH Agent Mode is enabled.
         Registered tools: {tools}
         Workspace root: {sandboxRoot}
         {hostAccessLine}
-        Use the workspace root as the default working directory. In sandboxed modes, work only inside that root. Do not read unrelated host user files or run destructive, privileged, registry, service, shutdown, or system-configuration operations.
+        Use the workspace root as the default working directory.
+        {safetyBoundaryLine}
         Prefer typed memory, file, code, Git, HTTP, search, browser, terminal, and MCP tools over ad-hoc shell commands.
         Tool map: code_read/code_grep/code_glob/code_symbols inspect code; code_edit/code_multi_edit/code_apply_patch change code; file_* manages sandbox artifacts; web_search/browser_read/http_request handle web and APIs; mcp_* discovers and calls configured MCP servers; todo_* and task_* keep durable plans; terminal_exec is the escape hatch for commands and host-level work in Full access mode.
         For development work, prefer code_read, code_grep, code_glob, code_diff, code_edit, code_multi_edit, code_apply_patch, code_rollback, and code_diagnostics.
@@ -1386,18 +1772,25 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         events.Add(evt);
         if (options.Progress != null)
         {
-            var snapshot = await BuildSnapshotAsync(state, ct);
-            options.Progress.Report(new AgentProgressUpdate(
-                evt.AgentRunId,
-                evt.SequenceNumber,
-                evt.EventType,
-                evt.Severity,
-                evt.Summary,
-                evt.CreatedAt,
-                snapshot,
-                evt.AgentStepId,
-                evt.ToolInvocationId,
-                evt.DataJson));
+            try
+            {
+                var snapshot = await BuildSnapshotAsync(state, ct);
+                ReportSafely(options.Progress, new AgentProgressUpdate(
+                    evt.AgentRunId,
+                    evt.SequenceNumber,
+                    evt.EventType,
+                    evt.Severity,
+                    evt.Summary,
+                    evt.CreatedAt,
+                    snapshot,
+                    evt.AgentStepId,
+                    evt.ToolInvocationId,
+                    evt.DataJson));
+            }
+            catch
+            {
+                // Snapshot/progress telemetry must never become the run result.
+            }
         }
 
         return evt;
@@ -1525,6 +1918,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             sb.AppendLine(output.TrimEnd());
         if (!string.IsNullOrWhiteSpace(result.Error))
             sb.AppendLine($"Error: {result.Error}");
+        if (!string.IsNullOrWhiteSpace(result.Warning))
+            sb.AppendLine($"Warning: {result.Warning}");
         if (result.Artifacts is { Count: > 0 })
         {
             sb.AppendLine("Artifacts:");
@@ -1553,6 +1948,428 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             JsonSerializer.Serialize(state), ct);
     }
 
+    private async Task ExtendSoftStepBudgetIfUsefulAsync(
+        AgentRunState state,
+        AgentRun run,
+        AgentStep step,
+        AgentEngineOptions options,
+        List<AgentEvent> events,
+        CancellationToken ct)
+    {
+        const int hardBudget = 192;
+        var nextBudget = CalculateExtendedSoftStepBudget(state);
+        if (nextBudget == state.MaxSteps)
+            return;
+
+        var previousBudget = state.MaxSteps;
+        var madeRecentProgress = state.LastSuccessfulStep >= state.CurrentStep - 4;
+        var needsFailureRecovery = state.ConsecutiveToolFailures > 0 &&
+                                   state.CompletionRecoveryAttempts == 0;
+        state.MaxSteps = nextBudget;
+        state.BudgetExtensionCount++;
+        SyncRunState(run, state);
+        await AppendEventAsync(state, options, new AgentEventAppendRequest(
+            new AgentRun { Id = state.RunId },
+            AgentEventTypes.RuntimeMetrics,
+            $"Soft step budget extended from {previousBudget} to {state.MaxSteps}.",
+            new
+            {
+                previousBudget,
+                state.MaxSteps,
+                hardBudget,
+                madeRecentProgress,
+                needsFailureRecovery,
+                state.BudgetExtensionCount
+            },
+            step.Id), events, ct);
+        await SaveCheckpointAsync(state, ct);
+    }
+
+    internal static int CalculateExtendedSoftStepBudget(AgentRunState state)
+    {
+        const int productionSoftBudget = 48;
+        const int extensionSize = 24;
+        const int hardBudget = 192;
+
+        if (state.CurrentStep < state.MaxSteps ||
+            state.MaxSteps < productionSoftBudget ||
+            state.MaxSteps >= hardBudget)
+        {
+            return state.MaxSteps;
+        }
+
+        var madeRecentProgress = state.LastSuccessfulStep >= state.CurrentStep - 4;
+        var needsFailureRecovery = state.ConsecutiveToolFailures > 0 &&
+                                   state.CompletionRecoveryAttempts == 0;
+        return madeRecentProgress || needsFailureRecovery
+            ? Math.Min(hardBudget, state.MaxSteps + extensionSize)
+            : state.MaxSteps;
+    }
+
+    private static bool IsRepeatedFailedInvocation(AgentRunState state, LlmToolCall toolCall) =>
+        state.ConsecutiveToolFailures > 0 &&
+        string.Equals(
+            state.LastFailedInvocationSignature,
+            ComputeInvocationSignature(toolCall),
+            StringComparison.Ordinal);
+
+    private static string ComputeInvocationSignature(LlmToolCall toolCall)
+    {
+        var payload = $"{AgentToolNames.Normalize(toolCall.Name)}\n{toolCall.ArgumentsJson.Trim()}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+    }
+
+    private static string BuildFailureRecoveryDirective(
+        AgentRunState state,
+        bool completionWasAttempted)
+    {
+        var attempted = completionWasAttempted
+            ? "Your previous response attempted to stop while the failure remained unresolved. "
+            : string.Empty;
+        var failure = string.IsNullOrWhiteSpace(state.LastFailureSummary)
+            ? "The latest tool invocation failed."
+            : $"Latest failure: {state.LastFailureSummary}";
+        return $"""
+        [failure recovery]
+        {attempted}{failure}
+        Do not repeat the identical failed invocation. Inspect the error and choose a materially different tool, command, argument set, or smaller step. If no safe alternative can make progress, call ask_user_question with concrete recovery choices. Do not claim the task is complete while this failure is unresolved.
+        [/failure recovery]
+        """;
+    }
+
+    private static LlmToolCall CreateRecoveryQuestionCall(AgentRunState state)
+    {
+        var failure = string.IsNullOrWhiteSpace(state.LastFailureSummary)
+            ? "the latest tool failure"
+            : TrimForContext(state.LastFailureSummary, 220);
+        var arguments = JsonSerializer.Serialize(new
+        {
+            questions = new[]
+            {
+                new
+                {
+                    header = "Recovery",
+                    question = $"The agent could not recover from {failure}. How should it continue?",
+                    options = new[]
+                    {
+                        new
+                        {
+                            label = "Try another way",
+                            description = "Continue with a materially different tool or approach."
+                        },
+                        new
+                        {
+                            label = "Stop and summarize",
+                            description = "Stop execution and explain completed work, the blocker, and next steps."
+                        }
+                    },
+                    multiSelect = false
+                }
+            }
+        });
+        return new LlmToolCall(
+            $"recovery-{Guid.NewGuid():N}",
+            AgentToolNames.AskUserQuestion,
+            arguments);
+    }
+
+    private static void EnqueueDeferredToolCalls(
+        AgentRunState state,
+        IEnumerable<LlmToolCall> calls)
+    {
+        var known = state.DeferredToolCalls
+            .Select(ComputeInvocationSignature)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var call in calls)
+        {
+            if (known.Add(ComputeInvocationSignature(call)))
+                state.DeferredToolCalls.Add(call with { });
+        }
+
+        if (state.DeferredToolCalls.Count > 0)
+        {
+            state.DeferredToolDirectivePending = true;
+            state.DeferredToolRecoveryAttempts = 0;
+        }
+    }
+
+    private static void AcknowledgeDeferredToolReRequests(
+        AgentRunState state,
+        IReadOnlyList<LlmToolCall> requestedCalls)
+    {
+        if (state.DeferredToolCalls.Count == 0)
+            return;
+
+        foreach (var requested in requestedCalls)
+        {
+            var signature = ComputeInvocationSignature(requested);
+            var index = state.DeferredToolCalls.FindIndex(call =>
+                string.Equals(ComputeInvocationSignature(call), signature, StringComparison.Ordinal));
+            if (index < 0)
+            {
+                // The model is allowed to revise arguments while reconsidering
+                // a deferred operation. Match one sibling by normalized name,
+                // but never inject the old arguments back into provider history.
+                index = state.DeferredToolCalls.FindIndex(call =>
+                    string.Equals(
+                        AgentToolNames.Normalize(call.Name),
+                        AgentToolNames.Normalize(requested.Name),
+                        StringComparison.OrdinalIgnoreCase));
+            }
+            if (index >= 0)
+                state.DeferredToolCalls.RemoveAt(index);
+        }
+
+        if (state.DeferredToolCalls.Count == 0)
+        {
+            state.DeferredToolDirectivePending = false;
+            state.DeferredToolRecoveryAttempts = 0;
+        }
+        else
+        {
+            state.DeferredToolDirectivePending = true;
+        }
+    }
+
+    private static string BuildDeferredToolDirective(
+        IReadOnlyList<LlmToolCall> calls,
+        bool completionWasAttempted = false)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("[deferred tool calls]");
+        if (completionWasAttempted)
+            sb.AppendLine("Your previous response tried to finish before all deferred sibling calls were reconsidered.");
+        sb.AppendLine("The runtime isolated an earlier approval/user-interaction call to preserve provider tool_call/result pairing. The sibling requests below were NOT executed:");
+        foreach (var call in calls.Take(8))
+        {
+            var arguments = SecretRedactor.RedactText(TrimForContext(call.ArgumentsJson, 500));
+            sb.AppendLine($"- {AgentToolNames.Normalize(call.Name)} arguments: {arguments}");
+        }
+        if (calls.Count > 8)
+            sb.AppendLine($"- ... and {calls.Count - 8} more deferred request(s).");
+        sb.AppendLine("Reassess each request against the latest tool result. Re-request every operation that is still needed (you may correct its arguments); do not assume any deferred operation ran. If none should run, call ask_user_question and let the user explicitly choose to skip them. Do not claim completion while this list remains unresolved.");
+        sb.Append("[/deferred tool calls]");
+        return sb.ToString();
+    }
+
+    private static LlmToolCall CreateDeferredToolQuestionCall(AgentRunState state)
+    {
+        var names = string.Join(", ", state.DeferredToolCalls
+            .Select(call => AgentToolNames.Normalize(call.Name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6));
+        var arguments = JsonSerializer.Serialize(new
+        {
+            questions = new[]
+            {
+                new
+                {
+                    header = "Deferred work",
+                    question = $"The model did not reconsider deferred tool work ({names}). How should it continue?",
+                    options = new[]
+                    {
+                        new { label = "Reassess and run", description = "Re-request the still-needed operations with current arguments." },
+                        new { label = "Skip deferred work", description = "Explicitly skip these operations and explain the resulting limitation." }
+                    },
+                    multiSelect = false
+                }
+            }
+        });
+        return new LlmToolCall(
+            $"recovery-deferred-{Guid.NewGuid():N}",
+            AgentToolNames.AskUserQuestion,
+            arguments);
+    }
+
+    internal static string? ReadSyntheticQuestionAnswer(
+        LlmToolCall toolCall,
+        string expectedHeader)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(toolCall.ArgumentsJson);
+            if (!document.RootElement.TryGetProperty("answers", out var answers) ||
+                answers.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var properties = answers.EnumerateObject().ToArray();
+            if (properties.Length == 0)
+                return null;
+
+            // Newer clients key answers by the compact question header; older
+            // releases used the full question text. Prefer an exact/header
+            // match, then accept the sole answer for this one-question runtime
+            // prompt so checkpoints remain forward-compatible.
+            JsonProperty? selected = null;
+            foreach (var property in properties)
+            {
+                if (string.Equals(property.Name, expectedHeader, StringComparison.OrdinalIgnoreCase))
+                {
+                    selected = property;
+                    break;
+                }
+            }
+            if (selected == null)
+            {
+                foreach (var property in properties)
+                {
+                    if (property.Name.Contains(expectedHeader, StringComparison.OrdinalIgnoreCase))
+                    {
+                        selected = property;
+                        break;
+                    }
+                }
+            }
+            if (selected == null && properties.Length == 1)
+                selected = properties[0];
+            if (selected == null)
+                return null;
+
+            return selected.Value.Value.ValueKind switch
+            {
+                JsonValueKind.String => selected.Value.Value.GetString()?.Trim(),
+                JsonValueKind.Array => selected.Value.Value.EnumerateArray()
+                    .Where(value => value.ValueKind == JsonValueKind.String)
+                    .Select(value => value.GetString()?.Trim())
+                    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)),
+                _ => null
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    internal static bool? ApplySyntheticQuestionResolution(
+        AgentRunState state,
+        LlmToolCall toolCall)
+    {
+        if (toolCall.Id.StartsWith("recovery-deferred-", StringComparison.Ordinal))
+        {
+            var choice = ReadSyntheticQuestionAnswer(toolCall, "Deferred work");
+            // Reassessment is a request to continue processing the durable
+            // sibling set, not permission to discard it. Only the explicit
+            // skip choice resolves deferred work.
+            if (string.Equals(choice, "Skip deferred work", StringComparison.OrdinalIgnoreCase))
+            {
+                state.DeferredToolCalls.Clear();
+                state.DeferredToolDirectivePending = false;
+                state.DeferredToolRecoveryAttempts = 0;
+            }
+            else
+            {
+                state.DeferredToolDirectivePending = state.DeferredToolCalls.Count > 0;
+            }
+            // This question resolves only the deferred sibling set. It must
+            // never double as evidence that an unrelated failed operation was
+            // recovered.
+            return false;
+        }
+
+        if (toolCall.Id.StartsWith("recovery-", StringComparison.Ordinal) &&
+            !toolCall.Id.StartsWith("recovery-protocol-", StringComparison.Ordinal) &&
+            !toolCall.Id.StartsWith("recovery-tasks-", StringComparison.Ordinal))
+        {
+            var choice = ReadSyntheticQuestionAnswer(toolCall, "Recovery");
+            return string.Equals(choice, "Stop and summarize", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return null;
+    }
+
+    private static string BuildInvalidToolRecoveryDirective(
+        IReadOnlyList<ToolProtocolGuardIssue> issues,
+        int attempt)
+    {
+        var details = issues.Count == 0
+            ? "No registered, provider-safe tool call remained."
+            : string.Join("; ", issues.Take(6).Select(issue => $"{issue.Code}: {issue.Summary}"));
+        return $"""
+        [tool protocol repair {attempt}/2]
+        The previous tool request was rejected before execution. {details}
+        Produce a fresh call using one registered tool name and a valid JSON object matching that tool's schema. Do not repeat the malformed call. If you cannot formulate a valid call after this repair attempt, ask the user for a concrete recovery choice.
+        [/tool protocol repair]
+        """;
+    }
+
+    private static LlmToolCall CreateProtocolRepairQuestionCall(
+        IReadOnlyList<ToolProtocolGuardIssue> issues)
+    {
+        var issue = issues.FirstOrDefault()?.Summary ?? "the tool request remained invalid";
+        var arguments = JsonSerializer.Serialize(new
+        {
+            questions = new[]
+            {
+                new
+                {
+                    header = "Tool request",
+                    question = $"The agent could not produce a valid tool call after two repairs ({TrimForContext(issue, 180)}). How should it continue?",
+                    options = new[]
+                    {
+                        new { label = "Try a simpler step", description = "Continue with one smaller, schema-valid operation." },
+                        new { label = "Stop and explain", description = "Pause execution and explain the protocol blocker." }
+                    },
+                    multiSelect = false
+                }
+            }
+        });
+        return new LlmToolCall(
+            $"recovery-protocol-{Guid.NewGuid():N}",
+            AgentToolNames.AskUserQuestion,
+            arguments);
+    }
+
+    private async Task<IReadOnlyList<AgentTaskSnapshot>> GetOpenCompletionTasksAsync(
+        Guid chatId,
+        CancellationToken ct)
+    {
+        var tasks = await _agentTasks.ListAsync(chatId, includeCompleted: false, limit: 40, ct);
+        return tasks
+            .Where(task => task.Status is AgentTaskStatuses.Pending or AgentTaskStatuses.InProgress)
+            .ToList();
+    }
+
+    private static string BuildOpenTaskRecoveryDirective(IReadOnlyList<AgentTaskSnapshot> tasks)
+    {
+        var lines = string.Join("\n", tasks.Take(12).Select(task => $"- [{task.Status}] {task.Title}"));
+        return $"""
+        [tracked task completion gate]
+        A final answer was attempted while durable tasks are still pending or in progress:
+        {lines}
+        Continue the work, or update each task to completed/cancelled/blocked with an accurate reason before giving a final answer. If user input is required, call ask_user_question. Do not claim the run is complete while these task states remain open.
+        [/tracked task completion gate]
+        """;
+    }
+
+    private static LlmToolCall CreateOpenTaskQuestionCall(IReadOnlyList<AgentTaskSnapshot> tasks)
+    {
+        var names = string.Join(", ", tasks.Take(6).Select(task => task.Title));
+        var arguments = JsonSerializer.Serialize(new
+        {
+            questions = new[]
+            {
+                new
+                {
+                    header = "Open tasks",
+                    question = $"Tracked tasks remain open ({names}). How should the agent proceed?",
+                    options = new[]
+                    {
+                        new { label = "Continue tasks", description = "Keep working and update the task states when done." },
+                        new { label = "Reconcile status", description = "Review and accurately close, cancel, or block the remaining tasks." }
+                    },
+                    multiSelect = false
+                }
+            }
+        });
+        return new LlmToolCall(
+            $"recovery-tasks-{Guid.NewGuid():N}",
+            AgentToolNames.AskUserQuestion,
+            arguments);
+    }
+
     private async Task FinalizeStepFailed(
         AgentRun run,
         AgentStep step,
@@ -1576,6 +2393,42 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         await _db.SaveChangesAsync(ct);
     }
 
+    private async Task PauseForTransientProviderFailureAsync(
+        AgentRun run,
+        AgentStep step,
+        AgentRunState state,
+        AgentEngineOptions options,
+        string error,
+        List<AgentEvent> events,
+        CancellationToken ct)
+    {
+        var summary = SecretRedactor.RedactText(error);
+        step.Kind = "provider_transient_failure";
+        step.Status = AgentStepStatuses.Failed;
+        step.Summary = summary;
+        step.CompletedAt = DateTime.UtcNow;
+        state.CurrentStep = step.StepNumber;
+        state.Status = AgentRunStatuses.Paused;
+        state.ErrorMessage = summary;
+        SyncRunState(run, state);
+        await AppendEventAsync(state, options, new AgentEventAppendRequest(
+            new AgentRun { Id = state.RunId },
+            AgentEventTypes.RunPaused,
+            "Model provider remained temporarily unavailable after three attempts. Progress was saved.",
+            new
+            {
+                state.CurrentStep,
+                state.MaxSteps,
+                state.ConsecutiveProviderFailures,
+                error = summary,
+                resumable = true
+            },
+            step.Id,
+            Severity: AgentEventSeverities.Warning), events, ct);
+        await SaveCheckpointAsync(state, ct);
+        await _db.SaveChangesAsync(ct);
+    }
+
     private async Task HandleDeniedInvocationAsync(AgentRunState state, ToolBatchItem item, AgentStep step,
         string reason, AgentEngineOptions options, List<AgentEvent> events, CancellationToken ct)
     {
@@ -1594,8 +2447,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 item.Safety.Warning
             }, step.Id, item.Invocation.Id,
             Severity: AgentEventSeverities.Warning), events, ct);
+        var error = reason == "denied_by_policy"
+            ? "Denied by policy."
+            : item.Safety.Warning ?? item.Safety.Summary;
         await CompleteInvocationWithResultAsync(state, item, step,
-            new AgentToolResult(false, string.Empty, reason == "denied_by_policy" ? "Denied by policy." : "Blocked by safety."),
+            new AgentToolResult(false, string.Empty, error),
             options, events, ct);
     }
 
@@ -1641,12 +2497,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             preview.Safety,
             preview.EffectPlan);
 
-        return await ExecuteSingleInvocationAsync(state, item, step, options, events, ct);
+        return await ExecuteSingleInvocationAsync(
+            state,
+            item,
+            step,
+            options,
+            events,
+            ct,
+            explicitlyApproved: invocation.ExplicitUserApproval);
     }
 
     private async Task<(AgentRunFrame? Frame, List<AgentEvent> Events)> ExecuteSingleInvocationAsync(
         AgentRunState state, ToolBatchItem item, AgentStep step, AgentEngineOptions options,
-        List<AgentEvent> events, CancellationToken ct)
+        List<AgentEvent> events, CancellationToken ct, bool explicitlyApproved = false)
     {
         if (item.Invocation.Approved != true)
         {
@@ -1657,18 +2520,33 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             return (new AgentRunFrame(step.StepNumber, AgentRunFrameKinds.ToolResult, events.ToArray()), events);
         }
 
-        // Re-check at the execution boundary. An invocation may have been
-        // approved before a policy changed or before the process was resumed.
+        // Re-check only immutable safety at the execution boundary. A user grant
+        // authorizes this exact persisted invocation and must survive ordinary
+        // policy or contextual restriction changes during resume.
         var policy = await _toolPlatform.EvaluatePolicyAsync(
             state.ChatId, item.ToolCall.Name, item.ToolCall.ArgumentsJson, item.Safety, ct);
-        if (policy.IsDenied || item.Safety.IsBlocked)
+        var authorization = ToolAuthorizationPolicy.Evaluate(
+            options.PermissionMode,
+            item.Safety,
+            policy,
+            item.Tool.Metadata.RequiresApproval,
+            item.Tool.RequiresUserInteraction,
+            item.Tool.Metadata.IsDestructive,
+            state.IsPlanMode,
+            options.AutoApproveTools,
+            explicitlyApproved);
+        if (authorization.IsBlocked || authorization.RequiresApproval)
         {
             await HandleDeniedInvocationAsync(
                 state, item, step,
-                policy.IsDenied ? "denied_by_policy" : "blocked_by_safety",
+                authorization.ReasonCode,
                 options, events, ct);
             return (new AgentRunFrame(step.StepNumber, AgentRunFrameKinds.ToolResult, events.ToArray()), events);
         }
+        var policyAuthorized = string.Equals(
+            authorization.ReasonCode,
+            "stored_allow_policy",
+            StringComparison.Ordinal);
 
         item.Invocation.Status = ToolInvocationStatuses.Running;
         item.Invocation.StartedAt = DateTime.UtcNow;
@@ -1692,13 +2570,57 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 options.CommandTimeoutSeconds,
                 options.MaxCommandOutputChars,
                 AgentPermissionModes.Normalize(options.PermissionMode),
-                item.ToolCall.ArgumentsJson), ct);
+                item.ToolCall.ArgumentsJson,
+                ExplicitUserApproval: explicitlyApproved,
+                PolicyAuthorization: policyAuthorized), ct);
 
-        item.Invocation.SafetyLevel = scheduled.Safety.Level;
-        item.Invocation.SafetySummary = scheduled.Safety.Summary;
-        item.Invocation.SafetyJson = SecretRedactor.RedactJson(scheduled.Safety.PreviewJson);
-        await AppendLifecycleEventsAsync(state, options, item, step, scheduled, events, ct);
-        await CompleteInvocationWithResultAsync(state, item, step, scheduled.Result, options, events, ct);
+        try
+        {
+            item.Invocation.SafetyLevel = scheduled.Safety.Level;
+            item.Invocation.SafetySummary = scheduled.Safety.Summary;
+            item.Invocation.SafetyJson = SecretRedactor.RedactJson(scheduled.Safety.PreviewJson);
+            await AppendLifecycleEventsAsync(state, options, item, step, scheduled, events, ct);
+            if (scheduled.Result.OutcomeUncertain &&
+                scheduled.Result.MayHaveCommitted &&
+                !scheduled.Safety.IsReadOnly)
+            {
+                // The tool explicitly reported that its write may already have
+                // crossed the side-effect boundary (timeout, transport loss,
+                // remote disconnect, etc.). Treat this exactly like a result
+                // persistence failure: fence the invocation and require an
+                // explicit Resume acknowledgement. Never classify it as an
+                // ordinary failed call that the recovery loop may replay.
+                var uncertainty = scheduled.Result.Error ??
+                    "The tool returned an uncertain outcome after a possible side effect.";
+                await MarkInvocationUnknownOutcomeAsync(
+                    state,
+                    item,
+                    step,
+                    options,
+                    events,
+                    new InvalidOperationException(uncertainty),
+                    ct,
+                    $"{item.ToolCall.Name} may have committed a side effect: {uncertainty}");
+                return (new AgentRunFrame(
+                    step.StepNumber,
+                    AgentRunFrameKinds.Paused,
+                    events.ToArray()), events);
+            }
+            await CompleteInvocationWithResultAsync(state, item, step, scheduled.Result, options, events, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The tool body already returned, so replaying it after a result or
+            // checkpoint persistence error could duplicate side effects. Mark
+            // the exact invocation as unknown-outcome and pause for a human
+            // observation instead of pretending it failed safely.
+            await MarkInvocationUnknownOutcomeAsync(
+                state, item, step, options, events, ex, CancellationToken.None);
+        }
         return (new AgentRunFrame(step.StepNumber, AgentRunFrameKinds.ToolResult, events.ToArray()), events);
     }
 
@@ -1749,12 +2671,201 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         }
     }
 
+    private async Task MarkInvocationUnknownOutcomeAsync(
+        AgentRunState state,
+        ToolBatchItem item,
+        AgentStep step,
+        AgentEngineOptions options,
+        List<AgentEvent> events,
+        Exception persistenceError,
+        CancellationToken ct,
+        string? uncertaintySummary = null)
+    {
+        var detail = SecretRedactor.RedactText(TrimForContext(persistenceError.Message, 320));
+        item.Invocation.Status = ToolInvocationStatuses.UnknownOutcome;
+        item.Invocation.CompletedAt = null;
+        step.Status = AgentStepStatuses.Failed;
+        step.Summary = "Tool outcome requires user confirmation.";
+        step.CompletedAt = DateTime.UtcNow;
+        state.Status = AgentRunStatuses.Paused;
+        state.PendingToolInvocationId = null;
+        state.UnknownOutcomeInvocationId = item.Invocation.Id;
+        state.UnknownOutcomeSummary = string.IsNullOrWhiteSpace(uncertaintySummary)
+            ? $"{item.ToolCall.Name} may have completed, but its result could not be durably recorded: {detail}"
+            : SecretRedactor.RedactText(TrimForContext(uncertaintySummary, 500));
+        state.ErrorMessage = state.UnknownOutcomeSummary;
+        state.ConsecutiveToolFailures = Math.Max(1, state.ConsecutiveToolFailures);
+        state.LastFailedInvocationSignature = ComputeInvocationSignature(item.ToolCall);
+        state.LastFailedToolName = AgentToolNames.Normalize(item.ToolCall.Name);
+        state.LastFailureSummary = state.UnknownOutcomeSummary;
+        state.RecoveryDirectiveIssuedForFailureSignature = null;
+        state.RecoveryDirectivePending = true;
+
+        var replayFenceResult = new AgentToolResult(
+            false,
+            string.Empty,
+            $"Unknown outcome: {state.UnknownOutcomeSummary} Do not replay this invocation automatically.",
+            OutcomeUncertain: true,
+            MayHaveCommitted: true);
+        item.Invocation.ResultJson = replayFenceResult.ToJson();
+        step.OutputJson = item.Invocation.ResultJson;
+
+        if (!state.Messages.Any(message =>
+                string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(message.ToolCallId, item.Invocation.ProviderCallId, StringComparison.Ordinal)))
+        {
+            state.Messages.Add(new MessagePayload(
+                "tool",
+                replayFenceResult.ToJson(),
+                item.Invocation.ProviderCallId));
+        }
+
+        // Persist the DB marker before the checkpoint. If the checkpoint store
+        // itself is the component that failed, an older checkpoint may still
+        // point at this invocation; the pre-loop status check will see
+        // unknown_outcome and refuse to execute it.
+        try
+        {
+            var trackedRun = await _db.Set<AgentRun>()
+                .FirstOrDefaultAsync(run => run.Id == state.RunId, ct);
+            if (trackedRun != null)
+                SyncRunState(trackedRun, state);
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // There is no safer automatic action after the side effect boundary.
+        }
+
+        try
+        {
+            await SaveCheckpointAsync(state, ct);
+        }
+        catch
+        {
+            // The invocation row remains the replay fence when checkpointing is unavailable.
+        }
+
+        try
+        {
+            await AppendEventAsync(state, options, new AgentEventAppendRequest(
+                new AgentRun { Id = state.RunId },
+                AgentEventTypes.RunPaused,
+                "Tool execution has an unknown outcome; user verification is required before retrying.",
+                new
+                {
+                    item.ToolCall.Name,
+                    invocationId = item.Invocation.Id,
+                    error = detail,
+                    resumable = true,
+                    requiresUserConfirmation = true
+                },
+                step.Id,
+                item.Invocation.Id,
+                AgentEventSeverities.Error), events, ct);
+        }
+        catch
+        {
+            // Preserve the paused in-memory state even if event persistence is unavailable.
+        }
+    }
+
+    private async Task<string> PauseForUnknownInvocationOutcomeAsync(
+        AgentRun run,
+        AgentRunState state,
+        ToolInvocation invocation,
+        AgentEngineOptions options,
+        List<AgentEvent> events,
+        CancellationToken ct)
+    {
+        invocation.Status = ToolInvocationStatuses.UnknownOutcome;
+        state.Status = AgentRunStatuses.Paused;
+        state.PendingToolInvocationId = null;
+        state.UnknownOutcomeInvocationId = invocation.Id;
+        state.UnknownOutcomeSummary ??=
+            $"{invocation.ToolName} started before the previous interruption, so its side effects may already exist.";
+        state.ErrorMessage = state.UnknownOutcomeSummary;
+        state.ConsecutiveToolFailures = Math.Max(1, state.ConsecutiveToolFailures);
+        state.LastFailedToolName ??= AgentToolNames.Normalize(invocation.ToolName);
+        state.LastFailureSummary = state.UnknownOutcomeSummary;
+        state.RecoveryDirectivePending = true;
+        SyncRunState(run, state);
+        await _db.SaveChangesAsync(ct);
+        await SaveCheckpointAsync(state, ct);
+        await AppendEventAsync(state, options, new AgentEventAppendRequest(
+            new AgentRun { Id = state.RunId },
+            AgentEventTypes.RunPaused,
+            "A previously started tool has an unknown outcome; it was not replayed.",
+            new
+            {
+                invocation.ToolName,
+                invocationId = invocation.Id,
+                requiresUserConfirmation = true,
+                resumable = true
+            },
+            invocation.AgentStepId,
+            invocation.Id,
+            AgentEventSeverities.Warning), events, ct);
+        return $"{state.UnknownOutcomeSummary} Verify the resulting files or external state, then tell the agent whether to continue; the operation was not replayed.";
+    }
+
     private async Task CompleteInvocationWithResultAsync(AgentRunState state, ToolBatchItem item, AgentStep step,
         AgentToolResult result, AgentEngineOptions options, List<AgentEvent> events, CancellationToken ct)
     {
         item.Invocation.Status = result.Success ? ToolInvocationStatuses.Completed : ToolInvocationStatuses.Failed;
         if (step.Status != AgentStepStatuses.Denied)
             step.Status = result.Success ? AgentStepStatuses.Completed : AgentStepStatuses.Failed;
+
+        if (result.Success)
+        {
+            state.SuccessfulToolCalls++;
+            state.LastSuccessfulStep = step.StepNumber;
+            var syntheticResolution = ApplySyntheticQuestionResolution(state, item.ToolCall);
+            if (SuccessfulInvocationResolvesFailure(state, item, syntheticResolution))
+            {
+                if (state.ConsecutiveToolFailures > 0)
+                {
+                    state.LastRecoveryCandidateInvocationSignature =
+                        ComputeInvocationSignature(item.ToolCall);
+                }
+                state.ConsecutiveToolFailures = 0;
+                state.RepeatedFailureCount = 0;
+                state.CompletionRecoveryAttempts = 0;
+                state.LastFailedInvocationSignature = null;
+                state.LastFailedToolName = null;
+                state.LastFailureSummary = null;
+                state.RecoveryDirectivePending = false;
+                state.RecoveryDirectiveIssuedForFailureSignature = null;
+            }
+            else
+            {
+                // Housekeeping progress does not prove the failed operation was
+                // recovered, so the completion gate remains active.
+                state.RecoveryDirectivePending = true;
+            }
+        }
+        else
+        {
+            var signature = ComputeInvocationSignature(item.ToolCall);
+            var repeated = string.Equals(
+                signature,
+                state.LastFailedInvocationSignature,
+                StringComparison.Ordinal);
+            state.ConsecutiveToolFailures++;
+            state.RepeatedFailureCount = repeated
+                ? state.RepeatedFailureCount + 1
+                : 1;
+            if (!repeated)
+                state.CompletionRecoveryAttempts = 0;
+            state.LastFailedInvocationSignature = signature;
+            state.LastFailedToolName = AgentToolNames.Normalize(item.ToolCall.Name);
+            state.LastFailureSummary = SecretRedactor.RedactText(TrimForContext(
+                result.Error ?? "Tool invocation failed without an error message.",
+                500));
+            state.RecoveryDirectiveIssuedForFailureSignature = null;
+            state.LastRecoveryCandidateInvocationSignature = null;
+            state.RecoveryDirectivePending = true;
+        }
 
         var contextResult = result;
         var persistence = await _toolResultPersistence.PersistForContextAsync(
@@ -1798,6 +2909,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
 
         state.Messages.Add(new MessagePayload("tool", contextResult.ToJson(),
             item.Invocation.ProviderCallId));
+        if (state.PendingToolInvocationId == item.Invocation.Id)
+            state.PendingToolInvocationId = null;
         ApplyPlanModeTransition(state, item.ToolCall.Name, result.Success, options);
         await SaveCheckpointAsync(state, ct);
         await _db.SaveChangesAsync(ct);
@@ -1814,6 +2927,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 contextResult.Success,
                 isTruncated = item.Tool.IsResultTruncated(contextResult),
                 error = contextResult.Error,
+                warning = contextResult.Warning,
                 artifactCount = contextResult.Artifacts?.Count ?? 0,
                 render = resultRender
             },
@@ -1840,6 +2954,91 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 step.Id,
                 item.Invocation.Id), events, ct);
         }
+    }
+
+    private static bool SuccessfulInvocationResolvesFailure(
+        AgentRunState state,
+        ToolBatchItem item,
+        bool? syntheticResolution = null)
+    {
+        if (state.ConsecutiveToolFailures == 0)
+            return true;
+
+        var current = AgentToolNames.Normalize(item.ToolCall.Name);
+        // A synthetic failure-recovery question resolves the failure only when
+        // the user explicitly chooses to stop and summarize. "Try another way"
+        // keeps the recovery gate active so the model must actually attempt a
+        // materially different action.
+        if (string.Equals(current, AgentToolNames.AskUserQuestion, StringComparison.OrdinalIgnoreCase))
+        {
+            // Ordinary questions, task/deferred prompts, and recovery choices
+            // such as "Try another way" do not prove a failed operation was
+            // repaired. Only the synthetic failure question's explicit
+            // "Stop and summarize" choice returns true.
+            return syntheticResolution == true;
+        }
+
+        if (string.IsNullOrWhiteSpace(state.LastFailedInvocationSignature) ||
+            !string.Equals(
+                state.RecoveryDirectiveIssuedForFailureSignature,
+                state.LastFailedInvocationSignature,
+                StringComparison.Ordinal))
+            return false;
+
+        var candidateSignature = ComputeInvocationSignature(item.ToolCall);
+        if (string.Equals(
+                candidateSignature,
+                state.LastFailedInvocationSignature,
+                StringComparison.Ordinal))
+            return false;
+
+        // Terminal/sandbox tools are conservatively registered as write-capable,
+        // even when this exact invocation is only inspecting state. Use the
+        // invocation-level safety preview as well so a successful diagnostic
+        // command cannot erase an unrelated unresolved failure.
+        if (item.Tool.Metadata.IsReadOnly || item.Safety.IsReadOnly ||
+            IsObviousHousekeepingInvocation(item.ToolCall))
+            return false;
+
+        return current is not (
+            AgentToolNames.TodoWrite or
+            AgentToolNames.TaskCreate or
+            AgentToolNames.TaskUpdate or
+            AgentToolNames.TaskList or
+            AgentToolNames.TaskOutput or
+            AgentToolNames.TaskStop or
+            AgentToolNames.TaskSendMessage or
+            AgentToolNames.MemoryWrite or
+            AgentToolNames.EnterPlanMode or
+            AgentToolNames.ExitPlanMode);
+    }
+
+    private static bool IsObviousHousekeepingInvocation(LlmToolCall call)
+    {
+        var toolName = AgentToolNames.Normalize(call.Name);
+        if (toolName is not (AgentToolNames.SandboxExec or AgentToolNames.TerminalExec))
+            return false;
+
+        var command = ReadJsonString(call.ArgumentsJson, "command")?.Trim();
+        if (string.IsNullOrWhiteSpace(command))
+            return true;
+        if (command.IndexOfAny([';', '|', '\r', '\n']) >= 0 ||
+            command.Contains("&&", StringComparison.Ordinal) ||
+            command.Contains("||", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var normalized = command.Trim().Trim('(', ')').Trim();
+        return normalized.Equals("pwd", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("Get-Location", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("Get-Date", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("Get-Date ", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("whoami", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("hostname", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("git status", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("git diff", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith("git diff --stat", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ApprovalRejectionMessage(ToolInvocation invocation)
@@ -1941,6 +3140,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private async Task<string?> TryFinalizeAtStepBudgetAsync(AgentRunState state, string systemPrompt,
         EffectiveSettings effective, AgentEngineOptions options, List<AgentEvent> events, CancellationToken ct)
     {
+        // A summary is not a valid success transition while an operation is
+        // still unresolved. The caller will checkpoint and pause instead.
+        if (state.ConsecutiveToolFailures > 0 ||
+            state.DeferredToolCalls.Count > 0 ||
+            state.UnknownOutcomeInvocationId != null ||
+            (await GetOpenCompletionTasksAsync(state.ChatId, ct)).Count > 0)
+            return null;
+
         var stepNumber = state.CurrentStep + 1;
         var step = new AgentStep
         {
@@ -1961,12 +3168,14 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         {
             var provider = LlmProviderFactory.Create(_httpClientFactory.CreateClient("LLM"),
                 effective.Provider, effective.ApiKey, effective.BaseUrl, effective.Model);
-            var response = await _providerStreamAdapter.ChatAsync(new ProviderStreamRequest(
+            var response = await ChatWithTransientRetryAsync(new ProviderStreamRequest(
                 provider, summaryMessages, systemPrompt,
                 Math.Min(effective.Temperature, 0.4), Math.Max(512, Math.Min(effective.MaxTokens, 2048)),
-                Tools: null, Reasoning: BuildReasoningOptions(effective)), ct);
+                Tools: null, Reasoning: BuildReasoningOptions(effective)), state, ct);
 
-            if (response.HttpStatus is < 200 or >= 300 || string.IsNullOrWhiteSpace(response.AssistantText))
+            if (response.HttpStatus is < 200 or >= 300 ||
+                !string.IsNullOrWhiteSpace(response.Error) ||
+                string.IsNullOrWhiteSpace(response.AssistantText))
             {
                 step.Status = AgentStepStatuses.Failed;
                 step.CompletedAt = DateTime.UtcNow;
@@ -1980,6 +3189,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             state.CurrentStep = stepNumber;
             state.MaxSteps = Math.Max(state.MaxSteps, stepNumber);
             state.Status = AgentRunStatuses.Completed;
+            state.ErrorMessage = null;
             state.Messages.Add(new MessagePayload("assistant", response.AssistantText));
             await SaveCheckpointAsync(state, ct);
             await AppendEventAsync(state, options, new AgentEventAppendRequest(
@@ -1997,6 +3207,115 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             return null;
         }
     }
+
+    private async Task<LlmResponse> ChatWithTransientRetryAsync(
+        ProviderStreamRequest request,
+        AgentRunState state,
+        CancellationToken ct)
+    {
+        const int maxAttempts = 3;
+        LlmResponse? lastResponse = null;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                lastResponse = await _providerStreamAdapter.ChatAsync(request, ct);
+                if (!IsTransientProviderResponse(lastResponse))
+                {
+                    state.ConsecutiveProviderFailures =
+                        lastResponse.HttpStatus is >= 200 and < 300 &&
+                        string.IsNullOrWhiteSpace(lastResponse.Error)
+                            ? 0
+                            : state.ConsecutiveProviderFailures + 1;
+                    return lastResponse;
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                lastResponse = CreateProviderFailureResponse(
+                    request,
+                    408,
+                    "The model provider request timed out.");
+            }
+            catch (HttpRequestException ex)
+            {
+                lastResponse = CreateProviderFailureResponse(
+                    request,
+                    503,
+                    $"The model provider could not be reached: {SecretRedactor.RedactText(ex.Message)}");
+            }
+            catch (IOException ex)
+            {
+                lastResponse = CreateProviderFailureResponse(
+                    request,
+                    503,
+                    $"The model provider connection was interrupted: {SecretRedactor.RedactText(ex.Message)}");
+            }
+
+            state.ConsecutiveProviderFailures++;
+            if (attempt == maxAttempts)
+                break;
+
+            state.RecoveryAttempts++;
+            ReportSafely(request.OutputStream, new LlmStreamUpdate(
+                string.Empty,
+                string.Empty,
+                LlmStreamEventTypes.RetryReset));
+            var delay = TimeSpan.FromMilliseconds(150 * (1 << (attempt - 1)));
+            await Task.Delay(delay, ct);
+        }
+
+        if (lastResponse == null)
+        {
+            return CreateProviderFailureResponse(
+                request,
+                503,
+                "The model provider failed without returning a response.");
+        }
+
+        if (lastResponse.HttpStatus is >= 200 and < 300 &&
+            string.IsNullOrWhiteSpace(lastResponse.Error))
+        {
+            lastResponse = lastResponse with
+            {
+                Error = "The model provider returned an empty or incomplete response after three attempts."
+            };
+        }
+        return lastResponse;
+    }
+
+    private static bool IsTransientProviderResponse(LlmResponse response)
+    {
+        if (response.HttpStatus is 408 or 429 || response.HttpStatus is >= 500 and <= 599)
+            return true;
+
+        if (response.HttpStatus is < 200 or >= 300)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(response.Error))
+            return true;
+
+        return string.IsNullOrWhiteSpace(response.AssistantText) &&
+               (response.ToolCalls == null || response.ToolCalls.Count == 0);
+    }
+
+    private static LlmResponse CreateProviderFailureResponse(
+        ProviderStreamRequest request,
+        int status,
+        string error) =>
+        new(
+            new Dictionary<string, object>
+            {
+                ["provider"] = request.Provider.ProviderName,
+                ["messageCount"] = request.Messages.Count
+            },
+            new Dictionary<string, object> { ["error"] = error },
+            status,
+            0,
+            string.Empty,
+            Error: error);
 
     private static AgentContextOptions BuildContextOptions(AgentEngineOptions options) => new(
         options.ContextBudgetTokens, options.AutoCompactTriggerTokens, MaxToolResultCharsInContext: options.MaxToolResultCharsInContext);
@@ -2055,8 +3374,22 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         return new DirectProgress<LlmStreamUpdate>(update =>
         {
             tracker.Chars += update.Delta?.Length ?? 0;
-            output.Report(update);
+            ReportSafely(output, update);
         });
+    }
+
+    private static void ReportSafely<T>(IProgress<T>? progress, T value)
+    {
+        if (progress == null)
+            return;
+        try
+        {
+            progress.Report(value);
+        }
+        catch
+        {
+            // Progress is a best-effort observer and cannot drive run state.
+        }
     }
 
     /// <summary>

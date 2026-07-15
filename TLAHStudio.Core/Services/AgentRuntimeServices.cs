@@ -287,7 +287,9 @@ public sealed record ToolExecutionRequest(
     int TimeoutSeconds,
     int MaxOutputChars,
     string PermissionMode = AgentPermissionModes.RequestApproval,
-    string? ExecutionArgumentsJson = null);
+    string? ExecutionArgumentsJson = null,
+    bool ExplicitUserApproval = false,
+    bool PolicyAuthorization = false);
 
 public sealed record ToolExecutionOutcome
 {
