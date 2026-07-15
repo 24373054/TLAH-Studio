@@ -58,6 +58,7 @@ public static class LlmStreamEventTypes
     public const string TextDelta = "text_delta";
     public const string ThinkingDelta = "thinking_delta";
     public const string TextStarted = "text_started";
+    public const string RetryReset = "retry_reset";
 }
 
 /// <summary>

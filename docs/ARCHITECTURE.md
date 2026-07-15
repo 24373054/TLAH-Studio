@@ -103,7 +103,8 @@ The restricted local backend uses command, path, protocol, resource, and approva
 - Exhausted transient provider failures persist the latest checkpoint and place the run in `Paused`; resume retains the selected permission mode and continues from durable state.
 - A failed tool records a redacted failure summary and invocation signature. The next model step is instructed to change tool, command, arguments, or scope instead of repeating the same call.
 - If recovery still produces no viable action, the engine creates an `ask_user_question` choice rather than marking the run complete.
-- The normal 48-step budget is a soft boundary. Recent progress or unresolved recovery can extend it by 24 steps at a time up to 192; user-initiated resume may add budget, while approval completion does not.
+- The normal 48-step budget is a soft boundary. Recent progress or unresolved recovery can extend it by 24 steps at a time up to the 192-step automatic ceiling. Each explicit Resume may add up to 96 further steps with saturating arithmetic; approval completion does not add budget.
+- A mutating call whose response is lost after dispatch enters `unknown_outcome`. The persisted invocation is a replay fence: Resume acknowledges it, writes a synthetic result for provider continuity, and moves to a different recovery step without executing the original operation again.
 
 ## Context, Memory, and Persistence
 

@@ -530,6 +530,7 @@ public sealed class ToolPlatformService : IToolPlatformService
         {
             ToolPolicySubjects.Path => ToolPolicySubjects.Path,
             ToolPolicySubjects.Domain => ToolPolicySubjects.Domain,
+            ToolPolicySubjects.Command => ToolPolicySubjects.Command,
             _ => ToolPolicySubjects.Tool
         };
 
@@ -553,6 +554,7 @@ public sealed class ToolPlatformService : IToolPlatformService
         {
             ToolPolicySubjects.Path => value.Replace('\\', '/').TrimStart('/'),
             ToolPolicySubjects.Domain => value.TrimEnd('.').ToLowerInvariant(),
+            ToolPolicySubjects.Command => value.ToLowerInvariant(),
             _ => AgentToolNames.Normalize(value).ToLowerInvariant()
         };
     }

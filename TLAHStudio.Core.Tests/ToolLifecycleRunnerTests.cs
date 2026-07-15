@@ -72,6 +72,48 @@ public class ToolLifecycleRunnerTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ApprovedInvocationRejectsHookArgumentMutation()
+    {
+        var order = new List<string>();
+        var tool = new RecordingV3Tool(order);
+        var hooks = Hooks(new RecordingHook(
+            ToolHookTriggers.BeforeUse,
+            "before",
+            order,
+            modifiedArgumentsJson: """{"value":"changed-after-approval"}"""));
+        var runner = Runner(tool, hooks);
+        var request = Request("""{"value":"approved"}""") with
+        {
+            ExplicitUserApproval = true
+        };
+
+        var outcome = await runner.ExecuteAsync(request);
+
+        Assert.False(outcome.Result.Success);
+        Assert.Contains("changed", outcome.Result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ExecuteWithProgressAsync", order);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HookMutationToHighRiskRequiresFreshApproval()
+    {
+        var order = new List<string>();
+        var tool = new RecordingV3Tool(order) { HighWhenValue = "high-risk" };
+        var hooks = Hooks(new RecordingHook(
+            ToolHookTriggers.BeforeUse,
+            "before",
+            order,
+            modifiedArgumentsJson: """{"value":"high-risk"}"""));
+
+        var outcome = await Runner(tool, hooks).ExecuteAsync(
+            Request("""{"value":"safe"}"""));
+
+        Assert.False(outcome.Result.Success);
+        Assert.Contains("fresh approval", outcome.Result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ExecuteWithProgressAsync", order);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ExecutionArguments_UsesUnredactedRuntimeValue()
     {
         var tool = new RecordingV3Tool([]);
@@ -87,6 +129,49 @@ public class ToolLifecycleRunnerTests
         Assert.Equal("executed:runtime-secret", outcome.Result.Output);
         Assert.Equal(["runtime-secret"], tool.PlannedValues);
         Assert.True(JsonEquivalent("""{"value":"[REDACTED]"}""", request.Invocation.ArgumentsJson));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StoredPolicyAuthorizationReachesInnerToolWithoutForgingExactApproval()
+    {
+        var tool = new RecordingV3Tool([]);
+        var request = Request("""{"value":"policy-authorized"}""") with
+        {
+            PermissionMode = AgentPermissionModes.RequestApproval,
+            PolicyAuthorization = true,
+            ExplicitUserApproval = false
+        };
+
+        var outcome = await Runner(tool, Hooks()).ExecuteAsync(request);
+
+        Assert.True(outcome.Result.Success);
+        Assert.NotNull(tool.LastContext);
+        Assert.True(tool.LastContext!.HasPolicyAuthorization);
+        Assert.False(tool.LastContext.HasInvocationAuthorization);
+        Assert.Equal(AgentPermissionModes.BypassPermissions, tool.LastContext.EffectivePermissionMode);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HookArgumentChangeDoesNotInheritStoredPolicyAuthorization()
+    {
+        var tool = new RecordingV3Tool([]);
+        var hooks = Hooks(new RecordingHook(
+            ToolHookTriggers.BeforeUse,
+            "before",
+            [],
+            modifiedArgumentsJson: """{"value":"changed"}"""));
+        var request = Request("""{"value":"original"}""") with
+        {
+            PermissionMode = AgentPermissionModes.RequestApproval,
+            PolicyAuthorization = true
+        };
+
+        var outcome = await Runner(tool, hooks).ExecuteAsync(request);
+
+        Assert.True(outcome.Result.Success);
+        Assert.NotNull(tool.LastContext);
+        Assert.False(tool.LastContext!.HasPolicyAuthorization);
+        Assert.Equal(AgentPermissionModes.RequestApproval, tool.LastContext.EffectivePermissionMode);
     }
 
     [Fact]
@@ -158,6 +243,142 @@ public class ToolLifecycleRunnerTests
         Assert.Null(failed.RollbackPlan);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ToolExceptionBecomesRecoverableFailureResult()
+    {
+        var tool = new RecordingV3Tool([])
+        {
+            ThrowOnExecute = true,
+            IsReadOnlyClassification = false
+        };
+
+        var outcome = await Runner(tool, Hooks()).ExecuteAsync(Request("""{"value":"alpha"}"""));
+
+        Assert.False(outcome.Result.Success);
+        Assert.Contains("Tool execution failed", outcome.Result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("synthetic tool failure", outcome.Result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.True(outcome.Result.OutcomeUncertain);
+        Assert.True(outcome.Result.MayHaveCommitted);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReadOnlyToolExceptionRemainsOrdinaryFailure()
+    {
+        var tool = new RecordingV3Tool([])
+        {
+            ThrowOnExecute = true,
+            IsReadOnlyClassification = true
+        };
+
+        var outcome = await Runner(tool, Hooks()).ExecuteAsync(Request("""{"value":"alpha"}"""));
+
+        Assert.False(outcome.Result.Success);
+        Assert.False(outcome.Result.OutcomeUncertain);
+        Assert.False(outcome.Result.MayHaveCommitted);
+    }
+
+    [Theory]
+    [InlineData("classification")]
+    [InlineData("effect plan")]
+    public async Task PreviewAsync_PreviewStageExceptionBecomesObservableFailure(string stage)
+    {
+        var tool = new RecordingV3Tool([])
+        {
+            ThrowOnClassify = stage == "classification",
+            ThrowOnPlan = stage == "effect plan"
+        };
+        var runner = Runner(tool, Hooks());
+
+        var preview = await runner.PreviewAsync(
+            Guid.NewGuid(),
+            tool.Definition.Name,
+            """{"value":"alpha"}""");
+
+        Assert.NotNull(preview.ValidationFailure);
+        Assert.False(preview.ValidationFailure!.Success);
+        Assert.Contains("Tool preview failed", preview.ValidationFailure.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(stage, preview.ValidationFailure.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.True(preview.Safety.IsBlocked);
+        Assert.Equal("lifecycle", preview.Safety.Category);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BeforeHookExceptionBecomesObservableFailure()
+    {
+        var order = new List<string>();
+        var tool = new RecordingV3Tool(order);
+        var runner = Runner(
+            tool,
+            Hooks(new ThrowingHook(
+                ToolHookTriggers.BeforeUse,
+                "synthetic before hook failure")));
+
+        var outcome = await runner.ExecuteAsync(Request("""{"value":"alpha"}"""));
+
+        Assert.False(outcome.Result.Success);
+        Assert.Contains("Before-use hook failed", outcome.Result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("synthetic before hook failure", outcome.Result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(outcome.ProgressEvents, p => p.Phase == "hook_failed");
+        Assert.DoesNotContain("ExecuteWithProgressAsync", order);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AfterHookExceptionBecomesObservableFailure()
+    {
+        var order = new List<string>();
+        var tool = new RecordingV3Tool(order);
+        var runner = Runner(
+            tool,
+            Hooks(new ThrowingHook(
+                ToolHookTriggers.AfterUse,
+                "synthetic after hook failure")));
+
+        var outcome = await runner.ExecuteAsync(Request("""{"value":"alpha"}"""));
+
+        Assert.True(outcome.Result.Success);
+        Assert.Contains("executed:alpha", outcome.Result.Output);
+        Assert.Contains("After-use hook failed", outcome.Result.Warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("synthetic after hook failure", outcome.Result.Warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(outcome.ProgressEvents, p => p.Phase == "hook_failed");
+        Assert.Contains("ExecuteWithProgressAsync", order);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RollbackPlanExceptionBecomesObservableFailure()
+    {
+        var tool = new RecordingV3Tool([])
+        {
+            CreatesRollback = true,
+            ThrowOnRollback = true
+        };
+
+        var outcome = await Runner(tool, Hooks()).ExecuteAsync(Request("""{"value":"alpha"}"""));
+
+        Assert.True(outcome.Result.Success);
+        Assert.Contains("executed:alpha", outcome.Result.Output);
+        Assert.Contains("rollback planning failed", outcome.Result.Warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("synthetic rollback failure", outcome.Result.Warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(outcome.RollbackPlan);
+        Assert.Contains(outcome.ProgressEvents, p => p.Phase == "rollback_failed");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UserCancellationFromHookStillPropagates()
+    {
+        var tool = new RecordingV3Tool([]);
+        var runner = Runner(
+            tool,
+            Hooks(new ThrowingHook(
+                ToolHookTriggers.BeforeUse,
+                "cancelled",
+                throwCancellation: true)));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            runner.ExecuteAsync(Request("""{"value":"alpha"}"""), cts.Token));
+    }
+
     private static IToolLifecycleRunner Runner(IAgentTool tool, IToolHookRegistry hooks)
     {
         var sandbox = new SandboxCommandService(
@@ -195,7 +416,14 @@ public class ToolLifecycleRunnerTests
         public bool SafetyBlocked { get; init; }
         public bool ExecuteSuccess { get; init; } = true;
         public bool CreatesRollback { get; init; }
+        public bool ThrowOnExecute { get; init; }
+        public bool ThrowOnClassify { get; init; }
+        public bool ThrowOnPlan { get; init; }
+        public bool ThrowOnRollback { get; init; }
+        public bool IsReadOnlyClassification { get; init; } = true;
+        public string? HighWhenValue { get; init; }
         public List<string> PlannedValues { get; } = [];
+        public AgentToolExecutionContext? LastContext { get; private set; }
 
         public override LlmToolDefinition Definition { get; } = new(
             "fake_v3",
@@ -218,13 +446,21 @@ public class ToolLifecycleRunnerTests
             CancellationToken ct = default)
         {
             order.Add("ClassifySafetyAsync");
-            var level = SafetyBlocked ? ToolSafetyLevels.Blocked : ToolSafetyLevels.Low;
+            if (ThrowOnClassify)
+                throw new InvalidOperationException("synthetic classification failure");
+            var highRisk = string.Equals(
+                ReadValue(argumentsJson),
+                HighWhenValue,
+                StringComparison.Ordinal);
+            var level = SafetyBlocked
+                ? ToolSafetyLevels.Blocked
+                : highRisk ? ToolSafetyLevels.High : ToolSafetyLevels.Low;
             return Task.FromResult(new ToolSafetyClassification(
                 level,
                 "test",
-                !SafetyBlocked,
-                SafetyBlocked,
-                false,
+                IsReadOnlyClassification && !SafetyBlocked && !highRisk,
+                SafetyBlocked || highRisk,
+                highRisk,
                 SafetyBlocked,
                 SafetyBlocked ? "blocked" : "ok",
                 SafetyBlocked ? "blocked" : null,
@@ -238,6 +474,8 @@ public class ToolLifecycleRunnerTests
             CancellationToken ct = default)
         {
             order.Add("PlanEffectsAsync");
+            if (ThrowOnPlan)
+                throw new InvalidOperationException("synthetic effect plan failure");
             var value = ReadValue(argumentsJson);
             PlannedValues.Add(value);
             return Task.FromResult(ToolEffectPlan.Write([], [value], hasRollback: CreatesRollback));
@@ -246,8 +484,13 @@ public class ToolLifecycleRunnerTests
         public override Task<AgentToolResult> ExecuteAsync(
             AgentToolExecutionContext context,
             string argumentsJson,
-            CancellationToken ct) =>
-            Task.FromResult(new AgentToolResult(ExecuteSuccess, $"executed:{ReadValue(argumentsJson)}"));
+            CancellationToken ct)
+        {
+            LastContext = context;
+            if (ThrowOnExecute)
+                throw new InvalidOperationException("synthetic tool failure");
+            return Task.FromResult(new AgentToolResult(ExecuteSuccess, $"executed:{ReadValue(argumentsJson)}"));
+        }
 
         public override Task<AgentToolResult> ExecuteWithProgressAsync(
             AgentToolExecutionContext context,
@@ -266,6 +509,8 @@ public class ToolLifecycleRunnerTests
             CancellationToken ct = default)
         {
             order.Add("CreateRollbackPlanAsync");
+            if (ThrowOnRollback)
+                throw new InvalidOperationException("synthetic rollback failure");
             return Task.FromResult<ToolRollbackPlan?>(
                 CreatesRollback
                     ? new ToolRollbackPlan(true, "restore fake file", null, [ReadValue(argumentsJson)])
@@ -314,6 +559,24 @@ public class ToolLifecycleRunnerTests
             return Task.FromResult(blockReason == null
                 ? new ToolHookResult(true, ModifiedArgumentsJson: modifiedArgumentsJson)
                 : ToolHookResult.Block(blockReason));
+        }
+    }
+
+    private sealed class ThrowingHook(
+        ToolHookTriggers trigger,
+        string message,
+        bool throwCancellation = false) : IToolHook
+    {
+        public ToolHookTriggers Triggers => trigger;
+        public string Name => "throwing";
+
+        public Task<ToolHookResult> ExecuteAsync(
+            ToolHookContext context,
+            CancellationToken ct = default)
+        {
+            if (throwCancellation)
+                ct.ThrowIfCancellationRequested();
+            throw new InvalidOperationException(message);
         }
     }
 

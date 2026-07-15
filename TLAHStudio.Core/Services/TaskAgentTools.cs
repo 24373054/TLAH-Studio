@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.Background;
@@ -68,15 +69,21 @@ public sealed class TaskCreateAgentTool : IAgentTool
     private readonly IAgentTaskService _tasks;
     private readonly IBackgroundTaskService _background;
     private readonly ISandboxCommandService _sandbox;
+    private readonly IExecutionBackendRouter _executionBackends;
+    private readonly IServiceScopeFactory? _scopeFactory;
 
     public TaskCreateAgentTool(
         IAgentTaskService tasks,
         IBackgroundTaskService background,
-        ISandboxCommandService sandbox)
+        ISandboxCommandService sandbox,
+        IExecutionBackendRouter executionBackends,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _tasks = tasks;
         _background = background;
         _sandbox = sandbox;
+        _executionBackends = executionBackends;
+        _scopeFactory = scopeFactory;
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
@@ -104,6 +111,26 @@ public sealed class TaskCreateAgentTool : IAgentTool
         if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
             return new AgentToolResult(false, string.Empty, error);
 
+        var command = TaskToolSchemas.GetString(root, "command");
+        if (!string.IsNullOrWhiteSpace(command))
+        {
+            var nestedSafety = ToolSafetyKernel.Assess(
+                _sandbox,
+                context.ChatId,
+                AgentToolNames.TerminalExec,
+                JsonSerializer.Serialize(new { command }));
+            if (!ToolAuthorizationPolicy.CanExecuteAtBoundary(
+                    nestedSafety,
+                    context.EffectivePermissionMode,
+                    context.HasInvocationAuthorization))
+            {
+                return new AgentToolResult(
+                    false,
+                    string.Empty,
+                    nestedSafety.Warning ?? nestedSafety.Summary);
+            }
+        }
+
         var snapshot = await _tasks.CreateAsync(
             context.ChatId,
             context.AgentRunId,
@@ -115,47 +142,54 @@ public sealed class TaskCreateAgentTool : IAgentTool
         if (!background)
             return new AgentToolResult(true, TaskToolSchemas.FormatTasks("Task created", [snapshot]));
 
-        var command = TaskToolSchemas.GetString(root, "command");
         var prompt = TaskToolSchemas.GetString(root, "prompt");
         var outputPath = BuildBackgroundOutputPath(_sandbox.GetSandboxRoot(context.ChatId), snapshot.Id);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         await File.WriteAllTextAsync(outputPath, BuildBackgroundHeader(snapshot, prompt, command), ct);
 
+        Func<CancellationToken, Task> backgroundAction;
+        if (!string.IsNullOrWhiteSpace(command))
+        {
+            var request = new ExecutionRequest(
+                context.ChatId,
+                command,
+                context.TimeoutSeconds,
+                Math.Max(context.MaxOutputChars, 20_000),
+                context.EffectivePermissionMode);
+            if (_scopeFactory is not null)
+            {
+                // The tool and its router are scoped to the foreground agent run. Resolve a
+                // fresh router inside the background worker so its DbContext and other scoped
+                // dependencies remain alive for the entire asynchronous command execution.
+                var scopeFactory = _scopeFactory;
+                backgroundAction = async token =>
+                {
+                    await using var scope = scopeFactory.CreateAsyncScope();
+                    var router = scope.ServiceProvider.GetRequiredService<IExecutionBackendRouter>();
+                    await ExecuteBackgroundCommandAsync(router, request, outputPath, token);
+                };
+            }
+            else
+            {
+                // Compatibility path for self-built/test hosts that do not expose a scope
+                // factory. DI-created tools always take the scoped-worker path above.
+                var executionBackends = _executionBackends;
+                backgroundAction = token =>
+                    ExecuteBackgroundCommandAsync(executionBackends, request, outputPath, token);
+            }
+        }
+        else
+        {
+            backgroundAction = token => File.AppendAllTextAsync(
+                outputPath,
+                "\n## Local agent\n\nThe task is queued as a local background agent placeholder. Full autonomous subagent execution is reserved for the next worktree-backed iteration.\n",
+                token);
+        }
+
         await _background.CreateAsync(
             context.ChatId,
             snapshot.Title,
-            async token =>
-            {
-                if (!string.IsNullOrWhiteSpace(command))
-                {
-                    var result = await _sandbox.ExecuteAsync(
-                        context.ChatId,
-                        command,
-                        new SandboxCommandOptions(context.TimeoutSeconds, Math.Max(context.MaxOutputChars, 20_000)),
-                        token);
-                    var body = $"""
-
-                    ## Command result
-
-                    Exit code: {result.ExitCode}
-                    Timed out: {result.TimedOut}
-                    Blocked: {result.WasBlocked}
-
-                    stdout:
-                    {result.StandardOutput}
-
-                    stderr:
-                    {result.StandardError}
-                    """;
-                    await File.AppendAllTextAsync(outputPath, body, token);
-                    return;
-                }
-
-                await File.AppendAllTextAsync(
-                    outputPath,
-                    "\n## Local agent\n\nThe task is queued as a local background agent placeholder. Full autonomous subagent execution is reserved for the next worktree-backed iteration.\n",
-                    token);
-            },
+            backgroundAction,
             ct,
             taskId: snapshot.Id,
             kind: string.IsNullOrWhiteSpace(command) ? "agent" : "shell",
@@ -169,6 +203,31 @@ public sealed class TaskCreateAgentTool : IAgentTool
 
     private static string BuildBackgroundOutputPath(string root, Guid id) =>
         Path.Combine(root, ".tlah_context", "background-tasks", $"{id:N}.md");
+
+    private static async Task ExecuteBackgroundCommandAsync(
+        IExecutionBackendRouter executionBackends,
+        ExecutionRequest request,
+        string outputPath,
+        CancellationToken ct)
+    {
+        var result = await executionBackends.ExecuteAsync(request, ct: ct);
+        var body = $"""
+
+        ## Command result
+
+        Exit code: {result.ExitCode}
+        Timed out: {result.TimedOut}
+        Blocked: {result.BlockedReason != null}
+        Backend: {result.Backend}
+
+        stdout:
+        {result.StandardOutput}
+
+        stderr:
+        {result.StandardError}
+        """;
+        await File.AppendAllTextAsync(outputPath, body, ct);
+    }
 
     private static string BuildBackgroundHeader(AgentTaskSnapshot task, string prompt, string command) =>
         $"""

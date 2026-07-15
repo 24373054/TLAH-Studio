@@ -14,6 +14,13 @@ internal static partial class WorkspaceCodeToolSupport
     public static string Resolve(ISandboxCommandService sandbox, Guid chatId, string path) =>
         AgentToolSupport.ResolveSandboxPath(sandbox, chatId, path);
 
+    public static string Resolve(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        string path,
+        string? permissionMode) =>
+        AgentToolSupport.ResolveSandboxPath(sandbox, chatId, path, permissionMode);
+
     public static string Relative(ISandboxCommandService sandbox, Guid chatId, string path) =>
         Path.GetRelativePath(sandbox.GetSandboxRoot(chatId), path);
 
@@ -369,6 +376,7 @@ internal static class WorkspaceBackupStore
         Guid chatId,
         string path,
         string? backupId,
+        string? permissionMode,
         CancellationToken ct)
     {
         var root = sandbox.GetSandboxRoot(chatId);
@@ -382,7 +390,7 @@ internal static class WorkspaceBackupStore
         }
         else
         {
-            var fullPath = WorkspaceCodeToolSupport.Resolve(sandbox, chatId, path);
+            var fullPath = WorkspaceCodeToolSupport.Resolve(sandbox, chatId, path, permissionMode);
             var relative = Path.GetRelativePath(root, fullPath);
             var hash = WorkspaceCodeToolSupport.HashRelativePath(relative);
             var dir = Path.Combine(root, ".tlah_code_backups", hash);
@@ -430,7 +438,11 @@ public sealed class CodeReadAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
-            var path = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path"));
+            var path = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path"),
+                context.EffectivePermissionMode);
             if (!File.Exists(path))
                 return new AgentToolResult(false, string.Empty, "File not found.");
 
@@ -481,7 +493,11 @@ public sealed class CodeGlobAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return Task.FromResult(new AgentToolResult(false, string.Empty, error));
-            var searchRoot = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path", "."));
+            var searchRoot = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path", "."),
+                context.EffectivePermissionMode);
             if (!Directory.Exists(searchRoot))
                 return Task.FromResult(new AgentToolResult(false, string.Empty, "Search path is not a directory."));
             var pattern = WorkspaceCodeToolSupport.ReadString(root, "pattern", "**/*");
@@ -542,7 +558,11 @@ public sealed class CodeGrepAgentTool : IAgentTool
             var query = WorkspaceCodeToolSupport.ReadString(root, "query");
             if (string.IsNullOrWhiteSpace(query))
                 return new AgentToolResult(false, string.Empty, "The query argument is required.");
-            var start = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path", "."));
+            var start = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path", "."),
+                context.EffectivePermissionMode);
             var files = File.Exists(start)
                 ? [start]
                 : Directory.Exists(start)
@@ -643,7 +663,11 @@ public sealed class CodeSymbolsAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
-            var start = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path", "."));
+            var start = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path", "."),
+                context.EffectivePermissionMode);
             var pattern = WorkspaceCodeToolSupport.ReadString(root, "pattern");
             var max = Math.Clamp(WorkspaceCodeToolSupport.ReadInt(root, "max_results", 300), 1, 2000);
             var baseRoot = _sandbox.GetSandboxRoot(context.ChatId);
@@ -818,7 +842,11 @@ public sealed class CodeDiffAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
-            var path = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path"));
+            var path = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path"),
+                context.EffectivePermissionMode);
             var snapshot = await WorkspaceCodeToolSupport.ReadTextSnapshotAsync(path, ct);
             var oldContent = snapshot.Content;
             var proposed = WorkspaceCodeToolSupport.ReadString(root, "proposed_content");
@@ -868,18 +896,23 @@ public sealed class CodeEditAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
-            var path = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path"));
+            var path = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path"),
+                context.EffectivePermissionMode);
             var oldText = WorkspaceCodeToolSupport.ReadString(root, "old_text");
             var newText = WorkspaceCodeToolSupport.ReadString(root, "new_text");
             var replaceAll = WorkspaceCodeToolSupport.ReadBool(root, "replace_all");
             var createIfMissing = WorkspaceCodeToolSupport.ReadBool(root, "create_if_missing");
             var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");
+            var bypassGuards = AgentPermissionModes.IsBypass(context.EffectivePermissionMode);
             // M4.5.0: Require the file to have been read before editing.
-            if (File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
+            if (!bypassGuards && File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
                 return new AgentToolResult(false, string.Empty,
                     $"Cannot edit — the file has not been read in this session. Use the read tool first.");
             // M4.5.0: Detect stale edits — file modified externally after being read.
-            if (File.Exists(path) && _readFileTracker != null)
+            if (!bypassGuards && File.Exists(path) && _readFileTracker != null)
             {
                 var recordedMtime = _readFileTracker.GetLastReadMtimeUtc(path);
                 var currentMtime = File.GetLastWriteTimeUtc(path);
@@ -887,7 +920,9 @@ public sealed class CodeEditAgentTool : IAgentTool
                     return new AgentToolResult(false, string.Empty,
                         $"Cannot edit — the file was modified externally since it was last read. Re-read first.");
             }
-            var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(path, expectedHash);
+            var conflict = bypassGuards
+                ? string.Empty
+                : WorkspaceCodeToolSupport.VerifyExpectedHash(path, expectedHash);
             if (!string.IsNullOrWhiteSpace(conflict))
                 return new AgentToolResult(false, string.Empty, conflict);
 
@@ -983,12 +1018,17 @@ public sealed class CodeMultiEditAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
-            var path = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path"));
+            var path = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path"),
+                context.EffectivePermissionMode);
+            var bypassGuards = AgentPermissionModes.IsBypass(context.EffectivePermissionMode);
             // M4.5.0: Read-before-edit guard.
-            if (File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
+            if (!bypassGuards && File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
                 return new AgentToolResult(false, string.Empty,
                     "Cannot multi-edit — the file has not been read in this session. Use the read tool first.");
-            if (File.Exists(path) && _readFileTracker != null)
+            if (!bypassGuards && File.Exists(path) && _readFileTracker != null)
             {
                 var recordedMtime = _readFileTracker.GetLastReadMtimeUtc(path);
                 var currentMtime = File.GetLastWriteTimeUtc(path);
@@ -999,7 +1039,9 @@ public sealed class CodeMultiEditAgentTool : IAgentTool
             if (!File.Exists(path))
                 return new AgentToolResult(false, string.Empty, "File not found.");
             var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");
-            var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(path, expectedHash);
+            var conflict = bypassGuards
+                ? string.Empty
+                : WorkspaceCodeToolSupport.VerifyExpectedHash(path, expectedHash);
             if (!string.IsNullOrWhiteSpace(conflict))
                 return new AgentToolResult(false, string.Empty, conflict);
             if (!root.TryGetProperty("edits", out var editsElement) || editsElement.ValueKind != JsonValueKind.Array)
@@ -1340,13 +1382,25 @@ public sealed class CodeRollbackAgentTool : IAgentTool
             var pathArg = WorkspaceCodeToolSupport.ReadString(root, "path");
             var backupId = WorkspaceCodeToolSupport.ReadString(root, "backup_id");
             var previewOnly = WorkspaceCodeToolSupport.ReadBool(root, "preview_only");
-            var backup = await WorkspaceBackupStore.FindAsync(_sandbox, context.ChatId, pathArg, backupId, ct);
+            var backup = await WorkspaceBackupStore.FindAsync(
+                _sandbox,
+                context.ChatId,
+                pathArg,
+                backupId,
+                context.EffectivePermissionMode,
+                ct);
             if (backup == null)
                 return new AgentToolResult(false, string.Empty, "No matching backup was found.");
             var rootPath = _sandbox.GetSandboxRoot(context.ChatId);
-            var target = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, backup.RelativePath);
+            var target = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                backup.RelativePath,
+                context.EffectivePermissionMode);
             var expectedHash = WorkspaceCodeToolSupport.ReadString(root, "expected_sha256");
-            var conflict = WorkspaceCodeToolSupport.VerifyExpectedHash(target, expectedHash);
+            var conflict = AgentPermissionModes.IsBypass(context.EffectivePermissionMode)
+                ? string.Empty
+                : WorkspaceCodeToolSupport.VerifyExpectedHash(target, expectedHash);
             if (!string.IsNullOrWhiteSpace(conflict))
                 return new AgentToolResult(false, string.Empty, conflict);
 
@@ -1423,7 +1477,11 @@ public sealed class CodeDiagnosticsAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
-            var start = WorkspaceCodeToolSupport.Resolve(_sandbox, context.ChatId, WorkspaceCodeToolSupport.ReadString(root, "path", "."));
+            var start = WorkspaceCodeToolSupport.Resolve(
+                _sandbox,
+                context.ChatId,
+                WorkspaceCodeToolSupport.ReadString(root, "path", "."),
+                context.EffectivePermissionMode);
             var includeBuild = !root.TryGetProperty("include_build", out var includeBuildElement) ||
                                includeBuildElement.ValueKind != JsonValueKind.False;
             var files = File.Exists(start)

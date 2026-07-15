@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 
 namespace TLAHStudio.Core.Services;
@@ -35,7 +36,8 @@ public sealed class McpListToolsAgentTool : IAgentTool
             var tools = await _mcp.ListToolsAsync(
                 context.ChatId,
                 AgentToolSupport.GetString(root, "server"),
-                ct);
+                ct,
+                permissionMode: context.EffectivePermissionMode);
             var output = JsonSerializer.Serialize(
                 tools.Select(t => new
                 {
@@ -98,8 +100,18 @@ public sealed class McpCallAgentTool : IAgentTool
                 AgentToolSupport.GetString(root, "server"),
                 AgentToolSupport.GetString(root, "tool"),
                 arguments.Clone(),
-                ct);
+                ct,
+                permissionMode: context.EffectivePermissionMode);
             return new AgentToolResult(true, AgentToolSupport.Limit(output, context.MaxOutputChars));
+        }
+        catch (McpOutcomeUncertainException ex)
+        {
+            return new AgentToolResult(
+                false,
+                string.Empty,
+                SecretRedactor.RedactText(ex.Message),
+                OutcomeUncertain: true,
+                MayHaveCommitted: true);
         }
         catch (Exception ex)
         {
@@ -140,7 +152,8 @@ public sealed class McpListResourcesAgentTool : IAgentTool
             var resources = await _mcp.ListResourcesAsync(
                 context.ChatId,
                 AgentToolSupport.GetString(root, "server"),
-                ct);
+                ct,
+                permissionMode: context.EffectivePermissionMode);
             var output = JsonSerializer.Serialize(
                 resources.Select(r => new
                 {
@@ -195,7 +208,8 @@ public sealed class McpReadResourceAgentTool : IAgentTool
                 context.ChatId,
                 AgentToolSupport.GetString(root, "server"),
                 AgentToolSupport.GetString(root, "uri"),
-                ct);
+                ct,
+                permissionMode: context.EffectivePermissionMode);
             return new AgentToolResult(true, AgentToolSupport.Limit(output, context.MaxOutputChars));
         }
         catch (Exception ex)

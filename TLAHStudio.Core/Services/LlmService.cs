@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -23,6 +24,9 @@ namespace TLAHStudio.Core.Services;
 public class LlmService : ILlmService
 {
     private static readonly AsyncLocal<IProgress<AgentProgressUpdate>?> AgentProgressSink = new();
+    private static readonly ConcurrentDictionary<Guid, ResumeGate> AgentResumeGates = new();
+    internal static int ActiveResumeGateCount => AgentResumeGates.Count;
+    internal static bool HasActiveResumeGate(Guid runId) => AgentResumeGates.ContainsKey(runId);
 
     private readonly DbContext _db;
     private readonly IChatService _chatService;
@@ -99,14 +103,14 @@ public class LlmService : ILlmService
                 new SkillAgentTool(sharedSkillLoader),
                 new ToolSearchAgentTool(),
                 new TodoWriteAgentTool(taskService),
-                new TaskCreateAgentTool(taskService, backgroundTaskService, _sandboxCommandService),
+                new TaskCreateAgentTool(taskService, backgroundTaskService, _sandboxCommandService, router),
                 new TaskUpdateAgentTool(taskService),
                 new TaskListAgentTool(taskService),
                 new TaskOutputAgentTool(backgroundTaskService),
                 new TaskStopAgentTool(backgroundTaskService),
                 new TaskSendMessageAgentTool(backgroundTaskService),
                 new ReadPersistedOutputAgentTool(_sandboxCommandService, _db),
-                new SandboxExecAgentTool(_sandboxCommandService),
+                new SandboxExecAgentTool(_sandboxCommandService, router),
                 new TerminalExecAgentTool(router),
                 new FileListAgentTool(_sandboxCommandService),
                 new FileReadAgentTool(_sandboxCommandService, _toolPlatform),
@@ -450,6 +454,67 @@ public class LlmService : ILlmService
         AgentRunOptions? options = null,
         CancellationToken ct = default)
     {
+        // Approval callbacks, manual Resume, and lifecycle reactivation can
+        // arrive nearly simultaneously. Serialize them before touching the
+        // shared DbContext so one persisted invocation is never executed twice.
+        var gate = RentResumeGate(agentRunId);
+        var acquired = false;
+        try
+        {
+            await gate.Semaphore.WaitAsync(ct);
+            acquired = true;
+            return await ResumeAgentTaskCoreAsync(agentRunId, options, ct);
+        }
+        finally
+        {
+            if (acquired)
+                gate.Semaphore.Release();
+            ReturnResumeGate(agentRunId, gate);
+        }
+    }
+
+    private static ResumeGate RentResumeGate(Guid runId)
+    {
+        while (true)
+        {
+            var gate = AgentResumeGates.GetOrAdd(runId, static _ => new ResumeGate());
+            lock (gate.Sync)
+            {
+                if (gate.Retired)
+                    continue;
+                gate.References++;
+                return gate;
+            }
+        }
+    }
+
+    private static void ReturnResumeGate(Guid runId, ResumeGate gate)
+    {
+        lock (gate.Sync)
+        {
+            gate.References--;
+            if (gate.References != 0)
+                return;
+            gate.Retired = true;
+            ((ICollection<KeyValuePair<Guid, ResumeGate>>)AgentResumeGates)
+                .Remove(new KeyValuePair<Guid, ResumeGate>(runId, gate));
+        }
+        gate.Semaphore.Dispose();
+    }
+
+    private sealed class ResumeGate
+    {
+        public object Sync { get; } = new();
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+        public int References { get; set; }
+        public bool Retired { get; set; }
+    }
+
+    private async Task<SendMessageResult> ResumeAgentTaskCoreAsync(
+        Guid agentRunId,
+        AgentRunOptions? options,
+        CancellationToken ct)
+    {
         options ??= new AgentRunOptions();
         using var progressScope = UseAgentProgress(options.Progress);
         var run = await _db.Set<AgentRun>()
@@ -457,6 +522,8 @@ public class LlmService : ILlmService
             ?? throw new InvalidOperationException($"Agent run not found: {agentRunId}");
         if (run.Status == AgentRunStatuses.Completed)
             throw new InvalidOperationException("The agent run is already complete.");
+        if (run.Status == AgentRunStatuses.Running)
+            throw new InvalidOperationException("The agent run is already running.");
 
         var turn = await _db.Set<Turn>().FirstAsync(t => t.Id == run.TurnId, ct);
         var sentMessage = await _db.Set<Message>()
@@ -466,21 +533,195 @@ public class LlmService : ILlmService
         var checkpoint = await _checkpointStore.GetLatestAsync(run.Id, ct)
             ?? throw new InvalidOperationException("The agent run has no checkpoint to resume.");
         var checkpointState = DeserializeCheckpointState(checkpoint, run);
+        var hasPermissionOverride = !string.IsNullOrWhiteSpace(options.PermissionMode);
+        var requestedPermissionMode = hasPermissionOverride
+            ? AgentPermissionModes.Normalize(options.PermissionMode)
+            : AgentPermissionModes.Normalize(checkpointState.EffectivePermissionMode);
+        var resumePermissionMode = checkpointState.IsPlanMode
+            ? AgentPermissionModes.Plan
+            : requestedPermissionMode;
+        var resumeAutoApproveTools = checkpointState.IsPlanMode
+            ? false
+            : hasPermissionOverride
+                ? options.AutoApproveTools || AgentPermissionModes.IsAutoApprove(resumePermissionMode)
+                : checkpointState.EffectiveAutoApproveTools ??
+                  AgentPermissionModes.IsAutoApprove(resumePermissionMode);
 
-        run.MaxSteps = Math.Clamp(
-            Math.Max(run.MaxSteps, run.CurrentStep + Math.Clamp(options.MaxSteps, 1, 96)),
-            1,
-            192);
+        // Older/corrupted checkpoints can lose the pointer after the approval
+        // row itself was durably committed. Recover only unconsumed positive or
+        // unknown-outcome states; historical denials are deliberately ignored.
+        // A consumed invocation is Completed/Failed and therefore cannot match.
+        var recoveredPendingApprovalInvocation = false;
+        if (checkpointState.PendingToolInvocationId == null &&
+            checkpointState.UnknownOutcomeInvocationId == null)
+        {
+            var unresolved = await _db.Set<ToolInvocation>()
+                .Where(i => i.AgentRunId == run.Id &&
+                    i.CompletedAt == null &&
+                    (i.Status == ToolInvocationStatuses.Approved ||
+                     i.Status == ToolInvocationStatuses.Running ||
+                     i.Status == ToolInvocationStatuses.UnknownOutcome))
+                .OrderByDescending(i => i.CreatedAt)
+                .Take(2)
+                .ToListAsync(ct);
+            if (unresolved.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    "The agent run has multiple unresolved tool invocations and cannot resume automatically.");
+            }
+            if (unresolved.Count == 1)
+            {
+                var recovered = unresolved[0];
+                if (recovered.Status is ToolInvocationStatuses.Running or ToolInvocationStatuses.UnknownOutcome)
+                    checkpointState.UnknownOutcomeInvocationId = recovered.Id;
+                else
+                {
+                    checkpointState.PendingToolInvocationId = recovered.Id;
+                    recoveredPendingApprovalInvocation = true;
+                }
+            }
+        }
+
+        // A Running/UnknownOutcome row is a durable replay fence: execution may
+        // already have crossed a side-effect boundary. Clicking Resume is the
+        // user's explicit acknowledgement to continue from observation, never
+        // permission to execute the same invocation again. Preserve the row as
+        // unknown_outcome for audit, mark the acknowledgement complete, repair
+        // provider tool-call pairing when needed, and steer the model toward a
+        // materially different recovery step.
+        var uncertainInvocationId =
+            checkpointState.UnknownOutcomeInvocationId ?? checkpointState.PendingToolInvocationId;
+        if (uncertainInvocationId is { } replayFenceId)
+        {
+            var uncertainInvocation = await _db.Set<ToolInvocation>()
+                .Include(i => i.AgentStep)
+                .FirstOrDefaultAsync(i =>
+                    i.Id == replayFenceId && i.AgentRunId == run.Id, ct);
+            if (uncertainInvocation?.Status is
+                ToolInvocationStatuses.Running or ToolInvocationStatuses.UnknownOutcome)
+            {
+                var summary = string.IsNullOrWhiteSpace(checkpointState.UnknownOutcomeSummary)
+                    ? $"{uncertainInvocation.ToolName} may have produced side effects before its result was durably recorded."
+                    : checkpointState.UnknownOutcomeSummary;
+                var syntheticResult = new AgentToolResult(
+                    false,
+                    string.Empty,
+                    "Unknown outcome acknowledged by the user. The invocation was not replayed; inspect current state and continue with a different safe step.",
+                    OutcomeUncertain: true,
+                    MayHaveCommitted: true);
+
+                uncertainInvocation.Status = ToolInvocationStatuses.UnknownOutcome;
+                uncertainInvocation.ResultJson = syntheticResult.ToJson();
+                uncertainInvocation.CompletedAt ??= DateTime.UtcNow;
+                uncertainInvocation.AgentStep.Status = AgentStepStatuses.Failed;
+                uncertainInvocation.AgentStep.Summary = "Unknown tool outcome acknowledged; invocation was not replayed.";
+                uncertainInvocation.AgentStep.OutputJson = uncertainInvocation.ResultJson;
+                uncertainInvocation.AgentStep.CompletedAt ??= DateTime.UtcNow;
+
+                if (!string.IsNullOrWhiteSpace(uncertainInvocation.ProviderCallId) &&
+                    !checkpointState.Messages.Any(message =>
+                        string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(
+                            message.ToolCallId,
+                            uncertainInvocation.ProviderCallId,
+                            StringComparison.Ordinal)))
+                {
+                    checkpointState.Messages.Add(new MessagePayload(
+                        "tool",
+                        syntheticResult.ToJson(),
+                        uncertainInvocation.ProviderCallId));
+                }
+
+                checkpointState.ConsecutiveToolFailures =
+                    Math.Max(1, checkpointState.ConsecutiveToolFailures);
+                checkpointState.LastFailedToolName ??=
+                    AgentToolNames.Normalize(uncertainInvocation.ToolName);
+                checkpointState.LastFailureSummary = summary;
+                checkpointState.RecoveryDirectiveIssuedForFailureSignature = null;
+                checkpointState.RecoveryDirectivePending = true;
+            }
+
+            // A dangling/already-consumed pointer is also safe to clear: there
+            // is no executable positive approval behind it. This prevents an
+            // old checkpoint from creating a permanent pause loop.
+            if (uncertainInvocation == null ||
+                uncertainInvocation.Status is
+                    ToolInvocationStatuses.Running or
+                    ToolInvocationStatuses.UnknownOutcome or
+                    ToolInvocationStatuses.Completed or
+                    ToolInvocationStatuses.Failed)
+            {
+                checkpointState.PendingToolInvocationId = null;
+                checkpointState.UnknownOutcomeInvocationId = null;
+                checkpointState.UnknownOutcomeSummary = null;
+                await _db.SaveChangesAsync(ct);
+                await _checkpointStore.SaveAsync(
+                    run,
+                    checkpointState.CurrentStep,
+                    JsonSerializer.Serialize(checkpointState),
+                    ct);
+            }
+        }
+
+        // Approval completion automatically resumes the same run and must not
+        // grant a fresh step budget. Only a user-initiated resume, where there
+        // is no approval result waiting to be consumed, extends the budget.
+        // Only the invocation named by the durable checkpoint can be an
+        // approval result for this resume. Historical Denied rows intentionally
+        // remain auditable and must never be consumed again or suppress a later
+        // user-initiated budget extension.
+        var hasPendingApprovalResult = checkpointState.PendingToolInvocationId is { } pendingInvocationId &&
+            await _db.Set<ToolInvocation>()
+                .AnyAsync(i => i.Id == pendingInvocationId &&
+                    i.AgentRunId == run.Id &&
+                    (i.Status == ToolInvocationStatuses.Approved ||
+                     i.Status == ToolInvocationStatuses.Denied), ct);
+        if (run.Status == AgentRunStatuses.AwaitingApproval && !hasPendingApprovalResult)
+        {
+            throw new InvalidOperationException(
+                "The agent run is waiting for its current tool approval decision.");
+        }
+        if (!hasPendingApprovalResult && !recoveredPendingApprovalInvocation)
+        {
+            var requestedSteps = Math.Clamp(options.MaxSteps, 1, 96);
+            var requestedCeiling = run.CurrentStep > int.MaxValue - requestedSteps
+                ? int.MaxValue
+                : run.CurrentStep + requestedSteps;
+            run.MaxSteps = Math.Max(run.MaxSteps, requestedCeiling);
+        }
         run.Status = AgentRunStatuses.Running;
         run.ErrorMessage = null;
+        run.CompletedAt = null;
         run.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
-        await LogAgentEventAsync(
-            run,
-            AgentEventTypes.Resume,
-            "Agent run resumed from the latest checkpoint.",
-            new { run.CurrentStep, run.MaxSteps },
-            ct: ct);
+        try
+        {
+            await LogAgentEventAsync(
+                run,
+                AgentEventTypes.Resume,
+                "Agent run resumed from the latest checkpoint.",
+                new
+                {
+                    run.CurrentStep,
+                    run.MaxSteps,
+                    permissionMode = resumePermissionMode,
+                    autoApproveTools = resumeAutoApproveTools,
+                    activePlan = checkpointState.IsPlanMode
+                },
+                ct: CancellationToken.None);
+        }
+        catch
+        {
+            // Resume telemetry is best-effort. A broken event sink or UI
+            // progress callback must not strand an otherwise resumable run in
+            // Running before the engine has had a chance to checkpoint it.
+            foreach (var entry in _db.ChangeTracker.Entries<AgentEvent>()
+                         .Where(entry => entry.State == EntityState.Added)
+                         .ToArray())
+            {
+                entry.State = EntityState.Detached;
+            }
+        }
 
         // M2.7.0: Agent loop owned by V2 engine (no fallback)
         var runState = checkpointState.DeepClone() with
@@ -488,17 +729,23 @@ public class LlmService : ILlmService
             RunId = run.Id, ChatId = run.ChatId, TurnId = run.TurnId,
             Status = AgentRunStatuses.Running, CurrentStep = run.CurrentStep,
             MaxSteps = run.MaxSteps, UserRequest = run.UserRequest,
+            ErrorMessage = null,
+            EffectivePermissionMode = resumePermissionMode,
+            EffectiveAutoApproveTools = resumeAutoApproveTools
         };
+        runState.ResumeCount++;
+        if (!hasPendingApprovalResult && run.MaxSteps > checkpointState.MaxSteps)
+            runState.BudgetExtensionCount++;
         var engineOptions = new AgentEngineOptions(
             run.MaxSteps,
             options.CommandTimeoutSeconds,
             options.MaxCommandOutputChars,
-            options.AutoApproveTools || AgentPermissionModes.IsAutoApprove(options.PermissionMode),
+            resumeAutoApproveTools,
             options.ContextBudgetTokens,
             options.AutoCompactTriggerTokens, options.MaxToolResultCharsInContext,
             options.OutputStream,
             options.Progress,
-            AgentPermissionModes.Normalize(options.PermissionMode));
+            resumePermissionMode);
 
         AgentRunResult result;
         try
@@ -768,6 +1015,18 @@ public class LlmService : ILlmService
         CancellationToken ct = default,
         string? updatedArgumentsJson = null)  // M4.9.0: for AskUserQuestion answers
     {
+        if (policyScope is not (
+            ToolPolicyScopes.Once or
+            ToolPolicyScopes.Chat or
+            ToolPolicyScopes.Project or
+            ToolPolicyScopes.Global))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(policyScope),
+                policyScope,
+                "Approval policy scope must be once, chat, project, or global.");
+        }
+
         var invocation = await _db.Set<ToolInvocation>()
             .Include(i => i.AgentRun)
             .FirstOrDefaultAsync(i => i.Id == invocationId, ct)
@@ -775,13 +1034,82 @@ public class LlmService : ILlmService
         if (invocation.Status != ToolInvocationStatuses.AwaitingApproval)
             throw new InvalidOperationException("This tool invocation is not awaiting approval.");
 
-        invocation.Approved = approved;
-        invocation.ApprovedAt = DateTime.UtcNow;
-        // M4.9.0: Update arguments with user-provided answers (AskUserQuestion).
-        if (!string.IsNullOrWhiteSpace(updatedArgumentsJson))
+        string? validatedArgumentsJson = null;
+        // Validate the effective payload for every approval, not only edited
+        // payloads. This keeps a legacy/corrupted invocation (for example a
+        // persisted single "{") in AwaitingApproval instead of accepting the
+        // click and then failing behind the permission dialog.
+        if (approved || updatedArgumentsJson != null)
         {
-            invocation.ArgumentsJson = SecretRedactor.RedactJson(updatedArgumentsJson);
-            invocation.ProtectedArgumentsJson = ProtectedLocalData.Protect(updatedArgumentsJson);
+            var candidate = updatedArgumentsJson?.Trim();
+            if (candidate == null)
+            {
+                candidate = ProtectedLocalData.Reveal(invocation.ProtectedArgumentsJson);
+                if (string.IsNullOrWhiteSpace(candidate))
+                    candidate = invocation.ArgumentsJson;
+                candidate = candidate.Trim();
+            }
+            if (candidate.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Arguments for tool '{invocation.ToolName}' must be a non-empty JSON object.");
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(candidate);
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new InvalidOperationException(
+                        $"Arguments for tool '{invocation.ToolName}' must be a JSON object.");
+                }
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Arguments for tool '{invocation.ToolName}' must be valid JSON: {ex.Message}",
+                    ex);
+            }
+
+            if (!_agentTools.TryGet(invocation.ToolName, out var tool))
+            {
+                throw new InvalidOperationException(
+                    $"Updated arguments cannot be validated because tool '{invocation.ToolName}' is unavailable.");
+            }
+
+            AgentToolValidationResult validation;
+            try
+            {
+                validation = tool.ValidateInput(candidate);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Updated arguments for tool '{invocation.ToolName}' could not be validated: {ex.Message}",
+                    ex);
+            }
+
+            if (!validation.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Updated arguments for tool '{invocation.ToolName}' are invalid: " +
+                    (validation.Error ?? "Tool validation failed."));
+            }
+
+            if (updatedArgumentsJson != null)
+                validatedArgumentsJson = candidate;
+        }
+
+        invocation.Approved = approved;
+        invocation.ExplicitUserApproval = approved;
+        invocation.ApprovedAt = DateTime.UtcNow;
+        // Update arguments only after parsing and the corresponding tool's
+        // validation have both succeeded. Invalid edits leave the invocation
+        // untouched and awaiting approval.
+        if (validatedArgumentsJson != null)
+        {
+            invocation.ArgumentsJson = SecretRedactor.RedactJson(validatedArgumentsJson);
+            invocation.ProtectedArgumentsJson = ProtectedLocalData.Protect(validatedArgumentsJson);
         }
         invocation.Status = approved
             ? ToolInvocationStatuses.Approved
@@ -789,28 +1117,42 @@ public class LlmService : ILlmService
         invocation.AgentRun.Status = AgentRunStatuses.Paused;
         invocation.AgentRun.UpdatedAt = DateTime.UtcNow;
 
-        if (approved && policyScope != ToolPolicyScopes.Once)
+        try
         {
-            await _toolPlatform.SavePolicyAsync(
-                invocation.AgentRun.ChatId,
-                invocation.ToolName,
-                policyScope,
-                ToolPolicyDecisions.Allow,
-                description: "Approved from the agent permission prompt.",
-                ct: ct);
+            if (approved && policyScope != ToolPolicyScopes.Once)
+            {
+                await _toolPlatform.SavePolicyAsync(
+                    invocation.AgentRun.ChatId,
+                    invocation.ToolName,
+                    policyScope,
+                    ToolPolicyDecisions.Allow,
+                    description: "Approved from the agent permission prompt.",
+                    ct: ct);
+            }
+            else if (!approved && policyScope == ToolPolicyScopes.Global)
+            {
+                await _toolPlatform.SavePolicyAsync(
+                    invocation.AgentRun.ChatId,
+                    invocation.ToolName,
+                    ToolPolicyScopes.Global,
+                    ToolPolicyDecisions.Deny,
+                    description: "Always denied from the agent permission prompt.",
+                    ct: ct);
+            }
+
+            await _db.SaveChangesAsync(ct);
         }
-        else if (!approved && policyScope == ToolPolicyScopes.Global)
+        catch (DbUpdateConcurrencyException ex)
         {
-            await _toolPlatform.SavePolicyAsync(
-                invocation.AgentRun.ChatId,
-                invocation.ToolName,
-                ToolPolicyScopes.Global,
-                ToolPolicyDecisions.Deny,
-                description: "Always denied from the agent permission prompt.",
-                ct: ct);
+            // Another callback committed the decision first. Discard all stale
+            // tracked values so a later SaveChanges cannot resurrect the losing
+            // approval/denial in this long-lived UI scope.
+            _db.ChangeTracker.Clear();
+            throw new InvalidOperationException(
+                "This tool invocation already received a permission decision.",
+                ex);
         }
 
-        await _db.SaveChangesAsync(ct);
         await LogAgentEventAsync(
             invocation.AgentRun,
             approved ? AgentEventTypes.ApprovalGranted : AgentEventTypes.ApprovalDenied,
@@ -2584,18 +2926,26 @@ public class LlmService : ILlmService
 
         if (AgentProgressSink.Value is { } progress)
         {
-            var snapshot = await ToAgentRunSnapshotAsync(run, ct);
-            progress.Report(new AgentProgressUpdate(
-                run.Id,
-                agentEvent.SequenceNumber,
-                agentEvent.EventType,
-                agentEvent.Severity,
-                agentEvent.Summary,
-                agentEvent.CreatedAt,
-                snapshot,
-                agentEvent.AgentStepId,
-                agentEvent.ToolInvocationId,
-                agentEvent.DataJson));
+            try
+            {
+                var snapshot = await ToAgentRunSnapshotAsync(run, ct);
+                progress.Report(new AgentProgressUpdate(
+                    run.Id,
+                    agentEvent.SequenceNumber,
+                    agentEvent.EventType,
+                    agentEvent.Severity,
+                    agentEvent.Summary,
+                    agentEvent.CreatedAt,
+                    snapshot,
+                    agentEvent.AgentStepId,
+                    agentEvent.ToolInvocationId,
+                    agentEvent.DataJson));
+            }
+            catch
+            {
+                // UI/telemetry callbacks are observers, not state-machine
+                // participants. Never let them replace the persisted run state.
+            }
         }
     }
 

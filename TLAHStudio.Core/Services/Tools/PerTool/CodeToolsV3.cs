@@ -95,7 +95,7 @@ public class CodeEditToolV3 : AgentToolV3Base
             },
             ["required"] = new[] { "path", "old_string", "new_string" }
         });
-    public override bool RequiresApproval => false;
+    public override bool RequiresApproval => true;
 
     public override async Task<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, string argumentsJson, CancellationToken ct)
     {
@@ -106,7 +106,15 @@ public class CodeEditToolV3 : AgentToolV3Base
         var newStr = root.GetProperty("new_string").GetString() ?? "";
         var replaceAll = root.TryGetProperty("replace_all", out var ra) && ra.GetBoolean();
 
-        var fullPath = ResolvePath(context.ChatId, path);
+        string fullPath;
+        try
+        {
+            fullPath = ResolvePath(context.ChatId, path, context.EffectivePermissionMode);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new AgentToolResult(false, string.Empty, ex.Message);
+        }
         if (!File.Exists(fullPath))
             return new AgentToolResult(false, string.Empty, $"File not found: {path}");
 
@@ -134,7 +142,7 @@ public class CodeEditToolV3 : AgentToolV3Base
     {
         var doc = JsonDocument.Parse(argumentsJson);
         var path = doc.RootElement.GetProperty("path").GetString() ?? "";
-        var fullPath = ResolvePath(chatId, path);
+        var fullPath = ResolvePlannedPath(chatId, path);
         return Task.FromResult(ToolEffectPlan.Write([fullPath], [fullPath]));
     }
 
@@ -147,10 +155,34 @@ public class CodeEditToolV3 : AgentToolV3Base
     }
 
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.All;
-    private static string ResolvePath(Guid chatId, string path)
+    private static string ResolvePath(
+        Guid chatId,
+        string path,
+        string permissionMode = AgentPermissionModes.RequestApproval)
     {
-        var root = WorkspaceRootStore.GetRoot(chatId, out _);
-        return Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar).TrimStart(Path.DirectorySeparatorChar)));
+        var root = Path.GetFullPath(WorkspaceRootStore.GetRoot(chatId, out _))
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalized = path.Trim().Replace('/', Path.DirectorySeparatorChar);
+        var fullPath = Path.IsPathRooted(normalized)
+            ? Path.GetFullPath(normalized)
+            : Path.GetFullPath(Path.Combine(root, normalized));
+        var outsideWorkspace = !fullPath.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                               !fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        if (outsideWorkspace && !AgentPermissionModes.IsBypass(permissionMode))
+        {
+            throw new InvalidOperationException(
+                "Paths outside the workspace require Full access or an exact approved invocation.");
+        }
+
+        return fullPath;
+    }
+
+    private static string ResolvePlannedPath(Guid chatId, string path)
+    {
+        var normalized = path.Trim().Replace('/', Path.DirectorySeparatorChar);
+        return Path.IsPathRooted(normalized)
+            ? Path.GetFullPath(normalized)
+            : Path.GetFullPath(Path.Combine(WorkspaceRootStore.GetRoot(chatId, out _), normalized));
     }
 }
 

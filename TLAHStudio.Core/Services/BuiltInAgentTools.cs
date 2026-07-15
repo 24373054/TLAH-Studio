@@ -35,17 +35,31 @@ internal static class AgentToolSupport
             ? value.GetString() ?? fallback
             : fallback;
 
-    public static string ResolveSandboxPath(ISandboxCommandService sandbox, Guid chatId, string relativePath)
+    public static string ResolveSandboxPath(ISandboxCommandService sandbox, Guid chatId, string relativePath) =>
+        ResolveSandboxPath(sandbox, chatId, relativePath, AgentPermissionModes.RequestApproval);
+
+    public static string ResolveSandboxPath(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        string relativePath,
+        string? permissionMode)
     {
         relativePath = relativePath.Trim().Replace('/', Path.DirectorySeparatorChar);
         if (string.IsNullOrWhiteSpace(relativePath))
             relativePath = ".";
-        if (Path.IsPathRooted(relativePath))
-            throw new InvalidOperationException("Absolute paths are not allowed.");
 
         var root = Path.GetFullPath(sandbox.GetSandboxRoot(chatId))
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var full = Path.GetFullPath(Path.Combine(root, relativePath));
+        var full = Path.IsPathRooted(relativePath)
+            ? Path.GetFullPath(relativePath)
+            : Path.GetFullPath(Path.Combine(root, relativePath));
+        var isOutsideSandbox = !full.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+                               !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        if (isOutsideSandbox && AgentPermissionModes.IsBypass(permissionMode))
+            return full;
+
+        if (Path.IsPathRooted(relativePath))
+            throw new InvalidOperationException("Absolute paths are not allowed outside Full access or an exact approved invocation.");
         if (!full.Equals(root, StringComparison.OrdinalIgnoreCase) &&
             !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The requested path escapes the chat sandbox.");
@@ -56,14 +70,25 @@ internal static class AgentToolSupport
         string name,
         string description,
         Dictionary<string, object> properties,
-        string[]? required = null) =>
-        new(name, description, new Dictionary<string, object>
+        string[]? required = null)
+    {
+        // `reason` is runtime metadata consumed by the activity timeline and
+        // approval UI.  Older built-in schemas accepted it implicitly, so the
+        // strict schema validator must also advertise it explicitly instead
+        // of rejecting otherwise valid model calls.
+        var declaredProperties = new Dictionary<string, object>(properties, StringComparer.Ordinal);
+        declaredProperties.TryAdd(
+            "reason",
+            StringProperty("Briefly explain why this tool invocation is needed."));
+
+        return new(name, description, new Dictionary<string, object>
         {
             ["type"] = "object",
-            ["properties"] = properties,
+            ["properties"] = declaredProperties,
             ["required"] = required ?? [],
             ["additionalProperties"] = false
         });
+    }
 
     public static Dictionary<string, object> StringProperty(string description) => new()
     {
@@ -172,7 +197,7 @@ public sealed class TerminalExecAgentTool : IAgentTool
                 command,
                 context.TimeoutSeconds,
                 context.MaxOutputChars,
-                context.PermissionMode),
+                context.EffectivePermissionMode),
             backend,
             ct);
         var output = $"""
@@ -206,7 +231,9 @@ public sealed class TerminalExecAgentTool : IAgentTool
             result.Success,
             output,
             result.BlockedReason ?? (result.TimedOut ? "Execution timed out." : result.ExitCode == 0 ? null : "Command failed."),
-            Warning: destructiveWarning);
+            Warning: destructiveWarning,
+            OutcomeUncertain: result.OutcomeUncertain,
+            MayHaveCommitted: result.MayHaveCommitted);
     }
 }
 
@@ -240,7 +267,10 @@ public sealed class FileListAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return Task.FromResult(new AgentToolResult(false, string.Empty, error));
             var path = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path", "."));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path", "."),
+                context.EffectivePermissionMode);
             var recursive = root.TryGetProperty("recursive", out var recursiveValue) &&
                             recursiveValue.ValueKind == JsonValueKind.True;
             if (!Directory.Exists(path))
@@ -305,7 +335,10 @@ public sealed class FileReadAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var path = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path"),
+                context.EffectivePermissionMode);
             if (!File.Exists(path))
                 return new AgentToolResult(false, string.Empty, "File not found.");
             var settings = await _platform.GetSettingsAsync(ct);
@@ -362,17 +395,21 @@ public sealed class FileWriteAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var path = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path"),
+                context.EffectivePermissionMode);
             var content = AgentToolSupport.GetString(root, "content");
             var append = root.TryGetProperty("append", out var appendValue) &&
                          appendValue.ValueKind == JsonValueKind.True;
+            var bypassGuards = AgentPermissionModes.IsBypass(context.EffectivePermissionMode);
             // M4.5.0: Require the file to have been read before writing.
             // This prevents the model from hallucinating file contents.
-            if (File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
+            if (!bypassGuards && File.Exists(path) && _readFileTracker != null && !_readFileTracker.WasRead(path))
                 return new AgentToolResult(false, string.Empty,
                     $"Cannot write to '{AgentToolSupport.GetString(root, "path")}' — the file has not been read in this session. Use file_read or read first to inspect its contents.");
             // M4.5.0: Detect stale writes — file was modified externally after being read.
-            if (File.Exists(path) && _readFileTracker != null)
+            if (!bypassGuards && File.Exists(path) && _readFileTracker != null)
             {
                 var recordedMtime = _readFileTracker.GetLastReadMtimeUtc(path);
                 var currentMtime = File.GetLastWriteTimeUtc(path);
@@ -438,7 +475,10 @@ public sealed class FileSendAgentTool : IAgentTool
                 return new AgentToolResult(false, string.Empty, error);
 
             var path = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path"),
+                context.EffectivePermissionMode);
             if (!File.Exists(path))
                 return new AgentToolResult(false, string.Empty, "File not found.");
 
@@ -497,7 +537,10 @@ public sealed class FileInfoAgentTool : IAgentTool
                 return new AgentToolResult(false, string.Empty, error);
 
             var fullPath = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path"),
+                context.EffectivePermissionMode);
             var sandboxRoot = _sandbox.GetSandboxRoot(context.ChatId);
             var relative = Path.GetRelativePath(sandboxRoot, fullPath);
             if (File.Exists(fullPath))
@@ -608,7 +651,10 @@ public sealed class FileMkdirAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return Task.FromResult(new AgentToolResult(false, string.Empty, error));
             var path = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path"),
+                context.EffectivePermissionMode);
             Directory.CreateDirectory(path);
             var relative = Path.GetRelativePath(_sandbox.GetSandboxRoot(context.ChatId), path);
             return Task.FromResult(new AgentToolResult(true, $"Created directory {relative}."));
@@ -656,9 +702,15 @@ public sealed class FileMoveAgentTool : IAgentTool
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
             var source = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "from_path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "from_path"),
+                context.EffectivePermissionMode);
             var destination = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "to_path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "to_path"),
+                context.EffectivePermissionMode);
             var mode = AgentToolSupport.GetString(root, "mode", "move").Trim().ToLowerInvariant();
             var overwrite = root.TryGetProperty("overwrite", out var overwriteValue) &&
                             overwriteValue.ValueKind == JsonValueKind.True;
@@ -745,7 +797,7 @@ public sealed class FileDeleteAgentTool : IAgentTool
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
         AgentToolNames.FileDelete,
-        "Delete a file or directory inside the current chat sandbox. Recursive directory deletion must be requested explicitly.",
+        "Delete a file or directory. Host paths require Full access or approval for the exact invocation; critical host roots can never be recursively deleted.",
         new Dictionary<string, object>
         {
             ["path"] = AgentToolSupport.StringProperty("Relative file or directory path inside the sandbox."),
@@ -764,8 +816,20 @@ public sealed class FileDeleteAgentTool : IAgentTool
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return Task.FromResult(new AgentToolResult(false, string.Empty, error));
+            var recursive = root.TryGetProperty("recursive", out var recursiveValue) &&
+                            recursiveValue.ValueKind == JsonValueKind.True;
             var path = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path"));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path"),
+                context.EffectivePermissionMode);
+            if (recursive && ToolSafetyKernel.IsImmutableRecursiveDeleteTarget(path))
+            {
+                return Task.FromResult(new AgentToolResult(
+                    false,
+                    string.Empty,
+                    "Recursive deletion of a critical drive, Windows, Users, profile, or system-data root is blocked in every permission mode."));
+            }
             var sandboxRoot = Path.GetFullPath(_sandbox.GetSandboxRoot(context.ChatId))
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var normalizedPath = Path.GetFullPath(path)
@@ -783,8 +847,6 @@ public sealed class FileDeleteAgentTool : IAgentTool
             if (!Directory.Exists(path))
                 return Task.FromResult(new AgentToolResult(true, $"Path {relative} did not exist."));
 
-            var recursive = root.TryGetProperty("recursive", out var recursiveValue) &&
-                            recursiveValue.ValueKind == JsonValueKind.True;
             var counts = CountDirectory(path);
             Directory.Delete(path, recursive);
             return Task.FromResult(new AgentToolResult(
@@ -854,7 +916,10 @@ public sealed class FileSearchAgentTool : IAgentTool
             if (string.IsNullOrWhiteSpace(query))
                 return new AgentToolResult(false, string.Empty, "The query argument is required.");
             var start = AgentToolSupport.ResolveSandboxPath(
-                _sandbox, context.ChatId, AgentToolSupport.GetString(root, "path", "."));
+                _sandbox,
+                context.ChatId,
+                AgentToolSupport.GetString(root, "path", "."),
+                context.EffectivePermissionMode);
             var glob = AgentToolSupport.GetString(root, "glob", "*");
             var useRegex = root.TryGetProperty("regex", out var regexValue) &&
                            regexValue.ValueKind == JsonValueKind.True;
@@ -969,10 +1034,18 @@ public sealed class FileSearchAgentTool : IAgentTool
 
 public sealed class GitAgentTool : IAgentTool
 {
-    private static readonly HashSet<string> AllowedOperations = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> SandboxOperations = new(StringComparer.OrdinalIgnoreCase)
     {
         "status", "diff", "log", "init", "add", "commit", "branch", "checkout", "switch"
     };
+    private static readonly HashSet<string> AuthorizedOperations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "fetch", "pull", "push", "merge", "rebase", "cherry-pick", "revert", "remote", "tag"
+    };
+    private static readonly string[] AllOperations = SandboxOperations
+        .Concat(AuthorizedOperations)
+        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
     private readonly ISandboxCommandService _sandbox;
 
     public GitAgentTool(ISandboxCommandService sandbox)
@@ -982,13 +1055,13 @@ public sealed class GitAgentTool : IAgentTool
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
         AgentToolNames.Git,
-        "Run a constrained Git operation in a sandbox directory.",
+        "Run a structured Git operation. Remote and repository-integrating operations require Full access or approval for the exact invocation.",
         new Dictionary<string, object>
         {
             ["operation"] = new Dictionary<string, object>
             {
                 ["type"] = "string",
-                ["enum"] = AllowedOperations.OrderBy(x => x).ToArray(),
+                ["enum"] = AllOperations,
                 ["description"] = "Git operation."
             },
             ["path"] = new Dictionary<string, object>
@@ -1016,29 +1089,48 @@ public sealed class GitAgentTool : IAgentTool
         if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
             return new AgentToolResult(false, string.Empty, error);
         var operation = AgentToolSupport.GetString(root, "operation");
-        if (!AllowedOperations.Contains(operation))
+        if (!SandboxOperations.Contains(operation) && !AuthorizedOperations.Contains(operation))
             return new AgentToolResult(false, string.Empty, $"Git operation is not allowed: {operation}");
+        if (AuthorizedOperations.Contains(operation) &&
+            !AgentPermissionModes.IsBypass(context.EffectivePermissionMode))
+        {
+            return new AgentToolResult(
+                false,
+                string.Empty,
+                $"git {operation} requires Full access or approval for this exact invocation.");
+        }
 
         // M4.4.1: Resolve working directory. Default to sandbox root; when `path`
         // is given, resolve it relative to the sandbox root and validate it stays
         // within the sandbox (no ../ escape).
-        var sandboxRoot = _sandbox.GetSandboxRoot(context.ChatId);
+        var sandboxRoot = Path.GetFullPath(_sandbox.GetSandboxRoot(context.ChatId));
         var repoPath = AgentToolSupport.GetString(root, "path");
         var workingDir = sandboxRoot;
         if (!string.IsNullOrWhiteSpace(repoPath))
         {
-            var resolved = Path.GetFullPath(Path.Combine(sandboxRoot, repoPath.Trim()));
-            if (!resolved.StartsWith(sandboxRoot + Path.DirectorySeparatorChar) && resolved != sandboxRoot)
-                return new AgentToolResult(false, string.Empty, "Git path escapes the sandbox.");
+            string resolved;
+            try
+            {
+                resolved = AgentToolSupport.ResolveSandboxPath(
+                    _sandbox,
+                    context.ChatId,
+                    repoPath,
+                    context.EffectivePermissionMode);
+            }
+            catch (Exception ex)
+            {
+                return new AgentToolResult(false, string.Empty, ex.Message);
+            }
             if (!Directory.Exists(resolved))
                 return new AgentToolResult(false, string.Empty, $"Git path does not exist or is not a directory: {repoPath}");
             workingDir = resolved;
         }
 
+        var bypassRestrictions = AgentPermissionModes.IsBypass(context.EffectivePermissionMode);
         var args = new List<string>
         {
             "-c", "core.hooksPath=NUL",
-            "-c", "protocol.file.allow=never",
+            "-c", $"protocol.file.allow={(bypassRestrictions ? "always" : "never")}",
             "-c", "diff.external=",
             operation
         };
@@ -1061,7 +1153,7 @@ public sealed class GitAgentTool : IAgentTool
             args.Add("--no-ext-diff");
 
         // M4.4.3: Safety guard for checkout/switch.
-        if (operation is "checkout" or "switch")
+        if (!bypassRestrictions && operation is "checkout" or "switch")
         {
             var userArgs = args.Skip(7).ToList(); // skip 6 config kv-pairs + operation
 
@@ -1091,8 +1183,11 @@ public sealed class GitAgentTool : IAgentTool
             RedirectStandardError = true,
             CreateNoWindow = true
         };
-        psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-        psi.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
+        if (!bypassRestrictions)
+        {
+            psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+            psi.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
+        }
         psi.Environment["GIT_PAGER"] = "cat";
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
         foreach (var arg in args)
@@ -1118,9 +1213,29 @@ public sealed class GitAgentTool : IAgentTool
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             try { process.Kill(true); } catch { }
-            return new AgentToolResult(false, string.Empty, "Git operation timed out.");
+            return OutcomeUncertainFailure(
+                "Git operation timed out; it may have partially changed the repository or remote.");
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(true); } catch { }
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            try { process.Kill(true); } catch { }
+            return OutcomeUncertainFailure(
+                $"Git result transport failed: {SecretRedactor.RedactText(ex.Message)}");
         }
     }
+
+    internal static AgentToolResult OutcomeUncertainFailure(string error) =>
+        new(
+            false,
+            string.Empty,
+            error,
+            OutcomeUncertain: true,
+            MayHaveCommitted: true);
 }
 
 public sealed class HttpRequestAgentTool : IAgentTool
@@ -1165,6 +1280,8 @@ public sealed class HttpRequestAgentTool : IAgentTool
         string argumentsJson,
         CancellationToken ct = default)
     {
+        var requestDispatched = false;
+        var mutatingRequest = false;
         try
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
@@ -1174,9 +1291,10 @@ public sealed class HttpRequestAgentTool : IAgentTool
                 AgentToolSupport.GetString(root, "url"),
                 settings,
                 ct,
-                bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
+                bypassRestrictions: AgentPermissionModes.IsBypass(context.EffectivePermissionMode));
             var methodName = AgentToolSupport.GetString(root, "method", "GET").ToUpperInvariant();
             var method = new HttpMethod(methodName);
+            mutatingRequest = method != HttpMethod.Get && method != HttpMethod.Head;
             using var request = new HttpRequestMessage(method, uri);
             var body = AgentToolSupport.GetString(root, "body");
             if (!string.IsNullOrEmpty(body) && method != HttpMethod.Get && method != HttpMethod.Head)
@@ -1204,6 +1322,9 @@ public sealed class HttpRequestAgentTool : IAgentTool
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(settings.MaxRuntimeSeconds));
+            // From this boundary onward a timeout or broken response cannot
+            // prove that a mutating request was not accepted by the server.
+            requestDispatched = true;
             using var response = await _httpClientFactory.CreateClient("Tools")
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
             var text = method == HttpMethod.Head
@@ -1227,6 +1348,30 @@ public sealed class HttpRequestAgentTool : IAgentTool
                 """;
             return new AgentToolResult(response.IsSuccessStatusCode, output,
                 response.IsSuccessStatusCode ? null : $"HTTP request returned {(int)response.StatusCode}.");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            var uncertain = requestDispatched && mutatingRequest;
+            return new AgentToolResult(
+                false,
+                string.Empty,
+                "HTTP request timed out.",
+                OutcomeUncertain: uncertain,
+                MayHaveCommitted: uncertain);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            var uncertain = requestDispatched && mutatingRequest;
+            return new AgentToolResult(
+                false,
+                string.Empty,
+                SecretRedactor.RedactText(ex.Message),
+                OutcomeUncertain: uncertain,
+                MayHaveCommitted: uncertain);
         }
         catch (Exception ex)
         {
@@ -1289,12 +1434,12 @@ public sealed partial class WebSearchAgentTool : IAgentTool
                     searchUrl,
                     settings,
                     ct,
-                    bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
+                    bypassRestrictions: AgentPermissionModes.IsBypass(context.EffectivePermissionMode));
                 var fetched = await FetchSearchPageAsync(
                     client,
                     uri,
                     settings,
-                    AgentPermissionModes.IsBypass(context.PermissionMode),
+                    AgentPermissionModes.IsBypass(context.EffectivePermissionMode),
                     ct);
                 lastStatus = fetched.StatusCode;
                 lastUri = fetched.FinalUri.ToString();
@@ -1560,7 +1705,7 @@ public sealed partial class BrowserReadAgentTool : IAgentTool
                 AgentToolSupport.GetString(root, "url"),
                 settings,
                 ct,
-                bypassRestrictions: AgentPermissionModes.IsBypass(context.PermissionMode));
+                bypassRestrictions: AgentPermissionModes.IsBypass(context.EffectivePermissionMode));
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.UserAgent.ParseAdd("TLAHStudio/1.4");
             using var response = await _httpClientFactory.CreateClient("Tools")

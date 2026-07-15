@@ -873,11 +873,11 @@ public sealed partial class MessageInputControl : UserControl
             AgentPermissionModes.BypassPermissions => new(
                 AgentPermissionModes.BypassPermissions,
                 "Full access",
-                "All tools run without approval prompts. Use with trusted workspaces only."),
+                "Tools run without approval prompts except catastrophic system-destructive operations. Use only with trusted workspaces."),
             AgentPermissionModes.Plan => new(
                 AgentPermissionModes.Plan,
                 "Plan",
-                "Read-only exploration and design. Writes and terminal execution are blocked until plan is approved."),
+                "Safe read-only inspection runs without prompts; writes and destructive actions require approval."),
             AgentPermissionModes.AutoApprove => new(
                 AgentPermissionModes.AutoApprove,
                 "Auto approve",

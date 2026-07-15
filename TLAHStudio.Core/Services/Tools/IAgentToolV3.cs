@@ -74,7 +74,8 @@ public abstract class AgentToolV3Base : IAgentToolV3
         return Task.FromResult(new ToolSafetyClassification(
             assessment.Level, assessment.Category, assessment.IsReadOnly,
             assessment.IsWriteOperation, assessment.RequiresExplicitApproval,
-            assessment.IsBlocked, assessment.Summary, assessment.Warning, null));
+            assessment.IsBlocked, assessment.Summary, assessment.Warning, null,
+            assessment.CanOverrideBlock, assessment.BypassImmune));
     }
 
     public virtual Task<ToolEffectPlan> PlanEffectsAsync(

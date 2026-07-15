@@ -251,6 +251,7 @@ public class AnthropicProvider : ILlmProvider
         var toolBuilders = new Dictionary<int, AnthropicToolCallBuilder>();
         Dictionary<string, int>? tokenUsage = null;
         var textStarted = false;
+        var sawTerminalMarker = false;
         var pendingDelta = new StringBuilder(); // M4.4.5: SSE batching accumulator
 
         await using var streamBody = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
@@ -265,7 +266,10 @@ public class AnthropicProvider : ILlmProvider
 
             var data = line["data:".Length..].Trim();
             if (data == "[DONE]")
+            {
+                sawTerminalMarker = true;
                 break;
+            }
 
             chunks.Add(data);
             try
@@ -275,6 +279,8 @@ public class AnthropicProvider : ILlmProvider
                 var type = root.TryGetProperty("type", out var typeEl)
                     ? typeEl.GetString()
                     : null;
+                if (type == "message_stop")
+                    sawTerminalMarker = true;
 
                 if (type == "content_block_start" &&
                     root.TryGetProperty("index", out var indexEl) &&
@@ -395,6 +401,7 @@ public class AnthropicProvider : ILlmProvider
             rawResponse["reasoning_text"] = thinking.ToString();
         if (tokenUsage != null)
             rawResponse["usage"] = tokenUsage;
+        rawResponse["stream_complete"] = sawTerminalMarker;
 
         var toolCalls = toolBuilders
             .OrderBy(kv => kv.Key)
@@ -409,6 +416,7 @@ public class AnthropicProvider : ILlmProvider
             (int)sw.ElapsedMilliseconds,
             text.ToString(),
             tokenUsage,
+            Error: sawTerminalMarker ? null : "Provider stream ended before a terminal marker was received.",
             ToolCalls: toolCalls,
             ReasoningText: thinking.Length == 0 ? null : thinking.ToString());
     }

@@ -7,6 +7,7 @@ using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
 using TLAHStudio.Core.Services.Background;
+using TLAHStudio.Core.Services.Tools.PerTool;
 using TLAHStudio.Core.Services.Workspace;
 
 namespace TLAHStudio.Core.Tests;
@@ -121,6 +122,140 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public async Task TerminalExec_ApprovedAskInvocationUsesUnrestrictedLocalBackend()
+    {
+        await using var db = TestDb.Create();
+        var root = Path.Combine(Path.GetTempPath(), "TLAHStudio.ApprovedTerminal.Tests", Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var router = new ExecutionBackendRouter(
+            sandbox,
+            new ToolPlatformService(db),
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(new MapHttpMessageHandler(_ =>
+                MapHttpMessageHandler.Json(HttpStatusCode.OK, "{}")))));
+        var tool = new TerminalExecAgentTool(router);
+        var context = new AgentToolExecutionContext(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            10,
+            2000,
+            AgentPermissionModes.RequestApproval,
+            HasInvocationAuthorization: true);
+
+        var result = await tool.ExecuteAsync(
+            context,
+            """{"command":"Write-Output approved"}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("Backend: unrestricted_local", result.Output, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("approved", result.Output, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(AgentPermissionModes.BypassPermissions, false, ToolExecutionBackends.UnrestrictedLocal)]
+    [InlineData(AgentPermissionModes.RequestApproval, true, ToolExecutionBackends.UnrestrictedLocal)]
+    [InlineData(AgentPermissionModes.RequestApproval, false, ToolExecutionBackends.RestrictedLocal)]
+    [InlineData(AgentPermissionModes.AutoApprove, false, ToolExecutionBackends.RestrictedLocal)]
+    public async Task SandboxExec_RoutesOnlyFullOrExactlyApprovedInvocationToUnrestrictedBackend(
+        string permissionMode,
+        bool explicitlyApproved,
+        string expectedBackend)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "TLAHStudio.SandboxRouting.Tests",
+            Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var router = new RecordingExecutionBackendRouter(sandbox.GetSandboxRoot(Guid.NewGuid()));
+        var tool = new SandboxExecAgentTool(sandbox, router);
+        var context = new AgentToolExecutionContext(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            10,
+            2000,
+            permissionMode,
+            explicitlyApproved);
+
+        var result = await tool.ExecuteAsync(
+            context,
+            """{"command":"Write-Output routed"}""");
+
+        Assert.True(result.Success, result.Error);
+        var request = Assert.Single(router.Requests);
+        Assert.Equal(expectedBackend, request.Backend);
+        Assert.Equal(context.EffectivePermissionMode, request.Request.PermissionMode);
+        Assert.Contains($"Backend: {expectedBackend}", result.Output);
+    }
+
+    [Theory]
+    [InlineData("Get-Date -Format o")]
+    [InlineData("Remove-Item ./artifact.tmp -Force")]
+    [InlineData("rm -rf /")]
+    public async Task TerminalExecV3_DelegatesSafetyClassificationToKernel(string command)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "TLAHStudio.TerminalV3Safety.Tests",
+            Guid.NewGuid().ToString("N"));
+        var sandbox = new SandboxCommandService(root);
+        var chatId = Guid.NewGuid();
+        var argumentsJson = JsonSerializer.Serialize(new { command });
+        var tool = new TerminalExecToolV3(
+            new RecordingExecutionBackendRouter(sandbox.GetSandboxRoot(chatId)));
+
+        var expected = ToolSafetyKernel.Assess(
+            sandbox,
+            chatId,
+            AgentToolNames.TerminalExec,
+            argumentsJson);
+        var actual = await tool.ClassifySafetyAsync(
+            argumentsJson,
+            chatId,
+            sandbox);
+
+        Assert.Equal(expected.Level, actual.Level);
+        Assert.Equal(expected.Category, actual.Category);
+        Assert.Equal(expected.IsReadOnly, actual.IsReadOnly);
+        Assert.Equal(expected.IsWriteOperation, actual.IsDestructive);
+        Assert.Equal(expected.RequiresExplicitApproval, actual.RequiresExplicitApproval);
+        Assert.Equal(expected.IsBlocked, actual.IsBlocked);
+        Assert.Equal(expected.CanOverrideBlock, actual.CanOverrideBlock);
+        Assert.Equal(expected.Summary, actual.Summary);
+        Assert.Equal(expected.Warning, actual.Warning);
+    }
+
+    [Fact]
+    public async Task HttpRequest_ApprovedAskInvocationBypassesContextualNetworkRestriction()
+    {
+        await using var db = TestDb.Create();
+        var handler = new MapHttpMessageHandler(_ =>
+            MapHttpMessageHandler.Json(HttpStatusCode.OK, "{\"ok\":true}"));
+        using var client = new HttpClient(handler);
+        var tool = new HttpRequestAgentTool(
+            new ToolPlatformService(db),
+            new NetworkSecurityService(),
+            new StaticHttpClientFactory(client));
+        var context = new AgentToolExecutionContext(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            10,
+            2000,
+            AgentPermissionModes.RequestApproval,
+            HasInvocationAuthorization: true);
+
+        var result = await tool.ExecuteAsync(
+            context,
+            """{"url":"https://127.0.0.1/api","method":"GET"}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Single(handler.Requests);
+        Assert.Contains("ok", result.Output, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task FileManagementToolsInspectCreateMoveCopyAndDelete()
     {
         await using var db = TestDb.Create();
@@ -190,11 +325,44 @@ public class BuiltInAgentToolsTests
     {
         var sandbox = new SandboxCommandService(
             Path.Combine(Path.GetTempPath(), "TLAHStudio.Tool.Tests", Guid.NewGuid().ToString("N")));
-        var registry = new AgentToolRegistry([new SandboxExecAgentTool(sandbox)]);
+        var registry = new AgentToolRegistry(
+        [
+            new SandboxExecAgentTool(
+                sandbox,
+                new RecordingExecutionBackendRouter(sandbox.GetSandboxRoot(Guid.NewGuid())))
+        ]);
 
         Assert.All(registry.Definitions, definition =>
             Assert.Matches("^[a-zA-Z0-9_-]+$", definition.Name));
         Assert.True(registry.TryGet("sandbox.exec", out _));
+    }
+
+    [Fact]
+    public void DefaultToolValidationRejectsMissingNullAndEmptyRequiredArguments()
+    {
+        var sandbox = new SandboxCommandService(
+            Path.Combine(
+                Path.GetTempPath(),
+                "TLAHStudio.RequiredInput.Tests",
+                Guid.NewGuid().ToString("N")));
+        IAgentTool tool = new SandboxExecAgentTool(
+            sandbox,
+            new RecordingExecutionBackendRouter(sandbox.GetSandboxRoot(Guid.NewGuid())));
+
+        foreach (var invalid in new[]
+                 {
+                     "{}",
+                     """{"command":null}""",
+                     """{"command":""}""",
+                     """{"command":"   "}"""
+                 })
+        {
+            var validation = tool.ValidateInput(invalid);
+            Assert.False(validation.Success);
+            Assert.Contains("command", validation.Error, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.True(tool.ValidateInput("""{"command":"Get-Date"}""").Success);
     }
 
     [Fact]
@@ -282,7 +450,11 @@ public class BuiltInAgentToolsTests
         var sandbox = new SandboxCommandService(root);
         var taskService = new AgentTaskService(db);
         var background = new BackgroundTaskService(db);
-        var create = new TaskCreateAgentTool(taskService, background, sandbox);
+        var create = new TaskCreateAgentTool(
+            taskService,
+            background,
+            sandbox,
+            new RecordingExecutionBackendRouter(sandbox.GetSandboxRoot(chatId)));
         var output = new TaskOutputAgentTool(background);
         var send = new TaskSendMessageAgentTool(background);
         var stop = new TaskStopAgentTool(background);
@@ -384,7 +556,9 @@ public class BuiltInAgentToolsTests
             new FileWriteAgentTool(sandbox, platform),
             new FileDeleteAgentTool(sandbox),
             new CodeSymbolsAgentTool(sandbox),
-            new SandboxExecAgentTool(sandbox)
+            new SandboxExecAgentTool(
+                sandbox,
+                new RecordingExecutionBackendRouter(sandbox.GetSandboxRoot(Guid.NewGuid())))
         ]);
 
         Assert.True(registry.TryGet(AgentToolNames.FileRead, out var read));
@@ -750,6 +924,20 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public void ToolProtocolGuardPreservesInvalidArgumentsForExplicitFailure()
+    {
+        var issues = new List<ToolProtocolGuardIssue>();
+        var call = ToolProtocolGuard.SanitizeToolCall(
+            new LlmToolCall("call-invalid", AgentToolNames.WebSearch, "{"),
+            issues);
+
+        Assert.NotNull(call);
+        Assert.Equal("{", call!.ArgumentsJson);
+        Assert.Contains(issues, issue =>
+            issue.Code == "invalid_tool_arguments" && issue.Severity == "error");
+    }
+
+    [Fact]
     public async Task ToolSafetyKernelClassifiesFileWriteAndBlocksEscapingPaths()
     {
         await using var db = TestDb.Create();
@@ -1030,5 +1218,35 @@ public class BuiltInAgentToolsTests
             CancellationToken ct = default,
             bool bypassRestrictions = false) =>
             Task.FromResult(new Uri(url));
+    }
+
+    private sealed class RecordingExecutionBackendRouter(string workingDirectory) : IExecutionBackendRouter
+    {
+        public List<(ExecutionRequest Request, string? Backend)> Requests { get; } = [];
+
+        public Task<ExecutionResult> ExecuteAsync(
+            ExecutionRequest request,
+            string? backend = null,
+            CancellationToken ct = default)
+        {
+            Requests.Add((request, backend));
+            return Task.FromResult(new ExecutionResult(
+                backend ?? ToolExecutionBackends.RestrictedLocal,
+                workingDirectory,
+                0,
+                false,
+                TimeSpan.FromMilliseconds(1),
+                "routed",
+                string.Empty));
+        }
+
+        public Task<IReadOnlyDictionary<string, bool>> GetAvailabilityAsync(
+            CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyDictionary<string, bool>>(
+                new Dictionary<string, bool>
+                {
+                    [ToolExecutionBackends.RestrictedLocal] = true,
+                    [ToolExecutionBackends.UnrestrictedLocal] = true
+                });
     }
 }

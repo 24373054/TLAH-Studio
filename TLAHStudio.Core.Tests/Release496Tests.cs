@@ -153,15 +153,15 @@ public class Release496Tests
 
     private sealed class NullMcpService : IMcpClientService
     {
-        public Task<IReadOnlyList<McpToolInfo>> TestServerAsync(McpServerConfigDto server, CancellationToken ct = default)
+        public Task<IReadOnlyList<McpToolInfo>> TestServerAsync(McpServerConfigDto server, CancellationToken ct = default, string permissionMode = AgentPermissionModes.RequestApproval)
             => Task.FromResult<IReadOnlyList<McpToolInfo>>(Array.Empty<McpToolInfo>());
-        public Task<IReadOnlyList<McpToolInfo>> ListToolsAsync(Guid chatId, string? serverName = null, CancellationToken ct = default)
+        public Task<IReadOnlyList<McpToolInfo>> ListToolsAsync(Guid chatId, string? serverName = null, CancellationToken ct = default, string permissionMode = AgentPermissionModes.RequestApproval)
             => Task.FromResult<IReadOnlyList<McpToolInfo>>(Array.Empty<McpToolInfo>());
-        public Task<IReadOnlyList<McpResourceInfo>> ListResourcesAsync(Guid chatId, string? serverName = null, CancellationToken ct = default)
+        public Task<IReadOnlyList<McpResourceInfo>> ListResourcesAsync(Guid chatId, string? serverName = null, CancellationToken ct = default, string permissionMode = AgentPermissionModes.RequestApproval)
             => Task.FromResult<IReadOnlyList<McpResourceInfo>>(Array.Empty<McpResourceInfo>());
-        public Task<string> ReadResourceAsync(Guid chatId, string serverName, string uri, CancellationToken ct = default)
+        public Task<string> ReadResourceAsync(Guid chatId, string serverName, string uri, CancellationToken ct = default, string permissionMode = AgentPermissionModes.RequestApproval)
             => Task.FromResult("not available");
-        public Task<string> CallToolAsync(Guid chatId, string serverName, string toolName, System.Text.Json.JsonElement arguments, CancellationToken ct = default)
+        public Task<string> CallToolAsync(Guid chatId, string serverName, string toolName, System.Text.Json.JsonElement arguments, CancellationToken ct = default, string permissionMode = AgentPermissionModes.RequestApproval)
             => Task.FromResult("not available");
     }
 }

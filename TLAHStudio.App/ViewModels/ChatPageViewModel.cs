@@ -133,33 +133,34 @@ public partial class ChatPageViewModel : ObservableObject
         ISettingsService settingsService,
         IAppStateService appState,
         IWorkspaceRootService workspaceRootService,
-        IServiceProvider services)
+        IServiceScopeFactory scopeFactory)
     {
         _chatService = chatService;
         _llmService = llmService;
         _settingsService = settingsService;
         _appState = appState;
         _workspaceRootService = workspaceRootService;
-        _services = services;
+        _scopeFactory = scopeFactory;
 
         // React to chat selection changes from AppStateService
         _appState.ChatSelected += OnChatSelected;
         _appState.ChatDeselected += OnChatDeselected;
     }
 
-    private readonly IServiceProvider _services;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     /// <summary>
     /// M4.9.5 Phase E2: aggregate slash commands for the input-box completion UI.
-    /// Resolves ISlashCommandProvider lazily (scoped) to avoid captive-dependency
-    /// on the singleton VM.
+    /// Resolves ISlashCommandProvider in a fresh scope so slash-command discovery
+    /// cannot run concurrently on the chat view model's DbContext.
     /// </summary>
     public async Task<IReadOnlyList<SlashCommand>> GetSlashCommandsAsync(System.Threading.CancellationToken ct = default)
     {
         var chatId = _appState.CurrentChatId ?? Guid.Empty;
         try
         {
-            var provider = _services.GetRequiredService<ISlashCommandProvider>();
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var provider = scope.ServiceProvider.GetRequiredService<ISlashCommandProvider>();
             return await provider.GetCommandsAsync(chatId, ct);
         }
         catch
@@ -620,7 +621,8 @@ public partial class ChatPageViewModel : ObservableObject
         try
         {
             var chatId = _appState.CurrentChatId ?? Guid.Empty;
-            var provider = _services.GetRequiredService<ISlashCommandProvider>();
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var provider = scope.ServiceProvider.GetRequiredService<ISlashCommandProvider>();
             var cmds = await provider.GetCommandsAsync(chatId);
             return cmds.FirstOrDefault(c =>
                 string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
@@ -1041,6 +1043,17 @@ public partial class ChatPageViewModel : ObservableObject
         var stream = _activeStream;
         if (stream == null)
             return;
+
+        if (update.EventType == LlmStreamEventTypes.RetryReset)
+        {
+            lock (stream.Gate)
+            {
+                stream.ResetForRetryLocked();
+                stream.Message.Content = string.Empty;
+            }
+            StreamingMessageUpdated?.Invoke(this, EventArgs.Empty);
+            return;
+        }
 
         var shouldStartDrain = false;
         lock (stream.Gate)
@@ -1685,8 +1698,21 @@ internal sealed class AssistantStreamState(
     }
 
     public bool FinalReceived { get; set; }
-    public TaskCompletionSource FinalDrainCompletion { get; } =
+    public TaskCompletionSource FinalDrainCompletion { get; private set; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public void ResetForRetryLocked()
+    {
+        PendingTextChars.Clear();
+        PendingThinkingChars.Clear();
+        TextBuilder.Clear();
+        ThinkingBuilder.Clear();
+        IsThinkingCollapsed = false;
+        FinalSnapshot = null;
+        FinalReceived = false;
+        FinalDrainCompletion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 
     public void TryCompleteFinalDrainLocked()
     {

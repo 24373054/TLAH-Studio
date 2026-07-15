@@ -12,7 +12,7 @@ public interface ISandboxCommandService
 }
 
 public sealed record SandboxCommandOptions(
-    int TimeoutSeconds = 20,
+    int TimeoutSeconds = 120,
     int MaxOutputChars = 12000);
 
 public sealed record SandboxCommandResult(
@@ -24,7 +24,9 @@ public sealed record SandboxCommandResult(
     string StandardOutput,
     string StandardError,
     string? BlockedReason = null,
-    string? DestructiveWarning = null)
+    string? DestructiveWarning = null,
+    bool OutcomeUncertain = false,
+    bool MayHaveCommitted = false)
 {
     public bool WasBlocked => !string.IsNullOrWhiteSpace(BlockedReason);
 }

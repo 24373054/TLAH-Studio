@@ -50,7 +50,7 @@ public class ToolPlatformSettings
     public string NetworkAllowlist { get; set; } =
         "api.github.com\ngithub.com\nraw.githubusercontent.com\nhtml.duckduckgo.com\nlite.duckduckgo.com";
 
-    public int MaxRuntimeSeconds { get; set; } = 30;
+    public int MaxRuntimeSeconds { get; set; } = 120;
     public int MaxOutputChars { get; set; } = 20000;
     public int MaxFileBytes { get; set; } = 10 * 1024 * 1024;
     public int MaxMemoryMb { get; set; } = 512;

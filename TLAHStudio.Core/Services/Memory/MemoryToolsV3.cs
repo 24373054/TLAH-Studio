@@ -91,7 +91,7 @@ public sealed class MemoryWriteToolV3 : AgentToolV3Base
             },
             ["required"] = new[] { "file_name", "type", "description", "content" }
         });
-    public override bool RequiresApproval => false;
+    public override bool RequiresApproval => true;
 
     public override async Task<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, string argumentsJson, CancellationToken ct)
     {

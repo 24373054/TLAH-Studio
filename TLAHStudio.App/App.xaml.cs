@@ -206,10 +206,14 @@ public partial class App : Application
             services.AddSingleton<IFlagLevelValidationService, FlagLevelValidationService>();
 
             // ViewModels
+            services.AddSingleton<UiServiceScopeOwner>();
             services.AddSingleton<MainViewModel>();
-            services.AddSingleton<SidebarViewModel>();
-            services.AddSingleton<ChatPageViewModel>();
-            services.AddSingleton<DebugPanelViewModel>();
+            services.AddSingleton(sp =>
+                sp.GetRequiredService<UiServiceScopeOwner>().Create<SidebarViewModel>());
+            services.AddSingleton(sp =>
+                sp.GetRequiredService<UiServiceScopeOwner>().Create<ChatPageViewModel>());
+            services.AddSingleton(sp =>
+                sp.GetRequiredService<UiServiceScopeOwner>().Create<DebugPanelViewModel>());
             services.AddSingleton<WorkspaceReviewViewModel>();
             services.AddTransient<SettingsDialogViewModel>();
             services.AddTransient<BackgroundSettingsDialogViewModel>();
@@ -220,7 +224,8 @@ public partial class App : Application
             services.AddSingleton<UpdateNotificationViewModel>();
 
             // Window
-            services.AddSingleton<MainWindow>();
+            services.AddSingleton(sp =>
+                sp.GetRequiredService<UiServiceScopeOwner>().Create<MainWindow>());
             Log("DI configured.");
         }).Build();
         Log("Host built.");
@@ -251,6 +256,8 @@ public partial class App : Application
             Log("Resolving MainWindow...");
             MainWindow = _host.Services.GetRequiredService<MainWindow>();
             Log("MainWindow resolved.");
+            MainWindow.Closed += (_, _) =>
+                _host.Services.GetRequiredService<UiServiceScopeOwner>().Dispose();
             MainWindow.Activate();
             Log("Window activated.");
 

@@ -270,6 +270,7 @@ public sealed partial class MainWindow : Window
                 BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
                 AcceptsReturn = true,
                 MinHeight = 100,
+                IsReadOnly = true,
                 IsSpellCheckEnabled = false
             };
             var argumentsViewer = new ScrollViewer
@@ -294,6 +295,34 @@ public sealed partial class MainWindow : Window
                 "Agent tool arguments preview");
             content.Children.Add(argumentsBox);
 
+            var editArguments = new CheckBox
+            {
+                Content = "Edit tool arguments (advanced)",
+                IsChecked = false
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                editArguments,
+                "Edit agent tool arguments");
+            editArguments.Checked += (_, _) =>
+            {
+                argumentsText.IsReadOnly = false;
+                argumentsText.Focus(FocusState.Programmatic);
+            };
+            editArguments.Unchecked += (_, _) =>
+            {
+                argumentsText.IsReadOnly = true;
+                argumentsText.Text = details;
+            };
+            content.Children.Add(editArguments);
+
+            var argumentsError = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["DangerBrush"],
+                Visibility = Visibility.Collapsed
+            };
+            content.Children.Add(argumentsError);
+
             var dialog = new ContentDialog
             {
                 Title = "Approve Agent Tool",
@@ -306,15 +335,41 @@ public sealed partial class MainWindow : Window
             if (Content is FrameworkElement root)
                 dialog.RequestedTheme = root.ActualTheme;
 
+            dialog.Closing += (_, args) =>
+            {
+                if (args.Result != ContentDialogResult.Primary)
+                    return;
+
+                var candidate = argumentsText.Text;
+                try
+                {
+                    using var document = JsonDocument.Parse(candidate);
+                    if (document.RootElement.ValueKind != JsonValueKind.Object)
+                        throw new JsonException("The JSON root must be an object.");
+                    argumentsError.Visibility = Visibility.Collapsed;
+                }
+                catch (JsonException ex)
+                {
+                    args.Cancel = true;
+                    argumentsError.Text = $"Enter a valid JSON object before approving. {ex.Message}";
+                    argumentsError.Visibility = Visibility.Visible;
+                    argumentsText.Focus(FocusState.Programmatic);
+                }
+            };
+
             var result = await TryShowDialogAsync(dialog, waitForTurn: true);
             SoundService.Play(result is ContentDialogResult.Primary or ContentDialogResult.Secondary
                 ? InteractionSound.Complete
                 : InteractionSound.Error);
-            // M4.9.6: if the user edited the arguments in the TextBox, pass the
-            // edited version back so the agent uses the modified parameters.
+            // Only an explicit, valid edit may replace the persisted invocation
+            // arguments. The default approval path keeps the original payload.
             var editedArgs = argumentsText.Text;
-            if (result == ContentDialogResult.Primary && editedArgs != details)
+            if (result == ContentDialogResult.Primary &&
+                editArguments.IsChecked == true &&
+                !string.Equals(editedArgs, details, StringComparison.Ordinal))
+            {
                 request.UpdatedArgumentsJson = editedArgs;
+            }
             request.Completion.TrySetResult(result switch
             {
                 ContentDialogResult.Primary => decisionBox.SelectedIndex switch
@@ -330,7 +385,9 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.Log($"AGENT APPROVAL DIALOG FAILED: {ex}");
-            request.Completion.TrySetResult(AgentApprovalChoice.AlwaysDeny);
+            // A transient UI failure must never create a persistent global deny
+            // rule. Fail closed for this invocation only.
+            request.Completion.TrySetResult(AgentApprovalChoice.DenyOnce);
         }
     }
 
@@ -859,7 +916,6 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var sp = App.Services;
             var cmds = new List<PaletteCommand>
             {
                 new("New Chat", "Start a new conversation", "Chat", "new", 0),
@@ -880,7 +936,8 @@ public sealed partial class MainWindow : Window
             // Append slash-command sources (skills, agent tools, MCP tools).
             try
             {
-                var slashProvider = sp.GetService<ISlashCommandProvider>();
+                await using var scope = App.Services.CreateAsyncScope();
+                var slashProvider = scope.ServiceProvider.GetService<ISlashCommandProvider>();
                 if (slashProvider != null)
                 {
                     var chatId = ChatVM.CurrentChat?.Id ?? Guid.Empty;

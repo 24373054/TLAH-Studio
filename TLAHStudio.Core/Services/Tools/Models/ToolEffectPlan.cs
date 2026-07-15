@@ -47,7 +47,9 @@ public sealed record ToolSafetyClassification(
     bool IsBlocked,
     string Summary,
     string? Warning,
-    ToolEffectPlan? EffectPlan
+    ToolEffectPlan? EffectPlan,
+    bool CanOverrideBlock = false,
+    bool BypassImmune = false
 );
 
 /// <summary>

@@ -71,6 +71,42 @@ public sealed class AskUserQuestionAgentTool : IAgentTool
 
     public bool RequiresApproval => true;
 
+    public AgentToolValidationResult ValidateInput(string argumentsJson)
+    {
+        if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
+            return AgentToolValidationResult.Fail(error ?? "Invalid tool arguments.");
+        if (root.ValueKind != JsonValueKind.Object)
+            return AgentToolValidationResult.Fail("Tool arguments must be a JSON object.");
+
+        // The model submits `questions`; after the approval UI collects the
+        // user's choices it intentionally replaces that payload with `answers`.
+        // Both are valid phases of the same durable invocation.
+        if (root.TryGetProperty("answers", out var answers))
+        {
+            if (answers.ValueKind != JsonValueKind.Object ||
+                !answers.EnumerateObject().Any())
+            {
+                return AgentToolValidationResult.Fail(
+                    "The answers argument must be a non-empty JSON object.");
+            }
+
+            foreach (var answer in answers.EnumerateObject())
+            {
+                if (answer.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ||
+                    (answer.Value.ValueKind == JsonValueKind.String &&
+                     string.IsNullOrWhiteSpace(answer.Value.GetString())))
+                {
+                    return AgentToolValidationResult.Fail(
+                        $"Answer '{answer.Name}' must not be empty.");
+                }
+            }
+
+            return AgentToolValidationResult.Ok;
+        }
+
+        return AgentToolInputValidator.ValidateRequiredProperties(Definition, root);
+    }
+
     public Task<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, string argumentsJson, CancellationToken ct = default)
     {
         // M4.9.0: The arguments have been updated by the approval flow with user answers.

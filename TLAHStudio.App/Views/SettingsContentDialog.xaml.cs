@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.Extensions.DependencyInjection;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.Core.Services.Plugins;
 using TLAHStudio.Core.Services.Workspace;
@@ -481,8 +482,9 @@ public sealed partial class SettingsContentDialog : ContentDialog
 
     private async void OpenProjectSkills_Click(object sender, RoutedEventArgs e)
     {
-        var wsService = App.Services.GetService(typeof(IWorkspaceRootService)) as IWorkspaceRootService;
-        var appState = App.Services.GetService(typeof(IAppStateService)) as IAppStateService;
+        await using var scope = App.Services.CreateAsyncScope();
+        var wsService = scope.ServiceProvider.GetService<IWorkspaceRootService>();
+        var appState = scope.ServiceProvider.GetService<IAppStateService>();
         string? dir = null;
         if (wsService != null && appState?.CurrentChatId != null)
         {

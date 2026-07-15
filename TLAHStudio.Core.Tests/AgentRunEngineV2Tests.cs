@@ -183,7 +183,7 @@ public class AgentRunEngineV2Tests : IDisposable
         var options = new AgentEngineOptions();
 
         Assert.Equal(48, options.MaxSteps);
-        Assert.Equal(20, options.CommandTimeoutSeconds);
+        Assert.Equal(120, options.CommandTimeoutSeconds);
         Assert.Equal(12000, options.MaxCommandOutputChars);
         Assert.False(options.AutoApproveTools);
         Assert.Equal(32_000, options.ContextBudgetTokens);

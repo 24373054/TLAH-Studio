@@ -49,7 +49,7 @@ The app is local-first, not offline-only: chats and run records are persisted lo
 
 | Area | What is included |
 |---|---|
-| **Agent runtime** | Multi-step execution, bounded provider retry, failure-aware replanning, adaptive step budgets, pause/resume, checkpoints, artifacts, tasks, and Activity replay |
+| **Agent runtime** | Multi-step execution, bounded provider retry, failure-aware replanning, replay-fenced unknown outcomes, adaptive step budgets, pause/resume, checkpoints, artifacts, tasks, and Activity replay |
 | **Workspace tooling** | File and code operations, Git, PowerShell execution, private chat sandboxes, and a Changes review surface |
 | **Reasoning and permissions** | Independent `Auto / Off / Low / Medium / High / Max` reasoning controls plus four tool permission modes |
 | **Providers and MCP** | Anthropic and OpenAI-compatible HTTP protocols; MCP over STDIO and Streamable HTTP with tools and resources |

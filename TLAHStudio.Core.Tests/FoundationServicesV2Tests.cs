@@ -396,6 +396,33 @@ public class FoundationServicesV2Tests : IDisposable
     }
 
     [Fact]
+    public void AskUserQuestion_ValidateInput_AcceptsQuestionsOrCollectedAnswers()
+    {
+        var tool = new AskUserQuestionAgentTool();
+
+        var questions = tool.ValidateInput(
+            """
+            {"questions":[{"question":"Choose?","header":"Choice","options":[{"label":"A","description":"First"},{"label":"B","description":"Second"}]}]}
+            """);
+        var answers = tool.ValidateInput(
+            """{"answers":{"Choice":"A"}}""");
+
+        Assert.True(questions.Success, questions.Error);
+        Assert.True(answers.Success, answers.Error);
+    }
+
+    [Fact]
+    public void AskUserQuestion_ValidateInput_RejectsMissingOrEmptyPhasePayload()
+    {
+        var tool = new AskUserQuestionAgentTool();
+
+        Assert.False(tool.ValidateInput("{}").Success);
+        Assert.False(tool.ValidateInput("""{"questions":null}""").Success);
+        Assert.False(tool.ValidateInput("""{"answers":{}}""").Success);
+        Assert.False(tool.ValidateInput("""{"answers":{"Choice":" "}}""").Success);
+    }
+
+    [Fact]
     public async Task AskUserQuestion_Execute_WithAnswers_FormatsCorrectly()
     {
         var tool = new AskUserQuestionAgentTool();
