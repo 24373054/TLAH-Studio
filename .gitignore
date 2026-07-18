@@ -13,7 +13,7 @@ obj/
 # Build outputs
 **/publish/
 **/AppPackages/
-artifacts/
+/artifacts/
 TLAHStudio.Installer/output/
 TLAHStudio.Installer/assets/*.exe
 TLAHStudioSetup-*.exe

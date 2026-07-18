@@ -33,4 +33,21 @@ public interface ILlmProvider
 
     /// <summary>Full endpoint URL being called.</summary>
     string EndpointUrl { get; }
+
+    /// <summary>
+    /// Optional provider features. Implementations that do not override this
+    /// property retain the conservative compatibility profile.
+    /// </summary>
+    LlmProviderCapabilities Capabilities => LlmProviderCapabilities.Compatible;
+}
+
+public sealed record LlmProviderCapabilities(
+    bool StrictToolSchemas,
+    bool ParallelToolCalls,
+    bool ToolChoice,
+    bool ToolInputExamples,
+    bool DeferredTools)
+{
+    public static readonly LlmProviderCapabilities Compatible =
+        new(false, false, false, false, false);
 }

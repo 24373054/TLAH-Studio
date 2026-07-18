@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using TLAHStudio.Core.Helpers;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Models;
+using TLAHStudio.Core.Services.Research;
 using TLAHStudio.Core.Services.Tools;
 
 namespace TLAHStudio.Core.Services;
@@ -1385,6 +1386,7 @@ public sealed partial class WebSearchAgentTool : IAgentTool
     private readonly IToolPlatformService _platform;
     private readonly INetworkSecurityService _network;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IResearchWorkbenchService _research;
 
     public WebSearchAgentTool(
         IToolPlatformService platform,
@@ -1394,18 +1396,93 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         _platform = platform;
         _network = network;
         _httpClientFactory = httpClientFactory;
+        _research = new ResearchWorkbenchService(platform, network, httpClientFactory);
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
         AgentToolNames.WebSearch,
-        "Search the public web through DuckDuckGo and return a bounded list of result titles, URLs, and snippets.",
+        "Search the public web with quick, balanced, or deep retrieval. Supports domain, language, and recency filters and returns deduplicated structured sources. Use research_verify when claims need cross-source evidence.",
         new Dictionary<string, object>
         {
             ["query"] = AgentToolSupport.StringProperty("Search query."),
             ["reason"] = AgentToolSupport.StringProperty("Why web search is needed."),
-            ["max_results"] = new Dictionary<string, object> { ["type"] = "integer", ["description"] = "Maximum search results to return." }
+            ["mode"] = new Dictionary<string, object>
+            {
+                ["type"] = "string",
+                ["enum"] = new[] { "quick", "balanced", "deep" },
+                ["description"] = "Search breadth. Defaults to balanced."
+            },
+            ["max_results"] = new Dictionary<string, object>
+            {
+                ["type"] = "integer",
+                ["description"] = "Maximum deduplicated results (1-20)."
+            },
+            ["allowed_domains"] = new Dictionary<string, object>
+            {
+                ["type"] = "array",
+                ["items"] = AgentToolSupport.StringProperty("Domain such as docs.microsoft.com."),
+                ["description"] = "Optional domains to include, including their subdomains."
+            },
+            ["blocked_domains"] = new Dictionary<string, object>
+            {
+                ["type"] = "array",
+                ["items"] = AgentToolSupport.StringProperty("Domain to exclude."),
+                ["description"] = "Optional domains to exclude."
+            },
+            ["recency"] = new Dictionary<string, object>
+            {
+                ["type"] = "string",
+                ["enum"] = new[] { "any", "day", "week", "month", "year" },
+                ["description"] = "Preferred publication recency."
+            },
+            ["language"] = AgentToolSupport.StringProperty("Optional language/locale, for example en-US or zh-CN.")
         },
-        ["query"]);
+        ["query"]) with
+    {
+        Namespace = "research",
+        Category = "research",
+        Strict = true,
+        Deferred = true,
+        InputExamples =
+        [
+            new Dictionary<string, object>
+            {
+                ["query"] = "Windows App SDK release notes",
+                ["mode"] = "balanced",
+                ["allowed_domains"] = new[] { "learn.microsoft.com", "github.com" },
+                ["recency"] = "year"
+            }
+        ],
+        OutputSchema = new Dictionary<string, object>
+        {
+            ["type"] = "object",
+            ["properties"] = new Dictionary<string, object>
+            {
+                ["query"] = new Dictionary<string, object> { ["type"] = "string" },
+                ["mode"] = new Dictionary<string, object> { ["type"] = "string" },
+                ["resultCount"] = new Dictionary<string, object> { ["type"] = "integer" },
+                ["attempts"] = new Dictionary<string, object> { ["type"] = "integer" },
+                ["sources"] = new Dictionary<string, object>
+                {
+                    ["type"] = "array",
+                    ["items"] = new Dictionary<string, object> { ["type"] = "object" }
+                },
+                ["failures"] = new Dictionary<string, object>
+                {
+                    ["type"] = "array",
+                    ["items"] = new Dictionary<string, object> { ["type"] = "object" }
+                }
+            },
+            ["required"] = new[] { "query", "mode", "resultCount", "attempts", "sources", "failures" },
+            ["additionalProperties"] = false
+        },
+        Annotations = new LlmToolAnnotations(
+            ReadOnly: true,
+            Destructive: false,
+            Idempotent: true,
+            OpenWorld: true,
+            ConcurrencySafe: true)
+    };
 
     public bool RequiresApproval => true;
 
@@ -1414,6 +1491,7 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         string argumentsJson,
         CancellationToken ct = default)
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
@@ -1421,51 +1499,84 @@ public sealed partial class WebSearchAgentTool : IAgentTool
             var query = AgentToolSupport.GetString(root, "query");
             if (string.IsNullOrWhiteSpace(query))
                 return new AgentToolResult(false, string.Empty, "The query argument is required.");
-            var settings = await _platform.GetSettingsAsync(ct);
-            var client = _httpClientFactory.CreateClient("Tools");
-            var lastStatus = HttpStatusCode.OK;
-            var lastUri = string.Empty;
-            var diagnostics = new List<string>();
-            var maxResults = Math.Clamp(ReadInt(root, "max_results", 8), 1, 20);
-
-            foreach (var searchUrl in BuildSearchUrls(query))
+            var mode = ReadMode(root, "mode", ResearchMode.Balanced);
+            var filters = new ResearchFilters(
+                ReadStringArray(root, "allowed_domains"),
+                ReadStringArray(root, "blocked_domains"),
+                ReadRecency(root, "recency"),
+                AgentToolSupport.GetString(root, "language", string.Empty),
+                Math.Clamp(ReadInt(root, "max_results", mode == ResearchMode.Deep ? 16 : 10), 1, 20));
+            var result = await _research.SearchAsync(
+                query,
+                mode,
+                filters,
+                new ResearchWorkspace(context.EffectivePermissionMode, TimeoutSeconds: context.TimeoutSeconds),
+                ct);
+            var structured = new
             {
-                var uri = await _network.ValidateAsync(
-                    searchUrl,
-                    settings,
-                    ct,
-                    bypassRestrictions: AgentPermissionModes.IsBypass(context.EffectivePermissionMode));
-                var fetched = await FetchSearchPageAsync(
-                    client,
-                    uri,
-                    settings,
-                    AgentPermissionModes.IsBypass(context.EffectivePermissionMode),
-                    ct);
-                lastStatus = fetched.StatusCode;
-                lastUri = fetched.FinalUri.ToString();
-                diagnostics.Add($"{(int)fetched.StatusCode} {fetched.FinalUri}");
-                var output = FormatResults(ParseResults(fetched.Html, maxResults), context.MaxOutputChars);
-                if (fetched.IsSuccess && !string.IsNullOrWhiteSpace(output))
-                    return new AgentToolResult(true, output);
-            }
-
-            if (lastStatus is >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices)
-            {
-                return new AgentToolResult(
-                    true,
-                    AgentToolSupport.Limit(
-                        $"No search results were parsed for \"{query}\".\nFetched: {lastUri}\nAttempts:\n- {string.Join("\n- ", diagnostics)}",
-                        context.MaxOutputChars));
-            }
-
+                query = result.Query,
+                mode = result.Mode.ToString().ToLowerInvariant(),
+                resultCount = result.Sources.Count,
+                attempts = result.Attempts,
+                sources = result.Sources.Select((source, index) => new
+                {
+                    citationId = $"search-{index + 1}",
+                    index = index + 1,
+                    source.Title,
+                    url = source.Url.AbsoluteUri,
+                    source.Domain,
+                    source.Snippet,
+                    publishedAt = source.PublishedAt?.ToString("O"),
+                    provider = source.SearchProvider
+                }),
+                failures = result.Failures.Select(failure => new
+                {
+                    kind = failure.Kind.ToString(),
+                    failure.Message,
+                    url = failure.Url?.AbsoluteUri,
+                    failure.HttpStatus,
+                    failure.Retryable,
+                    failure.Attempts
+                })
+            };
+            var output = JsonSerializer.Serialize(
+                structured,
+                new JsonSerializerOptions { WriteIndented = true });
+            var success = result.Sources.Count > 0 || result.Failures.Count == 0;
+            var primaryFailure = result.Failures.FirstOrDefault();
             return new AgentToolResult(
-                false,
-                string.Empty,
-                $"Search returned HTTP {(int)lastStatus}. Attempts: {string.Join("; ", diagnostics)}");
+                success,
+                AgentToolSupport.Limit(output, context.MaxOutputChars),
+                success ? null : primaryFailure?.Message ?? "Web search failed.",
+                StructuredContent: structured,
+                ErrorCode: success ? null : primaryFailure?.Kind.ToString().ToLowerInvariant() ?? "search_failed",
+                Retryable: !success && primaryFailure?.Retryable == true,
+                Sources: result.Sources.Select((source, index) =>
+                    new AgentToolSource(
+                        source.Url.AbsoluteUri,
+                        source.Title,
+                        source.SearchProvider,
+                        DateTime.UtcNow,
+                        $"search-{index + 1}")).ToArray(),
+                DurationMs: stopwatch.ElapsedMilliseconds,
+                Diagnostics: new Dictionary<string, object>
+                {
+                    ["attempts"] = result.Attempts,
+                    ["result_count"] = result.Sources.Count
+                });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            return new AgentToolResult(false, string.Empty, ex.Message);
+            return new AgentToolResult(
+                false,
+                string.Empty,
+                ex.Message,
+                ErrorCode: "search_failed",
+                DurationMs: stopwatch.ElapsedMilliseconds);
         }
     }
 
@@ -1661,6 +1772,25 @@ public sealed partial class WebSearchAgentTool : IAgentTool
         root.TryGetProperty(name, out var value) && value.TryGetInt32(out var number)
             ? number
             : fallback;
+
+    private static IReadOnlyList<string> ReadStringArray(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString() ?? string.Empty)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .ToArray()
+            : [];
+
+    private static ResearchMode ReadMode(JsonElement root, string name, ResearchMode fallback) =>
+        Enum.TryParse<ResearchMode>(AgentToolSupport.GetString(root, name), true, out var parsed)
+            ? parsed
+            : fallback;
+
+    private static ResearchRecency ReadRecency(JsonElement root, string name) =>
+        Enum.TryParse<ResearchRecency>(AgentToolSupport.GetString(root, name), true, out var parsed)
+            ? parsed
+            : ResearchRecency.Any;
 }
 
 public sealed partial class BrowserReadAgentTool : IAgentTool
@@ -1668,6 +1798,7 @@ public sealed partial class BrowserReadAgentTool : IAgentTool
     private readonly IToolPlatformService _platform;
     private readonly INetworkSecurityService _network;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IResearchWorkbenchService _research;
 
     public BrowserReadAgentTool(
         IToolPlatformService platform,
@@ -1677,17 +1808,59 @@ public sealed partial class BrowserReadAgentTool : IAgentTool
         _platform = platform;
         _network = network;
         _httpClientFactory = httpClientFactory;
+        _research = new ResearchWorkbenchService(platform, network, httpClientFactory);
     }
 
     public LlmToolDefinition Definition { get; } = AgentToolSupport.Definition(
         AgentToolNames.BrowserRead,
-        "Fetch an allowlisted public HTTPS page and extract readable text and links without running scripts.",
+        "Safely fetch a public page or PDF and extract its title, publication date, readable main content, and resolved links without running scripts.",
         new Dictionary<string, object>
         {
             ["url"] = AgentToolSupport.StringProperty("Absolute HTTPS page URL."),
-            ["reason"] = AgentToolSupport.StringProperty("Why this page is needed.")
+            ["reason"] = AgentToolSupport.StringProperty("Why this page is needed."),
+            ["query"] = AgentToolSupport.StringProperty("Optional topic used to identify the most relevant excerpt.")
         },
-        ["url"]);
+        ["url"]) with
+    {
+        Namespace = "research",
+        Category = "research",
+        Strict = true,
+        Deferred = true,
+        InputExamples =
+        [
+            new Dictionary<string, object>
+            {
+                ["url"] = "https://example.com/report",
+                ["query"] = "key findings"
+            }
+        ],
+        OutputSchema = new Dictionary<string, object>
+        {
+            ["type"] = "object",
+            ["properties"] = new Dictionary<string, object>
+            {
+                ["requestedUrl"] = new Dictionary<string, object> { ["type"] = "string" },
+                ["finalUrl"] = new Dictionary<string, object> { ["type"] = "string" },
+                ["httpStatus"] = new Dictionary<string, object> { ["type"] = "integer" },
+                ["contentKind"] = new Dictionary<string, object> { ["type"] = "string" },
+                ["title"] = new Dictionary<string, object> { ["type"] = "string" },
+                ["text"] = new Dictionary<string, object> { ["type"] = "string" },
+                ["links"] = new Dictionary<string, object>
+                {
+                    ["type"] = "array",
+                    ["items"] = new Dictionary<string, object> { ["type"] = "object" }
+                }
+            },
+            ["required"] = new[] { "requestedUrl", "finalUrl", "httpStatus", "contentKind", "title", "text", "links" },
+            ["additionalProperties"] = true
+        },
+        Annotations = new LlmToolAnnotations(
+            ReadOnly: true,
+            Destructive: false,
+            Idempotent: true,
+            OpenWorld: true,
+            ConcurrencySafe: true)
+    };
 
     public bool RequiresApproval => true;
 
@@ -1696,54 +1869,88 @@ public sealed partial class BrowserReadAgentTool : IAgentTool
         string argumentsJson,
         CancellationToken ct = default)
     {
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             if (!AgentToolSupport.TryParse(argumentsJson, out var root, out var error))
                 return new AgentToolResult(false, string.Empty, error);
-            var settings = await _platform.GetSettingsAsync(ct);
-            var uri = await _network.ValidateAsync(
+            var page = await _research.ReadPageAsync(
                 AgentToolSupport.GetString(root, "url"),
-                settings,
-                ct,
-                bypassRestrictions: AgentPermissionModes.IsBypass(context.EffectivePermissionMode));
-            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.UserAgent.ParseAdd("TLAHStudio/1.4");
-            using var response = await _httpClientFactory.CreateClient("Tools")
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
-            if (!contentType.Contains("html", StringComparison.OrdinalIgnoreCase) &&
-                !contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
-                return new AgentToolResult(false, string.Empty, $"Unsupported browser content type: {contentType}");
-
-            var html = await response.Content.ReadAsStringAsync(ct);
-            html = ScriptStyleRegex().Replace(html, " ");
-            var links = LinkRegex().Matches(html).Cast<Match>().Take(40)
-                .Select(m =>
+                AgentToolSupport.GetString(root, "query"),
+                new ResearchWorkspace(context.EffectivePermissionMode, TimeoutSeconds: context.TimeoutSeconds),
+                ct);
+            var excerpt = string.IsNullOrWhiteSpace(AgentToolSupport.GetString(root, "query"))
+                ? string.Empty
+                : ResearchContentExtractor.BuildExcerpt(
+                    page.Text,
+                    AgentToolSupport.GetString(root, "query"));
+            var structured = new
+            {
+                requestedUrl = page.RequestedUrl.AbsoluteUri,
+                finalUrl = page.FinalUrl.AbsoluteUri,
+                page.HttpStatus,
+                contentKind = page.ContentKind.ToString().ToLowerInvariant(),
+                page.ContentType,
+                page.Title,
+                page.Description,
+                page.Language,
+                publishedAt = page.PublishedAt?.ToString("O"),
+                page.Truncated,
+                page.AttemptCount,
+                relevantExcerpt = excerpt,
+                text = page.Text,
+                links = page.Links.Take(100).Select(link => new
                 {
-                    var text = CleanText(m.Groups["text"].Value);
-                    var href = WebUtility.HtmlDecode(m.Groups["url"].Value);
-                    return string.IsNullOrWhiteSpace(text) ? href : $"{text}: {href}";
+                    link.Text,
+                    url = link.Url.AbsoluteUri
                 })
-                .Where(x => !string.IsNullOrWhiteSpace(x));
-            var textContent = CleanText(TagRegex().Replace(html, " "));
-            var output = $"""
-                URL: {uri}
-                HTTP: {(int)response.StatusCode}
-
-                Text:
-                {textContent}
-
-                Links:
-                {string.Join(Environment.NewLine, links)}
-                """;
+            };
+            var output = JsonSerializer.Serialize(
+                structured,
+                new JsonSerializerOptions { WriteIndented = true });
             return new AgentToolResult(
-                response.IsSuccessStatusCode,
-                AgentToolSupport.Limit(output, Math.Min(context.MaxOutputChars, settings.MaxOutputChars)),
-                response.IsSuccessStatusCode ? null : $"Browser request returned HTTP {(int)response.StatusCode}.");
+                true,
+                AgentToolSupport.Limit(output, context.MaxOutputChars),
+                StructuredContent: structured,
+                Sources:
+                [
+                    new AgentToolSource(
+                        page.FinalUrl.AbsoluteUri,
+                        page.Title,
+                        "browser_read",
+                        DateTime.UtcNow,
+                        "page-1")
+                ],
+                DurationMs: stopwatch.ElapsedMilliseconds,
+                Diagnostics: new Dictionary<string, object>
+                {
+                    ["attempts"] = page.AttemptCount,
+                    ["truncated"] = page.Truncated,
+                    ["content_kind"] = page.ContentKind.ToString().ToLowerInvariant()
+                });
+        }
+        catch (ResearchServiceException ex)
+        {
+            return new AgentToolResult(
+                false,
+                string.Empty,
+                $"[{ex.Failure.Kind}] {ex.Failure.Message} Retryable: {ex.Failure.Retryable}.",
+                ErrorCode: ex.Failure.Kind.ToString().ToLowerInvariant(),
+                Retryable: ex.Failure.Retryable,
+                DurationMs: stopwatch.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            return new AgentToolResult(false, string.Empty, ex.Message);
+            return new AgentToolResult(
+                false,
+                string.Empty,
+                ex.Message,
+                ErrorCode: "browser_read_failed",
+                DurationMs: stopwatch.ElapsedMilliseconds);
         }
     }
 

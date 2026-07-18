@@ -2,6 +2,24 @@
 
 All notable user-visible changes are recorded here. The project follows semantic versioning for stable releases.
 
+## [4.14.0] - 2026-07-16
+
+### Added
+
+- Added a visible **Create & Research** workbench reachable from the expanded sidebar, compact sidebar, composer, and command palette without slash commands or JSON.
+- Added Quick, Balanced, and Deep public-source research with domain, recency, language, source-count, evidence, conflict, partial-failure, HTML/PDF extraction, and Markdown report support.
+- Added spreadsheet creation, inspection, and update tools for CSV/XLSX, including formulas, styling, frozen headers, filters, automatic widths, and chart previews.
+- Added Markdown/DOCX/PDF creation and inspection plus SVG/PNG flowchart, architecture, bar-chart, and line-chart generation.
+- Added a local, content-free Tool Quality view with call, outcome, latency, shell-fallback, catalog-search, and per-tool success metrics.
+
+### Changed
+
+- Replaced the all-tools prompt payload with deterministic context selection capped at 15 initially callable tools and deferred catalog promotion.
+- Extended tool contracts with namespaces, categories, strictness, examples, output schemas, safety annotations, structured results, normalized errors, retryability, sources, duration, and diagnostics.
+- Enabled strict schemas and safe read-only parallel calls for official OpenAI and Anthropic endpoints while preserving conservative compatibility payloads.
+- Added 220 bilingual intent-selection cases and artifact/research fixtures that reopen generated XLSX, DOCX, PDF, SVG, and PNG outputs.
+- Preserved the 4.13 permission, approval, immutable safety, retry, checkpoint, and long-run recovery contracts across the new tools.
+
 ## [4.13.0] - 2026-07-15
 
 ### Fixed
@@ -66,6 +84,7 @@ All notable user-visible changes are recorded here. The project follows semantic
 
 Earlier milestones are retained as historical design records in [`docs/`](./docs/README.md). Release artifacts and notes are available on the [GitHub Releases page](https://github.com/24373054/TLAH-Studio/releases).
 
+[4.14.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.14.0
 [4.13.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.13.0
 [4.12.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.12.0
 [4.11.1]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.11.1

@@ -7,6 +7,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$minimumLineCoverage = 0.60
+$minimumBranchCoverage = 0.50
 
 function Invoke-Native {
     param(
@@ -137,8 +139,36 @@ try {
     if ($reportsWithCoverage.Count -eq 0) {
         throw "Coverage reports were generated, but none contain coverable lines."
     }
+    $coverageMetrics = @(
+        foreach ($report in $reportsWithCoverage) {
+            [xml]$coverageXml = Get-Content -LiteralPath $report.FullName -Raw
+            [pscustomobject]@{
+                Path = $report.FullName
+                LineRate = [double]::Parse(
+                    [string]$coverageXml.coverage.'line-rate',
+                    [Globalization.CultureInfo]::InvariantCulture)
+                BranchRate = [double]::Parse(
+                    [string]$coverageXml.coverage.'branch-rate',
+                    [Globalization.CultureInfo]::InvariantCulture)
+            }
+        }
+    )
+    $qualifiedCoverage = @(
+        $coverageMetrics | Where-Object {
+            $_.LineRate -ge $minimumLineCoverage -and
+            $_.BranchRate -ge $minimumBranchCoverage
+        }
+    )
+    if ($qualifiedCoverage.Count -eq 0) {
+        $details = $coverageMetrics | ForEach-Object {
+            "  $($_.Path): line=$([Math]::Round($_.LineRate * 100, 2))%, branch=$([Math]::Round($_.BranchRate * 100, 2))%"
+        }
+        throw "Coverage is below the required line $($minimumLineCoverage * 100)% / branch $($minimumBranchCoverage * 100)% thresholds:`n$($details -join [Environment]::NewLine)"
+    }
     Write-Host "Coverage report(s):"
-    $coverageReports | ForEach-Object { Write-Host "  $($_.FullName)" }
+    $coverageMetrics | ForEach-Object {
+        Write-Host "  $($_.Path) (line $([Math]::Round($_.LineRate * 100, 2))%, branch $([Math]::Round($_.BranchRate * 100, 2))%)"
+    }
 
     if (-not $SkipBuild) {
         & dotnet build-server shutdown

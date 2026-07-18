@@ -338,6 +338,20 @@
                 </Button>
             </Grid>
             <Button
+                Click="CapabilityWorkbench_Click"
+                Background="{ThemeResource AccentSoftBrush}"
+                Foreground="{ThemeResource AccentBrush}"
+                BorderThickness="0"
+                Padding="10,8"
+                HorizontalAlignment="Stretch"
+                CornerRadius="9"
+                AutomationProperties.Name="Create and research">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <FontIcon Glyph="&#xE9D2;" FontFamily="Segoe Fluent Icons" FontSize="15" />
+                    <TextBlock Text="Create &amp; Research" FontWeight="SemiBold" />
+                </StackPanel>
+            </Button>
+            <Button
                 Click="Workspace_Click"
                 Background="Transparent"
                 Foreground="{ThemeResource TextSecondaryBrush}"
@@ -398,6 +412,19 @@
                 ToolTipService.ToolTip="Settings"
                 AutomationProperties.Name="Settings">
                 <SymbolIcon Symbol="Setting" />
+            </Button>
+            <Button
+                Click="CapabilityWorkbench_Click"
+                Width="44"
+                Height="40"
+                Padding="0"
+                Background="{ThemeResource AccentSoftBrush}"
+                Foreground="{ThemeResource AccentBrush}"
+                BorderThickness="0"
+                CornerRadius="8"
+                ToolTipService.ToolTip="Create and research"
+                AutomationProperties.Name="Create and research">
+                <FontIcon Glyph="&#xE9D2;" FontFamily="Segoe Fluent Icons" FontSize="16" />
             </Button>
             <Button
                 Click="Workspace_Click"

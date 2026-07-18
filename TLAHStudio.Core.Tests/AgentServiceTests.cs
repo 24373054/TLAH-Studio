@@ -855,6 +855,56 @@ public class AgentServiceTests
     }
 
     [Fact]
+    public async Task RunAgentTaskAsync_ReadOnlyResearchFallbackResolvesFailedRead()
+    {
+        await using var db = TestDb.Create();
+        var chatService = new ChatService(db);
+        var settingsService = new SettingsService(db);
+        await settingsService.UpdateGlobalSettingsAsync(new GlobalSettingsUpdateDto(
+            Provider: "openai", ApiKey: "sk-agentsecretvalue123456",
+            BaseUrl: "https://api.example.com", Model: "model-a"));
+        var chat = await chatService.CreateChatAsync("Read-only research recovery");
+        var responses = new Queue<string>([
+            """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"search-fail","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"verified source\"}"}}]}}]}""",
+            """{"choices":[{"message":{"content":null,"tool_calls":[{"id":"read-success","type":"function","function":{"name":"browser_read","arguments":"{\"url\":\"https://example.test/source\"}"}}]}}]}""",
+            """{"choices":[{"message":{"content":"Recovered with a direct source read."}}]}"""
+        ]);
+        var handler = new MapHttpMessageHandler(_ =>
+            MapHttpMessageHandler.Json(HttpStatusCode.OK, responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var sandbox = new SandboxCommandService(
+            Path.Combine(Path.GetTempPath(), "TLAHStudio.Agent.Tests", Guid.NewGuid().ToString("N")));
+        var registry = new AgentToolRegistry([
+            new StaticReadOnlyAgentTool(
+                AgentToolNames.WebSearch,
+                new AgentToolResult(
+                    false,
+                    string.Empty,
+                    "Search endpoint was temporarily unavailable.",
+                    ErrorCode: "network_unavailable",
+                    Retryable: true)),
+            new StaticReadOnlyAgentTool(
+                AgentToolNames.BrowserRead,
+                new AgentToolResult(true, "Authoritative source content."))
+        ]);
+        var service = new LlmService(
+            db, chatService, settingsService,
+            new StaticHttpClientFactory(client), sandbox, registry);
+
+        var result = await service.RunAgentTaskAsync(
+            chat.Id,
+            "Find and verify the source even if search needs a fallback.",
+            options: new AgentRunOptions(MaxSteps: 5, AutoApproveTools: true));
+
+        Assert.Equal(AgentRunStatuses.Completed, result.AgentRun!.Status);
+        Assert.Equal("Recovered with a direct source read.", result.AssistantMessage.Content);
+        Assert.Empty(responses);
+        Assert.Contains(
+            await db.Set<AgentEvent>().ToListAsync(),
+            e => e.EventType == AgentEventTypes.RunCompleted);
+    }
+
+    [Fact]
     public async Task RunAgentTaskAsync_UnresolvedFailureAtBudgetPausesWithoutFalseSummary()
     {
         if (!OperatingSystem.IsWindows())
@@ -1528,5 +1578,38 @@ public class AgentServiceTests
                 OutcomeUncertain: true,
                 MayHaveCommitted: true));
         }
+    }
+
+    private sealed class StaticReadOnlyAgentTool(
+        string name,
+        AgentToolResult result) : IAgentTool
+    {
+        public LlmToolDefinition Definition { get; } = new(
+            name,
+            "Test-only deterministic read operation.",
+            new Dictionary<string, object>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object>(),
+                ["additionalProperties"] = true
+            });
+
+        public bool RequiresApproval => false;
+
+        public AgentToolMetadata Metadata { get; } = new(
+            name,
+            RequiresApproval: false,
+            IsReadOnly: true,
+            IsConcurrencySafe: true,
+            IsDestructive: false,
+            AgentToolRenderHints.Text,
+            2_000,
+            AgentToolResultPersistenceModes.Inline,
+            IsOpenWorld: true);
+
+        public Task<AgentToolResult> ExecuteAsync(
+            AgentToolExecutionContext context,
+            string argumentsJson,
+            CancellationToken ct = default) => Task.FromResult(result);
     }
 }

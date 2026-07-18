@@ -1,6 +1,6 @@
 # Privacy and Data Flows
 
-Verified against TLAH Studio 4.13.0.
+Verified against TLAH Studio 4.14.0.
 
 TLAH Studio is local-first: its database, settings, run history, sandboxes, logs, and diagnostic exports are stored on the user's Windows profile by default. Local-first does not mean that all processing stays offline.
 
@@ -13,6 +13,7 @@ TLAH Studio is local-first: its database, settings, run history, sandboxes, logs
 | `%LOCALAPPDATA%\TLAH Studio\sandboxes\` | Private chat sandboxes when no workspace is selected |
 | `%LOCALAPPDATA%\TLAH Studio\logs\` | Startup and application diagnostics |
 | `<workspace>\.tlah_context\tool-results\` | Persisted large tool outputs |
+| `<workspace>\` or `%LOCALAPPDATA%\TLAH Studio\sandboxes\<chat>\` | User-requested research reports, spreadsheets, documents, diagrams, and chart previews |
 
 API keys and protected credentials use Windows DPAPI-backed storage. Secrets are redacted from provider debugging and export paths where implemented. This protects data at rest from casual disclosure; it does not protect against compromise of the current Windows user session.
 
@@ -23,10 +24,11 @@ API keys and protected credentials use Windows DPAPI-backed storage. Secrets are
 | Model request | Configured Anthropic or OpenAI-compatible endpoint | Prompt, selected conversation context, tool definitions/results, attachments |
 | MCP | Configured STDIO process or Streamable HTTP server | Tool arguments/results and requested resources |
 | Web / HTTP tools | Requested or configured web endpoint | Query, URL, headers allowed by policy, request/response content |
+| Create & Research | DuckDuckGo HTML/Lite search and selected public HTTPS pages | Search query, filters encoded in the request, requested URLs, and downloaded public page/PDF content |
 | Remote execution | Configured backend | Command/task payload and returned output |
 | Update check/download | Official update host | App version, update request, installer download; staged rollout uses a local install identifier |
 
-TLAH Studio does not currently include a general product telemetry SDK. External providers and endpoints have their own privacy terms and logging behavior.
+TLAH Studio does not currently include a general product telemetry SDK. The Tool Quality page computes local aggregates from tool names, statuses, and timestamps already stored in SQLite; its query does not select prompts, tool arguments/results, or file contents. External providers and endpoints have their own privacy terms and logging behavior.
 
 ## Permissions and Workspace Scope
 
@@ -36,6 +38,7 @@ TLAH Studio does not currently include a general product telemetry SDK. External
 - Approval arguments are read-only by default. Advanced edits require explicit opt-in, a valid JSON object, and the selected tool's input validation before persistence; never paste credentials into tool arguments unless the destination explicitly requires them.
 - `Full access` intentionally bypasses ordinary policy, host-path, network-allowlist, and sensitive-file restrictions. Only immutable catastrophic-operation guards and functional waits for user input remain. Use it only with trusted prompts and workspaces.
 - Restricted backends enforce application policies; they are not equivalent to VM isolation.
+- Research retrieval accepts public HTTPS destinations only and rejects loopback, private, and link-local addresses even in Full access to prevent the research surface from becoming an internal-network probe.
 
 ## Export, Diagnostics, and Deletion
 
@@ -53,4 +56,4 @@ Use [GitHub Private Vulnerability Reporting](https://github.com/24373054/TLAH-St
 
 TLAH Studio 采用本地优先存储，会话、设置、运行记录、沙箱和日志默认保存在当前 Windows 用户目录中。但模型请求会把提示词和所选上下文发送到用户配置的模型端点；MCP、网页/HTTP、远程执行和更新功能在使用时也会连接外部服务。
 
-API Key 使用 Windows DPAPI 支持的保护机制，调试和导出路径会在已实现的位置进行脱敏，但这不能抵御当前 Windows 用户会话已经被攻破的情况。Ask 批准只授权已持久化的精确工具调用；审批参数默认只读，显式编辑后必须通过 JSON 与工具输入校验。`完全访问` 会按设计绕过普通的策略、宿主机路径、网络允许列表与敏感文件限制，仅保留灾难级操作硬阻断和必要的用户交互等待。分享诊断导出前必须人工检查，隐私或安全问题请通过私密漏洞报告提交。
+API Key 使用 Windows DPAPI 支持的保护机制，调试和导出路径会在已实现的位置进行脱敏，但这不能抵御当前 Windows 用户会话已经被攻破的情况。Create & Research 会把查询发送到 DuckDuckGo HTML/Lite，并下载用户选择的公开 HTTPS 页面；它始终拒绝环回、私有和链路本地地址。Tool Quality 只读取本地工具名、状态和时间戳，不读取提示词、参数、结果或文件内容。Ask 批准只授权已持久化的精确工具调用；审批参数默认只读，显式编辑后必须通过 JSON 与工具输入校验。`完全访问` 会按设计绕过普通的策略、宿主机路径、网络允许列表与敏感文件限制，仅保留灾难级操作硬阻断、研究网络边界和必要的用户交互等待。分享诊断导出前必须人工检查，隐私或安全问题请通过私密漏洞报告提交。

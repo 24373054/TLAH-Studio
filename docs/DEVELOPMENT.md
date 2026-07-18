@@ -1,6 +1,6 @@
 # Development Guide
 
-Verified against TLAH Studio 4.13.0.
+Verified against TLAH Studio 4.14.0.
 
 ## Prerequisites
 
@@ -29,6 +29,10 @@ Launch `TLAHStudio.App` from Visual Studio for a reliable WinUI debug environmen
 | `dotnet test ... --filter "FullyQualifiedName~UpdateCryptoTests"` | Run a focused test class |
 | `dotnet test ... --filter "FullyQualifiedName~ToolAuthorizationPolicyTests"` | Run the centralized permission-matrix tests |
 | `dotnet test ... --filter "FullyQualifiedName~AgentToolApprovalTests"` | Run exact-invocation approval and argument-validation tests |
+| `dotnet test ... --filter "FullyQualifiedName~ToolPlatformV2Tests"` | Run tool contracts, selection, provider-capability, and error-normalization tests |
+| `dotnet test ... --filter "FullyQualifiedName~ResearchWorkbenchTests"` | Run research extraction, evidence, partial-failure, and network-boundary tests |
+| `dotnet test ... --filter "FullyQualifiedName~ArtifactWorkbenchTests"` | Create and reopen spreadsheet, document, SVG, and PNG fixtures |
+| `dotnet test ... --filter "FullyQualifiedName~ToolQualityServiceTests"` | Verify local content-free tool metrics |
 | `.\tools\ci.ps1 -Configuration Release -Platform x64` | Restore, vulnerability audit, tests with Cobertura coverage, App build, Updater build |
 | `dotnet build .\TLAHStudio.App\TLAHStudio.App.csproj -c Release -p:Platform=x64 --no-restore` | Compile the release desktop app only |
 
@@ -55,6 +59,8 @@ No repository-wide formatter is configured. Match neighboring code and keep diff
 
 The automated suite covers agent state, permission modes, persistence, providers, tools, sandbox rules, privacy/redaction, updates, and release invariants. Add regression tests near the behavior being fixed. Permission changes must test the same operation at preview and execution boundaries, including exact Ask approval, Full access, immutable blocks, contextual restrictions, and edited arguments. Long-run changes must cover provider retry/reset, checkpointed pause/resume, repeated tool failure, explicit recovery questions, and soft-budget extension.
 
+Tool-selection changes must keep the initial callable set at 15 or fewer, remain deterministic, and cover bilingual intent cases. Research fixtures must include partial retrieval failure, conflicting or insufficient evidence, unsupported content, and private-address rejection. Artifact fixtures must reopen or decode every generated XLSX, DOCX, PDF, SVG, and PNG rather than asserting only that a file exists. Tool Quality tests must prove metrics can be computed without selecting prompts, arguments, results, or file contents.
+
 The default command runtime limit is 120 seconds. Tests should use smaller explicit timeouts where possible so failure cases remain fast, while production paths must preserve cancellation and terminate child process trees.
 
 WinUI-only behavior should also receive a manual checklist covering:
@@ -69,6 +75,10 @@ WinUI-only behavior should also receive a manual checklist covering:
 - Ask approval followed by actual execution, including optional validated argument edits
 - Full access for ordinary host/network work and hard rejection of a catastrophic command fixture
 - Provider interruption, visible stream reset, paused state, and resume from the saved checkpoint
+- Create & Research from expanded/compact sidebar, composer, and command palette
+- Research cancellation, source links, evidence report, partial failure, and active-workspace output
+- Spreadsheet, document, and diagram creation with preview plus open-file/open-folder actions
+- Tool Quality with empty history and populated local history
 
 ## Local Data
 
@@ -79,6 +89,7 @@ Development builds use the same default local paths as installed builds:
 %LOCALAPPDATA%\TLAH Studio\config\
 %LOCALAPPDATA%\TLAH Studio\sandboxes\
 %LOCALAPPDATA%\TLAH Studio\logs\
+%LOCALAPPDATA%\TLAH Studio\sandboxes\<chat>\  (workbench fallback when no workspace is selected)
 ```
 
 Back up data before experimenting with migrations or privacy deletion. Never commit these files.

@@ -131,6 +131,17 @@ public static partial class ToolSafetyKernel
             AgentToolNames.HttpRequest => AssessHttp(root),
             AgentToolNames.WebSearch => ToolSafetyAssessment.Medium("network", true, false, "Read-only public web search through the configured allowlist."),
             AgentToolNames.BrowserRead => ToolSafetyAssessment.Medium("network", true, false, "Read-only page fetch through the configured allowlist."),
+            AgentToolNames.ResearchVerify => AssessResearchVerify(root),
+            AgentToolNames.SpreadsheetInspect => AssessPathRead(sandbox, chatId, root, "spreadsheet inspect"),
+            AgentToolNames.DocumentInspect => AssessPathRead(sandbox, chatId, root, "document inspect"),
+            AgentToolNames.SpreadsheetCreate => AssessArtifactWrite(
+                sandbox, chatId, root, "spreadsheet create", "artifacts/workbook.xlsx"),
+            AgentToolNames.SpreadsheetUpdate => AssessArtifactWrite(
+                sandbox, chatId, root, "spreadsheet update", "artifacts/workbook.xlsx", "output_path", validateSourcePath: true),
+            AgentToolNames.DocumentCreate => AssessArtifactWrite(
+                sandbox, chatId, root, "document create", "artifacts/document.docx"),
+            AgentToolNames.DiagramCreate => AssessArtifactWrite(
+                sandbox, chatId, root, "diagram create", "artifacts/diagram"),
             AgentToolNames.McpListTools => ToolSafetyAssessment.Medium("mcp", true, false, "Read MCP tool metadata from configured servers."),
             AgentToolNames.McpListResources => ToolSafetyAssessment.Medium("mcp", true, false, "Read MCP resource metadata from configured servers."),
             AgentToolNames.McpReadResource => ToolSafetyAssessment.Medium("mcp", true, false, "Read MCP resource content from a configured server."),
@@ -633,6 +644,96 @@ public static partial class ToolSafetyKernel
         return method is "GET" or "HEAD"
             ? ToolSafetyAssessment.Medium("network", true, false, $"HTTP {method} request is read-only and allowlist-checked.", new { method, url })
             : ToolSafetyAssessment.High("network", true, $"HTTP {method} can change remote state.", "Review the target domain, request body, and credential before allowing.", new { method, url });
+    }
+
+    private static ToolSafetyAssessment AssessResearchVerify(JsonElement root)
+    {
+        var createsReport = !root.TryGetProperty("create_report", out var createReport) ||
+                            createReport.ValueKind != JsonValueKind.False;
+        return ToolSafetyAssessment.Medium(
+            "network_research",
+            isReadOnly: !createsReport,
+            isWrite: createsReport,
+            summary: createsReport
+                ? "Cross-source public research may write an evidence report inside the chat workspace."
+                : "Cross-source public research is read-only and uses the configured network safeguards.",
+            new
+            {
+                query = ReadString(root, "query"),
+                createsReport,
+                allowedDomains = root.TryGetProperty("allowed_domains", out var allowed)
+                    ? allowed.GetRawText()
+                    : "[]",
+                blockedDomains = root.TryGetProperty("blocked_domains", out var blocked)
+                    ? blocked.GetRawText()
+                    : "[]"
+            });
+    }
+
+    private static ToolSafetyAssessment AssessArtifactWrite(
+        ISandboxCommandService sandbox,
+        Guid chatId,
+        JsonElement root,
+        string operation,
+        string defaultPath,
+        string outputProperty = "path",
+        bool validateSourcePath = false)
+    {
+        if (validateSourcePath)
+        {
+            var sourcePath = ReadString(root, "path");
+            var source = ResolvePathForAuthorization(sandbox, chatId, sourcePath);
+            if (source.Error != null)
+                return ToolSafetyAssessment.Blocked(
+                    "path",
+                    $"{operation} source path is invalid.",
+                    source.Error);
+            if (source.IsOutsideSandbox)
+            {
+                return ToolSafetyAssessment.Restricted(
+                    "path",
+                    $"{operation} reads a source outside the chat sandbox.",
+                    "Ask mode requires approval for this exact source; Full access may proceed.",
+                    new { source = source.FullPath },
+                    isReadOnly: false,
+                    isWrite: true);
+            }
+        }
+
+        var outputPath = ReadString(root, outputProperty);
+        if (string.IsNullOrWhiteSpace(outputPath))
+            outputPath = validateSourcePath
+                ? ReadString(root, "path", defaultPath)
+                : defaultPath;
+        var output = ResolvePathForAuthorization(sandbox, chatId, outputPath);
+        if (output.Error != null)
+            return ToolSafetyAssessment.Blocked(
+                "path",
+                $"{operation} output path is invalid.",
+                output.Error);
+        if (output.IsOutsideSandbox)
+        {
+            return ToolSafetyAssessment.Restricted(
+                "path",
+                $"{operation} writes outside the chat sandbox.",
+                "Ask mode requires approval for this exact output path; Full access may proceed.",
+                new { path = output.FullPath });
+        }
+
+        var sensitivePath = CheckBypassImmunePath(output.FullPath ?? string.Empty);
+        if (sensitivePath != null)
+            return sensitivePath;
+
+        return ToolSafetyAssessment.Medium(
+            "artifact_write",
+            isReadOnly: false,
+            isWrite: true,
+            $"{operation} writes a validated artifact inside the chat workspace.",
+            new
+            {
+                path = output.RelativePath,
+                overwrite = ReadBool(root, "overwrite")
+            });
     }
 
     private static ToolSafetyAssessment AssessCodeWrite(

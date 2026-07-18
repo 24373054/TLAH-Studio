@@ -86,9 +86,22 @@
             </Button>
 
             <Button
-                x:Name="ReasoningDepthButton"
+                x:Name="CapabilityButton"
                 Style="{StaticResource NocturneContextChipStyle}"
                 TabIndex="13"
+                Click="CapabilityButton_Click"
+                ToolTipService.ToolTip="Create and research"
+                AutomationProperties.Name="Create and research">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <FontIcon Glyph="&#xE9D2;" Style="{StaticResource NocturneIconStyle}" />
+                    <TextBlock x:Name="CapabilityLabel" Text="Create" FontSize="12" FontWeight="SemiBold" />
+                </StackPanel>
+            </Button>
+
+            <Button
+                x:Name="ReasoningDepthButton"
+                Style="{StaticResource NocturneContextChipStyle}"
+                TabIndex="14"
                 ToolTipService.ToolTip="Reasoning effort"
                 AutomationProperties.Name="Reasoning effort">
                 <Button.Flyout>
@@ -177,7 +190,7 @@
             <Button
                 x:Name="PermissionModeButton"
                 Style="{StaticResource NocturneContextChipStyle}"
-                TabIndex="14"
+                TabIndex="15"
                 ToolTipService.ToolTip="Agent permission mode"
                 AutomationProperties.Name="Agent permission mode">
                 <Button.Flyout>
@@ -254,7 +267,7 @@
                 BorderBrush="{ThemeResource BorderSubtleBrush}"
                 CornerRadius="{StaticResource RadiusComposer}"
                 Padding="16,12,16,12"
-                TabIndex="15"
+                TabIndex="16"
                 AutomationProperties.Name="Message input">
                 <primitives:FlyoutBase.AttachedFlyout>
                     <Flyout
@@ -340,7 +353,7 @@
                     Width="52"
                     Height="52"
                     Padding="14,8"
-                    TabIndex="16"
+                    TabIndex="17"
                     ToolTipService.ToolTip="Send (Enter)"
                     AutomationProperties.Name="Send message">
                     <FontIcon Glyph="&#xE724;" FontFamily="Segoe Fluent Icons" FontSize="17" Foreground="{ThemeResource AccentTextBrush}" />
@@ -365,7 +378,7 @@
                     Height="52"
                     Padding="14,8"
                     ToolTipService.ToolTip="Stop"
-                    TabIndex="16"
+                    TabIndex="17"
                     AutomationProperties.Name="Stop generation">
                     <Grid>
                         <Ellipse x:Name="StopPulse" Width="28" Height="28" Fill="{ThemeResource DangerSurfaceBrush}" />
