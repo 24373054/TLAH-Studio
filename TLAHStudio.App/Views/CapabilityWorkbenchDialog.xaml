@@ -1,0 +1,603 @@
+<ContentDialog
+    x:Class="TLAHStudio.App.Views.CapabilityWorkbenchDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:observability="using:TLAHStudio.Core.Services.Observability"
+    xmlns:viewModels="using:TLAHStudio.App.ViewModels"
+    Title="Create &amp; Research"
+    CloseButtonText="Close">
+
+    <ContentDialog.Resources>
+        <x:Double x:Key="ContentDialogMaxWidth">1280</x:Double>
+        <x:Double x:Key="ContentDialogMaxHeight">1000</x:Double>
+        <Style x:Key="WorkbenchNavButtonStyle" TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="CornerRadius" Value="9" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+        </Style>
+        <Style
+            x:Key="WorkbenchSelectedNavButtonStyle"
+            TargetType="Button"
+            BasedOn="{StaticResource WorkbenchNavButtonStyle}">
+            <Setter Property="Background" Value="{ThemeResource AccentSoftBrush}" />
+            <Setter Property="Foreground" Value="{ThemeResource AccentBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style x:Key="WorkbenchLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{ThemeResource TextSecondaryBrush}" />
+            <Setter Property="Margin" Value="0,6,0,3" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <Grid x:Name="WorkbenchRoot" Width="1060" Height="720" MaxWidth="1060">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="WorkbenchHeader" Margin="2,0,2,14" ColumnSpacing="14">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="3">
+                <TextBlock Text="Professional workbench" FontSize="20" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                <TextBlock
+                    Text="Research evidence and create verified files without commands, JSON, or setup in another application."
+                    TextWrapping="Wrap"
+                    Foreground="{ThemeResource TextSecondaryBrush}" />
+            </StackPanel>
+            <Border
+                x:Name="WorkspaceBadge"
+                Grid.Column="1"
+                Padding="10,6"
+                VerticalAlignment="Center"
+                Background="{ThemeResource AccentSoftBrush}"
+                CornerRadius="8">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <SymbolIcon Symbol="Folder" />
+                    <TextBlock Text="{Binding WorkspaceDisplay}" MaxWidth="360" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Grid x:Name="WorkbenchBody" Grid.Row="1" ColumnSpacing="14">
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="WorkbenchTopRow" Height="*" />
+                <RowDefinition x:Name="WorkbenchBottomRow" Height="0" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="WorkbenchNavColumn" Width="198" />
+                <ColumnDefinition x:Name="WorkbenchContentColumn" Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border
+                x:Name="WorkbenchNavSurface"
+                Padding="8"
+                Background="{ThemeResource PanelAltBrush}"
+                BorderBrush="{ThemeResource BorderSubtleBrush}"
+                BorderThickness="1"
+                CornerRadius="12">
+                <ScrollViewer
+                    HorizontalScrollMode="Enabled"
+                    HorizontalScrollBarVisibility="Hidden"
+                    VerticalScrollMode="Disabled"
+                    VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="WorkbenchNavStack" Spacing="3">
+                    <Button
+                        x:Name="ResearchNavButton"
+                        Tag="research"
+                        Click="Navigation_Click"
+                        Style="{StaticResource WorkbenchNavButtonStyle}"
+                        AutomationProperties.Name="Research">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <FontIcon Glyph="&#xE721;" FontFamily="Segoe Fluent Icons" />
+                            <TextBlock Text="Research" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="SpreadsheetNavButton"
+                        Tag="spreadsheet"
+                        Click="Navigation_Click"
+                        Style="{StaticResource WorkbenchNavButtonStyle}"
+                        AutomationProperties.Name="Spreadsheet">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <FontIcon Glyph="&#xE80A;" FontFamily="Segoe Fluent Icons" />
+                            <TextBlock Text="Spreadsheet" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="DocumentNavButton"
+                        Tag="document"
+                        Click="Navigation_Click"
+                        Style="{StaticResource WorkbenchNavButtonStyle}"
+                        AutomationProperties.Name="Document">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <FontIcon Glyph="&#xE8A5;" FontFamily="Segoe Fluent Icons" />
+                            <TextBlock Text="Document" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="DiagramNavButton"
+                        Tag="diagram"
+                        Click="Navigation_Click"
+                        Style="{StaticResource WorkbenchNavButtonStyle}"
+                        AutomationProperties.Name="Diagram and chart">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <FontIcon Glyph="&#xE9D2;" FontFamily="Segoe Fluent Icons" />
+                            <TextBlock Text="Diagram &amp; chart" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="QualityNavButton"
+                        Tag="quality"
+                        Click="Navigation_Click"
+                        Style="{StaticResource WorkbenchNavButtonStyle}"
+                        AutomationProperties.Name="Tool quality">
+                        <StackPanel Orientation="Horizontal" Spacing="9">
+                            <FontIcon Glyph="&#xE9D9;" FontFamily="Segoe Fluent Icons" />
+                            <TextBlock Text="Tool quality" />
+                        </StackPanel>
+                    </Button>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <Grid x:Name="WorkbenchContent" Grid.Column="1">
+                <ScrollViewer
+                    x:Name="CapabilityScrollViewer"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollMode="Enabled"
+                    HorizontalScrollBarVisibility="Auto"
+                    Padding="2,0,12,0">
+                    <StackPanel Spacing="12">
+                    <Grid>
+                        <StackPanel x:Name="ResearchPanel" Spacing="10">
+                            <TextBlock Text="Evidence research" FontSize="19" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                            <TextBlock Text="Search, read, deduplicate, and compare independent sources. The result reports weak or conflicting evidence instead of inventing certainty." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <TextBlock Text="Research question" Style="{StaticResource WorkbenchLabelStyle}" />
+                            <TextBox
+                                Text="{Binding ResearchQuery, Mode=TwoWay}"
+                                PlaceholderText="What should TLAH Studio investigate?"
+                                AcceptsReturn="True"
+                                MinHeight="72"
+                                TextWrapping="Wrap"
+                                AutomationProperties.Name="Research question" />
+                            <Grid x:Name="ResearchOptionsGrid" ColumnSpacing="10" RowSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="ResearchDepthField">
+                                    <TextBlock Text="Depth" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <ComboBox
+                                        ItemsSource="{Binding ResearchModes}"
+                                        SelectedItem="{Binding SelectedResearchMode, Mode=TwoWay}"
+                                        AutomationProperties.Name="Research depth" />
+                                </StackPanel>
+                                <StackPanel x:Name="ResearchRecencyField" Grid.Column="1">
+                                    <TextBlock Text="Recency" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <ComboBox
+                                        ItemsSource="{Binding ResearchRecencyOptions}"
+                                        SelectedItem="{Binding SelectedResearchRecency, Mode=TwoWay}"
+                                        AutomationProperties.Name="Research recency" />
+                                </StackPanel>
+                                <StackPanel x:Name="ResearchLanguageField" Grid.Column="2">
+                                    <TextBlock Text="Language hint" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox
+                                        Text="{Binding ResearchLanguage, Mode=TwoWay}"
+                                        PlaceholderText="Optional, e.g. zh-CN"
+                                        AutomationProperties.Name="Research language hint" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid x:Name="ResearchDomainsGrid" ColumnSpacing="10" RowSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="ResearchAllowedDomainsField">
+                                    <TextBlock Text="Only these domains" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox
+                                        Text="{Binding ResearchAllowedDomains, Mode=TwoWay}"
+                                        PlaceholderText="Optional; one domain per line"
+                                        AcceptsReturn="True"
+                                        MinHeight="54"
+                                        AutomationProperties.Name="Preferred research domains" />
+                                </StackPanel>
+                                <StackPanel x:Name="ResearchBlockedDomainsField" Grid.Column="1">
+                                    <TextBlock Text="Exclude domains" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox
+                                        Text="{Binding ResearchBlockedDomains, Mode=TwoWay}"
+                                        PlaceholderText="Optional; one domain per line"
+                                        AcceptsReturn="True"
+                                        MinHeight="54"
+                                        AutomationProperties.Name="Excluded research domains" />
+                                </StackPanel>
+                            </Grid>
+                            <Button
+                                x:Name="RunResearchButton"
+                                Click="RunResearch_Click"
+                                HorizontalAlignment="Left"
+                                Padding="16,9"
+                                Background="{ThemeResource AccentStrongBrush}"
+                                Foreground="{ThemeResource AccentTextBrush}"
+                                AutomationProperties.Name="Start evidence research">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <SymbolIcon Symbol="Find" />
+                                    <TextBlock Text="Start research" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Button>
+                            <ListView
+                                ItemsSource="{Binding ResearchSources}"
+                                MaxHeight="260"
+                                SelectionMode="None"
+                                AutomationProperties.Name="Research sources">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="viewModels:ResearchSourceItem">
+                                        <StackPanel Padding="8,6" Spacing="3">
+                                            <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind Metadata}" FontSize="11" Foreground="{ThemeResource AccentBrush}" />
+                                            <TextBlock Text="{x:Bind Excerpt}" MaxLines="3" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                            <HyperlinkButton Content="{x:Bind Url}" NavigateUri="{x:Bind Uri}" Padding="0" FontSize="11" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+
+                        <StackPanel x:Name="SpreadsheetPanel" Visibility="Collapsed" Spacing="10">
+                            <TextBlock Text="Spreadsheet builder" FontSize="19" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                            <TextBlock Text="Paste CSV, tab-separated, semicolon, or pipe-delimited data. The workbook is styled, validated, and reopened before it is offered." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <Grid x:Name="SpreadsheetMetadataGrid" ColumnSpacing="10" RowSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="SpreadsheetTitleField">
+                                    <TextBlock Text="Workbook title" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox Text="{Binding SpreadsheetTitle, Mode=TwoWay}" AutomationProperties.Name="Workbook title" />
+                                </StackPanel>
+                                <StackPanel x:Name="SpreadsheetFileNameField" Grid.Column="1">
+                                    <TextBlock Text="File name" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox Text="{Binding SpreadsheetFileName, Mode=TwoWay}" AutomationProperties.Name="Spreadsheet file name" />
+                                </StackPanel>
+                                <StackPanel x:Name="SpreadsheetSheetNameField" Grid.Column="2">
+                                    <TextBlock Text="Sheet" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox Text="{Binding SpreadsheetSheetName, Mode=TwoWay}" AutomationProperties.Name="Worksheet name" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="Table data" Style="{StaticResource WorkbenchLabelStyle}" />
+                            <TextBox
+                                Text="{Binding SpreadsheetData, Mode=TwoWay}"
+                                AcceptsReturn="True"
+                                TextWrapping="NoWrap"
+                                FontFamily="Cascadia Mono"
+                                MinHeight="210"
+                                ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                AutomationProperties.Name="Spreadsheet table data" />
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <CheckBox Content="Create chart preview" IsChecked="{Binding SpreadsheetCreateChart, Mode=TwoWay}" />
+                                <ComboBox
+                                    Width="130"
+                                    ItemsSource="{Binding SpreadsheetChartTypes}"
+                                    SelectedItem="{Binding SpreadsheetChartType, Mode=TwoWay}"
+                                    AutomationProperties.Name="Spreadsheet chart type" />
+                                <ComboBox
+                                    Width="130"
+                                    ItemsSource="{Binding DiagramThemes}"
+                                    SelectedItem="{Binding SpreadsheetChartTheme, Mode=TwoWay}"
+                                    AutomationProperties.Name="Spreadsheet chart theme" />
+                            </StackPanel>
+                            <Button
+                                x:Name="CreateSpreadsheetButton"
+                                Click="CreateSpreadsheet_Click"
+                                HorizontalAlignment="Left"
+                                Padding="16,9"
+                                Background="{ThemeResource AccentStrongBrush}"
+                                Foreground="{ThemeResource AccentTextBrush}"
+                                AutomationProperties.Name="Create spreadsheet">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <SymbolIcon Symbol="Save" />
+                                    <TextBlock Text="Create workbook" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <StackPanel x:Name="DocumentPanel" Visibility="Collapsed" Spacing="10">
+                            <TextBlock Text="Document builder" FontSize="19" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                            <TextBlock Text="Write ordinary headings, paragraphs, and lists. TLAH Studio produces and validates DOCX, PDF, or Markdown directly." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <Grid x:Name="DocumentMetadataGrid" ColumnSpacing="10" RowSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="DocumentTitleField">
+                                    <TextBlock Text="Title" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox Text="{Binding DocumentTitle, Mode=TwoWay}" AutomationProperties.Name="Document title" />
+                                </StackPanel>
+                                <StackPanel x:Name="DocumentFileNameField" Grid.Column="1">
+                                    <TextBlock Text="File name" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox Text="{Binding DocumentFileName, Mode=TwoWay}" AutomationProperties.Name="Document file name" />
+                                </StackPanel>
+                                <StackPanel x:Name="DocumentFormatField" Grid.Column="2">
+                                    <TextBlock Text="Format" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <ComboBox
+                                        ItemsSource="{Binding DocumentFormats}"
+                                        SelectedItem="{Binding SelectedDocumentFormat, Mode=TwoWay}"
+                                        AutomationProperties.Name="Document format" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="Author" Style="{StaticResource WorkbenchLabelStyle}" />
+                            <TextBox
+                                Text="{Binding DocumentAuthor, Mode=TwoWay}"
+                                PlaceholderText="Optional"
+                                AutomationProperties.Name="Document author" />
+                            <TextBlock Text="Content" Style="{StaticResource WorkbenchLabelStyle}" />
+                            <TextBox
+                                Text="{Binding DocumentContent, Mode=TwoWay}"
+                                AcceptsReturn="True"
+                                TextWrapping="Wrap"
+                                MinHeight="260"
+                                PlaceholderText="# Heading&#x0a;Paragraph&#x0a;&#x0a;- List item"
+                                AutomationProperties.Name="Document content" />
+                            <Button
+                                x:Name="CreateDocumentButton"
+                                Click="CreateDocument_Click"
+                                HorizontalAlignment="Left"
+                                Padding="16,9"
+                                Background="{ThemeResource AccentStrongBrush}"
+                                Foreground="{ThemeResource AccentTextBrush}"
+                                AutomationProperties.Name="Create document">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <SymbolIcon Symbol="Save" />
+                                    <TextBlock Text="Create document" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <StackPanel x:Name="DiagramPanel" Visibility="Collapsed" Spacing="10">
+                            <TextBlock Text="Diagram &amp; chart builder" FontSize="19" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                            <TextBlock Text="Create polished SVG and high-DPI PNG output. Flow diagrams use one “A -> B” relationship per line; charts use “Label, value”." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <Grid x:Name="DiagramMetadataGrid" ColumnSpacing="10" RowSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel x:Name="DiagramTitleField">
+                                    <TextBlock Text="Title" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox Text="{Binding DiagramTitle, Mode=TwoWay}" AutomationProperties.Name="Diagram title" />
+                                </StackPanel>
+                                <StackPanel x:Name="DiagramFileNameField" Grid.Column="1">
+                                    <TextBlock Text="File name" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <TextBox Text="{Binding DiagramFileName, Mode=TwoWay}" AutomationProperties.Name="Diagram file name" />
+                                </StackPanel>
+                                <StackPanel x:Name="DiagramTypeField" Grid.Column="2">
+                                    <TextBlock Text="Type" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <ComboBox
+                                        ItemsSource="{Binding DiagramTypes}"
+                                        SelectedItem="{Binding SelectedDiagramType, Mode=TwoWay}"
+                                        AutomationProperties.Name="Diagram type" />
+                                </StackPanel>
+                                <StackPanel x:Name="DiagramThemeField" Grid.Column="3">
+                                    <TextBlock Text="Theme" Style="{StaticResource WorkbenchLabelStyle}" />
+                                    <ComboBox
+                                        ItemsSource="{Binding DiagramThemes}"
+                                        SelectedItem="{Binding SelectedDiagramTheme, Mode=TwoWay}"
+                                        AutomationProperties.Name="Diagram theme" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="Relationships or chart values" Style="{StaticResource WorkbenchLabelStyle}" />
+                            <TextBox
+                                Text="{Binding DiagramData, Mode=TwoWay}"
+                                AcceptsReturn="True"
+                                TextWrapping="NoWrap"
+                                FontFamily="Cascadia Mono"
+                                MinHeight="280"
+                                AutomationProperties.Name="Diagram data" />
+                            <Button
+                                x:Name="CreateDiagramButton"
+                                Click="CreateDiagram_Click"
+                                HorizontalAlignment="Left"
+                                Padding="16,9"
+                                Background="{ThemeResource AccentStrongBrush}"
+                                Foreground="{ThemeResource AccentTextBrush}"
+                                AutomationProperties.Name="Create diagram">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE91B;" FontFamily="Segoe Fluent Icons" />
+                                    <TextBlock Text="Create SVG &amp; PNG" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <StackPanel x:Name="QualityPanel" Visibility="Collapsed" Spacing="10">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Tool quality" FontSize="19" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                    <TextBlock Text="{Binding ToolQualitySummary}" FontWeight="SemiBold" Foreground="{ThemeResource AccentBrush}" />
+                                    <TextBlock Text="{Binding ToolQualityDetail}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Refresh" Click="RefreshQuality_Click" AutomationProperties.Name="Refresh tool quality" />
+                            </Grid>
+                            <TextBlock Text="Local 30-day metrics contain names, statuses, and timings only—not prompts, arguments, results, or paths." TextWrapping="Wrap" FontSize="11" Foreground="{ThemeResource TextMutedBrush}" />
+                            <Grid Padding="8,5" ColumnSpacing="12" Background="{ThemeResource PanelAltBrush}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="90" />
+                                    <ColumnDefinition Width="110" />
+                                    <ColumnDefinition Width="100" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Tool" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="Calls" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="2" Text="Success" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="3" Text="Average" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                            </Grid>
+                            <ListView ItemsSource="{Binding ToolQualityRows}" SelectionMode="None" AutomationProperties.Name="Tool quality metrics">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="observability:ToolQualityRow">
+                                        <Grid Padding="8,6" ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="2*" />
+                                                <ColumnDefinition Width="90" />
+                                                <ColumnDefinition Width="110" />
+                                                <ColumnDefinition Width="100" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind ToolName}" FontFamily="Cascadia Mono" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Calls}" HorizontalAlignment="Right" />
+                                            <TextBlock Grid.Column="2" Text="{x:Bind SuccessRateText}" HorizontalAlignment="Right" />
+                                            <TextBlock Grid.Column="3" Text="{x:Bind AverageDurationText}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+                    </Grid>
+
+                <Border
+                    x:Name="ResultSurface"
+                    Margin="2,0,0,0"
+                    Padding="12"
+                    Background="{ThemeResource PanelAltBrush}"
+                    BorderBrush="{ThemeResource BorderSubtleBrush}"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Visibility="Collapsed">
+                    <Grid RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="{Binding ResultSummary}" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" TextWrapping="Wrap" />
+                                <TextBlock
+                                    Text="{Binding StatusMessage}"
+                                    Foreground="{ThemeResource TextSecondaryBrush}"
+                                    TextWrapping="Wrap"
+                                    AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                            <Button x:Name="OpenResultButton" Grid.Column="1" Content="Open result" Click="OpenResult_Click" />
+                            <Button x:Name="OpenResultFolderButton" Grid.Column="2" Content="Open folder" Click="OpenResultFolder_Click" />
+                        </Grid>
+                        <ListView
+                            Grid.Row="1"
+                            ItemsSource="{Binding ResultArtifacts}"
+                            MaxHeight="92"
+                            SelectionMode="None"
+                            AutomationProperties.Name="Created artifacts">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="viewModels:WorkbenchArtifactItem">
+                                    <Grid Padding="6,4" ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{x:Bind FullPath}" FontSize="10" Foreground="{ThemeResource TextMutedBrush}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{x:Bind SizeText}" VerticalAlignment="Center" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <Border
+                            x:Name="ResultImageSurface"
+                            Grid.Row="2"
+                            MaxHeight="220"
+                            Padding="8"
+                            Background="{ThemeResource InputBackgroundBrush}"
+                            CornerRadius="8"
+                            Visibility="Collapsed">
+                            <Image
+                                x:Name="ResultImage"
+                                MaxHeight="204"
+                                Stretch="Uniform"
+                                AutomationProperties.Name="Generated image preview" />
+                        </Border>
+                        <TextBox
+                            Grid.Row="3"
+                            Text="{Binding ResultPreview}"
+                            IsReadOnly="True"
+                            AcceptsReturn="True"
+                            TextWrapping="Wrap"
+                            MaxHeight="130"
+                            FontFamily="Cascadia Mono"
+                            ScrollViewer.VerticalScrollBarVisibility="Auto"
+                            AutomationProperties.Name="Result preview" />
+                    </Grid>
+                </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+
+        <Grid x:Name="WorkbenchFooter" Grid.Row="2" Margin="2,12,2,0" ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ProgressRing x:Name="WorkbenchProgress" Width="20" Height="20" IsActive="False" Visibility="Collapsed" />
+            <TextBlock
+                Grid.Column="1"
+                Text="{Binding StatusMessage}"
+                VerticalAlignment="Center"
+                TextWrapping="Wrap"
+                Foreground="{ThemeResource TextSecondaryBrush}"
+                AutomationProperties.LiveSetting="Polite" />
+            <Button x:Name="CancelOperationButton" Grid.Column="2" Content="Cancel operation" Click="CancelOperation_Click" Visibility="Collapsed" />
+        </Grid>
+    </Grid>
+</ContentDialog>

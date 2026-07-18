@@ -11,10 +11,33 @@ public record MessagePayload(
     IReadOnlyList<LlmToolCall>? ToolCalls = null,
     string? ReasoningContent = null);
 
+/// <summary>
+/// Provider-neutral tool contract. The first three constructor arguments are
+/// intentionally unchanged so older built-ins and third-party adapters remain
+/// source compatible.
+/// </summary>
 public sealed record LlmToolDefinition(
     string Name,
     string Description,
-    Dictionary<string, object> InputSchema);
+    Dictionary<string, object> InputSchema,
+    string Namespace = "core",
+    string Category = "general",
+    bool Strict = false,
+    bool Deferred = false,
+    IReadOnlyList<Dictionary<string, object>>? InputExamples = null,
+    Dictionary<string, object>? OutputSchema = null,
+    LlmToolAnnotations? Annotations = null);
+
+/// <summary>
+/// Cross-provider execution hints modelled after the MCP tool annotation
+/// vocabulary. They are advisory and never bypass the runtime safety policy.
+/// </summary>
+public sealed record LlmToolAnnotations(
+    bool ReadOnly = false,
+    bool Destructive = false,
+    bool Idempotent = false,
+    bool OpenWorld = false,
+    bool ConcurrencySafe = false);
 
 public sealed record LlmToolCall(
     string Id,

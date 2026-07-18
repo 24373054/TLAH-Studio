@@ -55,6 +55,13 @@ public static class AgentToolNames
     public const string ExitPlanMode = "exit_plan_mode";
     public const string AskUserQuestion = "ask_user_question";
     public const string Skill = "skill";
+    public const string ResearchVerify = "research_verify";
+    public const string SpreadsheetCreate = "spreadsheet_create";
+    public const string SpreadsheetInspect = "spreadsheet_inspect";
+    public const string SpreadsheetUpdate = "spreadsheet_update";
+    public const string DocumentCreate = "document_create";
+    public const string DocumentInspect = "document_inspect";
+    public const string DiagramCreate = "diagram_create";
 
     public static string Normalize(string name) =>
         string.Equals(name, LegacySandboxExec, StringComparison.OrdinalIgnoreCase)
@@ -206,16 +213,30 @@ public sealed record AgentToolMetadata(
                 AgentToolResultPersistenceModes.PersistLargeOutputs),
 
             AgentToolNames.WebSearch or
-            AgentToolNames.BrowserRead => new(
+            AgentToolNames.BrowserRead or
+            AgentToolNames.ResearchVerify => new(
+                normalized,
+                requiresApproval,
+                IsReadOnly: normalized != AgentToolNames.ResearchVerify,
+                IsConcurrencySafe: normalized != AgentToolNames.ResearchVerify,
+                IsDestructive: false,
+                AgentToolRenderHints.Network,
+                normalized == AgentToolNames.ResearchVerify ? 50_000 : 18_000,
+                normalized == AgentToolNames.ResearchVerify
+                    ? AgentToolResultPersistenceModes.Artifact
+                    : AgentToolResultPersistenceModes.PersistLargeOutputs,
+                IsOpenWorld: true),
+
+            AgentToolNames.SpreadsheetInspect or
+            AgentToolNames.DocumentInspect => new(
                 normalized,
                 requiresApproval,
                 IsReadOnly: true,
                 IsConcurrencySafe: true,
                 IsDestructive: false,
-                AgentToolRenderHints.Network,
-                18_000,
-                AgentToolResultPersistenceModes.PersistLargeOutputs,
-                IsOpenWorld: true),
+                AgentToolRenderHints.File,
+                24_000,
+                AgentToolResultPersistenceModes.Artifact),
 
             AgentToolNames.McpListTools => new(
                 normalized,
@@ -261,7 +282,11 @@ public sealed record AgentToolMetadata(
             AgentToolNames.CodeEdit or
             AgentToolNames.CodeMultiEdit or
             AgentToolNames.CodeApplyPatch or
-            AgentToolNames.CodeRollback => new(
+            AgentToolNames.CodeRollback or
+            AgentToolNames.SpreadsheetCreate or
+            AgentToolNames.SpreadsheetUpdate or
+            AgentToolNames.DocumentCreate or
+            AgentToolNames.DiagramCreate => new(
                 normalized,
                 requiresApproval,
                 IsReadOnly: false,
@@ -400,6 +425,13 @@ public static class AgentToolUx
             AgentToolNames.CodeRollback => "Rollback edit",
             AgentToolNames.CodeDiagnostics => "Run diagnostics",
             AgentToolNames.CodeSymbols => "Find symbols",
+            AgentToolNames.ResearchVerify => "Verify research",
+            AgentToolNames.SpreadsheetCreate => "Create spreadsheet",
+            AgentToolNames.SpreadsheetInspect => "Inspect spreadsheet",
+            AgentToolNames.SpreadsheetUpdate => "Update spreadsheet",
+            AgentToolNames.DocumentCreate => "Create document",
+            AgentToolNames.DocumentInspect => "Inspect document",
+            AgentToolNames.DiagramCreate => "Create diagram",
             _ => normalized
         };
     }
@@ -424,6 +456,13 @@ public static class AgentToolUx
             AgentToolNames.CodeRollback => "Restoring backup",
             AgentToolNames.CodeDiagnostics => "Checking diagnostics",
             AgentToolNames.CodeSymbols => "Indexing code symbols",
+            AgentToolNames.ResearchVerify => "Cross-checking public sources",
+            AgentToolNames.SpreadsheetCreate => "Creating spreadsheet attachment",
+            AgentToolNames.SpreadsheetInspect => "Inspecting spreadsheet structure",
+            AgentToolNames.SpreadsheetUpdate => "Updating spreadsheet attachment",
+            AgentToolNames.DocumentCreate => "Creating document attachment",
+            AgentToolNames.DocumentInspect => "Inspecting document structure",
+            AgentToolNames.DiagramCreate => "Rendering diagram attachments",
             AgentToolNames.Git => "Running Git",
             AgentToolNames.HttpRequest => "Calling HTTP endpoint",
             AgentToolNames.WebSearch => "Searching the web",
@@ -559,19 +598,55 @@ public sealed record AgentToolResult(
     IReadOnlyList<AgentToolArtifact>? Artifacts = null,
     string? Warning = null,
     bool OutcomeUncertain = false,
-    bool MayHaveCommitted = false)
+    bool MayHaveCommitted = false,
+    object? StructuredContent = null,
+    string? ErrorCode = null,
+    bool Retryable = false,
+    IReadOnlyList<AgentToolSource>? Sources = null,
+    long? DurationMs = null,
+    IReadOnlyDictionary<string, object>? Diagnostics = null)
 {
     public string ToJson() => JsonSerializer.Serialize(new
     {
         success = Success,
         output = SecretRedactor.RedactText(Output),
         error = SecretRedactor.RedactText(Error ?? string.Empty),
+        errorCode = ErrorCode,
+        retryable = Retryable,
         warning = SecretRedactor.RedactText(Warning ?? string.Empty),
         outcomeUncertain = OutcomeUncertain,
         mayHaveCommitted = MayHaveCommitted,
+        durationMs = DurationMs,
+        structuredContent = RedactStructured(StructuredContent),
+        sources = Sources ?? [],
+        diagnostics = RedactStructured(Diagnostics),
         artifacts = Artifacts ?? []
     });
+
+    private static object? RedactStructured(object? value)
+    {
+        if (value == null)
+            return null;
+
+        try
+        {
+            var redacted = SecretRedactor.RedactJson(JsonSerializer.Serialize(value));
+            using var document = JsonDocument.Parse(redacted);
+            return document.RootElement.Clone();
+        }
+        catch
+        {
+            return SecretRedactor.RedactText(value.ToString() ?? string.Empty);
+        }
+    }
 }
+
+public sealed record AgentToolSource(
+    string Uri,
+    string? Title = null,
+    string? Provider = null,
+    DateTime? RetrievedAt = null,
+    string? CitationId = null);
 
 internal static class AgentToolInputValidator
 {
@@ -652,6 +727,7 @@ internal static class AgentToolInputValidator
         string path,
         string toolName)
     {
+        var requiredProperties = new HashSet<string>(StringComparer.Ordinal);
         if (TryGetSchemaValue(schema, "required", out var requiredValue) &&
             requiredValue != null)
         {
@@ -659,6 +735,7 @@ internal static class AgentToolInputValidator
             {
                 if (string.IsNullOrWhiteSpace(propertyName))
                     continue;
+                requiredProperties.Add(propertyName);
 
                 if (!value.TryGetProperty(propertyName, out var requiredProperty) ||
                     requiredProperty.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ||
@@ -688,6 +765,14 @@ internal static class AgentToolInputValidator
 
                 continue;
             }
+
+            // Strict provider schemas encode legacy optional fields as
+            // required-but-nullable on the wire. Keep the original runtime
+            // semantics by treating null as omission only when this field was
+            // not required by the app's schema.
+            if (property.Value.ValueKind == JsonValueKind.Null &&
+                !requiredProperties.Contains(property.Name))
+                continue;
 
             var propertyResult = ValidateValue(
                 propertySchema,

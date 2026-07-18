@@ -458,14 +458,36 @@ public sealed class TypedToolPermissionParityTests
         var (repo, arguments) = PrepareGitOperation(paths, operation, approved);
         var tool = new GitAgentTool(new SandboxCommandService(paths.SandboxBase));
 
-        var result = await tool.ExecuteAsync(
-            Context(mode, approved),
-            JsonSerializer.Serialize(new { operation, path = repo, arguments }));
+        var context = Context(mode, approved);
+        var payload = JsonSerializer.Serialize(new { operation, path = repo, arguments });
+        var result = await ExecuteGitFixtureAsync(tool, context, payload);
 
         Assert.True(result.Success, result.Error);
         Assert.DoesNotContain("not allowed", result.Error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("requires Full access", result.Error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Absolute paths", result.Error ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<AgentToolResult> ExecuteGitFixtureAsync(
+        GitAgentTool tool,
+        AgentToolExecutionContext context,
+        string payload)
+    {
+        AgentToolResult result = new(false, string.Empty, "Git fixture was not executed.");
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            result = await tool.ExecuteAsync(context, payload);
+            if (result.Success ||
+                !(result.Error?.Contains(
+                    "cannot spawn git: Permission denied",
+                    StringComparison.OrdinalIgnoreCase) ?? false) ||
+                attempt == 3)
+            {
+                return result;
+            }
+            await Task.Delay(250 * attempt);
+        }
+        return result;
     }
 
     private static ToolAuthorizationDecision Authorize(
@@ -579,25 +601,42 @@ public sealed class TypedToolPermissionParityTests
 
     private static void RunGit(string workingDirectory, params string[] arguments)
     {
-        using var process = new Process
+        string stdout = string.Empty;
+        string stderr = string.Empty;
+        int exitCode = -1;
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
-            StartInfo = new ProcessStartInfo
+            using var process = new Process
             {
-                FileName = "git.exe",
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            }
-        };
-        foreach (var argument in arguments)
-            process.StartInfo.ArgumentList.Add(argument);
-        process.Start();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)} failed: {stdout}\n{stderr}");
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "git.exe",
+                    WorkingDirectory = workingDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+            foreach (var argument in arguments)
+                process.StartInfo.ArgumentList.Add(argument);
+            process.Start();
+            stdout = process.StandardOutput.ReadToEnd();
+            stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            exitCode = process.ExitCode;
+            if (exitCode == 0)
+                return;
+
+            var transientSpawnFailure =
+                stderr.Contains("cannot spawn git: Permission denied", StringComparison.OrdinalIgnoreCase) ||
+                stderr.Contains("remote unpack failed: unpack-objects abnormal exit", StringComparison.OrdinalIgnoreCase);
+            if (!transientSpawnFailure || attempt == 3)
+                break;
+            Thread.Sleep(250 * attempt);
+        }
+
+        Assert.True(exitCode == 0, $"git {string.Join(' ', arguments)} failed: {stdout}\n{stderr}");
     }
 
     private sealed class TemporaryPaths : IDisposable

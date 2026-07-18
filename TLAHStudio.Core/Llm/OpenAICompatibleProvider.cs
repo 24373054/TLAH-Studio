@@ -24,6 +24,21 @@ public class OpenAICompatibleProvider : ILlmProvider
 
     public string EndpointUrl => $"{_baseUrl}/v1/chat/completions";
 
+    private bool IsOfficialOpenAI =>
+        string.Equals(_providerName, "openai", StringComparison.OrdinalIgnoreCase) &&
+        Uri.TryCreate(_baseUrl, UriKind.Absolute, out var uri) &&
+        (string.Equals(uri.Host, "api.openai.com", StringComparison.OrdinalIgnoreCase) ||
+         uri.Host.EndsWith(".openai.azure.com", StringComparison.OrdinalIgnoreCase));
+
+    public LlmProviderCapabilities Capabilities => IsOfficialOpenAI
+        ? new(
+            StrictToolSchemas: true,
+            ParallelToolCalls: true,
+            ToolChoice: true,
+            ToolInputExamples: false,
+            DeferredTools: false)
+        : LlmProviderCapabilities.Compatible;
+
     public OpenAICompatibleProvider(
         HttpClient http,
         string apiKey,
@@ -61,17 +76,21 @@ public class OpenAICompatibleProvider : ILlmProvider
         };
         if (tools is { Count: > 0 })
         {
-            rawRequest["tools"] = tools.Select(t => new
-            {
-                type = "function",
-                function = new
-                {
-                    name = t.Name,
-                    description = t.Description,
-                    parameters = t.InputSchema
-                }
-            }).ToArray();
+            rawRequest["tools"] = tools.Select(BuildToolDefinition).ToArray();
             rawRequest["tool_choice"] = "auto";
+            if (Capabilities.ParallelToolCalls)
+            {
+                // Parallel calls are enabled only when every exposed tool is
+                // explicitly read-only and concurrency-safe. Runtime safety
+                // and approval checks remain authoritative after selection.
+                rawRequest["parallel_tool_calls"] = tools.Count > 1 &&
+                    tools.All(t => t.Annotations is
+                    {
+                        ReadOnly: true,
+                        ConcurrencySafe: true,
+                        Destructive: false
+                    });
+            }
         }
         AddReasoningOptions(rawRequest, reasoning);
 
@@ -191,6 +210,26 @@ public class OpenAICompatibleProvider : ILlmProvider
             ToolCalls: toolCalls,
             ReasoningText: reasoningText
         );
+    }
+
+    private object BuildToolDefinition(LlmToolDefinition tool)
+    {
+        var function = new Dictionary<string, object>
+        {
+            ["name"] = tool.Name,
+            ["description"] = tool.Description,
+            ["parameters"] = Capabilities.StrictToolSchemas && tool.Strict
+                ? LlmToolSchema.NormalizeForStrictProvider(tool.InputSchema)
+                : tool.InputSchema
+        };
+        if (Capabilities.StrictToolSchemas && tool.Strict)
+            function["strict"] = true;
+
+        return new Dictionary<string, object>
+        {
+            ["type"] = "function",
+            ["function"] = function
+        };
     }
 
     private void AddReasoningOptions(Dictionary<string, object> rawRequest, LlmReasoningOptions? reasoning)

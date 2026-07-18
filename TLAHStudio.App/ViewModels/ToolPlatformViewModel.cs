@@ -3,6 +3,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services;
+using TLAHStudio.Core.Services.Observability;
 
 namespace TLAHStudio.App.ViewModels;
 
@@ -13,19 +14,22 @@ public partial class ToolPlatformViewModel : ObservableObject
     private readonly IMcpClientService _mcp;
     private readonly IAppStateService _appState;
     private readonly IChatService _chatService;
+    private readonly IToolQualityService _toolQuality;
 
     public ToolPlatformViewModel(
         IToolPlatformService platform,
         IExecutionBackendRouter backends,
         IMcpClientService mcp,
         IAppStateService appState,
-        IChatService chatService)
+        IChatService chatService,
+        IToolQualityService toolQuality)
     {
         _platform = platform;
         _backends = backends;
         _mcp = mcp;
         _appState = appState;
         _chatService = chatService;
+        _toolQuality = toolQuality;
     }
 
     public IReadOnlyList<string> BackendOptions { get; } =
@@ -72,6 +76,7 @@ public partial class ToolPlatformViewModel : ObservableObject
     public ObservableCollection<McpServerEditor> McpServers { get; } = [];
     public ObservableCollection<CredentialEntryDto> Credentials { get; } = [];
     public ObservableCollection<ToolPolicyRule> Policies { get; } = [];
+    public ObservableCollection<ToolQualityRow> ToolQualityRows { get; } = [];
 
     [ObservableProperty] private string selectedBackend = ToolExecutionBackends.RestrictedLocal;
     [ObservableProperty] private string networkAllowlist = string.Empty;
@@ -97,6 +102,8 @@ public partial class ToolPlatformViewModel : ObservableObject
     [ObservableProperty] private string newPolicyScope = ToolPolicyScopes.Global;
     [ObservableProperty] private string newPolicyDecision = ToolPolicyDecisions.Allow;
     [ObservableProperty] private string newPolicyDescription = string.Empty;
+    [ObservableProperty] private string toolQualitySummary = "No local tool calls in the selected period.";
+    [ObservableProperty] private string toolQualityDetail = string.Empty;
     [ObservableProperty] private string statusMessage = string.Empty;
 
     partial void OnSelectedCredentialChanged(CredentialEntryDto? value)
@@ -126,6 +133,7 @@ public partial class ToolPlatformViewModel : ObservableObject
         BackendAvailability = string.Join("  |  ", availability.Select(p =>
             $"{p.Key}: {(p.Value ? "ready" : "unavailable")}"));
         await ReloadCollectionsAsync(ct);
+        await ReloadToolQualityAsync(ct);
         StatusMessage = string.Empty;
     }
 
@@ -352,6 +360,23 @@ public partial class ToolPlatformViewModel : ObservableObject
         SelectedMcpServer = McpServers.FirstOrDefault();
         await ReloadCredentialsAsync(ct);
         await ReloadPoliciesAsync(ct);
+    }
+
+    public async Task ReloadToolQualityAsync(CancellationToken ct = default)
+    {
+        var snapshot = await _toolQuality.LoadAsync(30, ct);
+        ToolQualityRows.Clear();
+        foreach (var row in snapshot.Tools.Take(12))
+            ToolQualityRows.Add(row);
+
+        ToolQualitySummary = snapshot.TotalCalls == 0
+            ? "No local tool calls in the last 30 days."
+            : $"{snapshot.TotalCalls} calls · {snapshot.SuccessRate:0.0}% execution success";
+        ToolQualityDetail = snapshot.TotalCalls == 0
+            ? "Run an agent task to start collecting content-free local quality metrics."
+            : $"Completed {snapshot.Completed} · Failed {snapshot.Failed} · Denied {snapshot.Denied} · " +
+              $"Unknown {snapshot.Unknown} · Shell fallback {snapshot.ShellFallbackRate:0.0}% · " +
+              $"Catalog search {snapshot.ToolSearchRate:0.0}%";
     }
 
     private async Task ReloadCredentialsAsync(CancellationToken ct)

@@ -93,6 +93,9 @@ public sealed partial class ToolPlatformDialog : ContentDialog
     private async void SavePolicyRule_Click(object sender, RoutedEventArgs e) =>
         await RunAsync(ViewModel.SavePolicyRuleAsync);
 
+    private async void RefreshToolQuality_Click(object sender, RoutedEventArgs e) =>
+        await RunAsync(ViewModel.ReloadToolQualityAsync);
+
     private async Task RunAsync(Func<CancellationToken, Task> action)
     {
         try

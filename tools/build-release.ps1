@@ -223,6 +223,7 @@ try {
             "TLAHStudio.App.pri",
             "Views\SidebarPage.xbf",
             "Views\ChatPage.xbf",
+            "Views\CapabilityWorkbenchDialog.xbf",
             "Views\WorkspaceReviewPanelControl.xbf",
             "Views\MessageInputControl.xbf"
         )) {
@@ -396,7 +397,8 @@ try {
     if ($ForceSmokeTest) { $verifyArgs.ForceSmokeInstall = $true }
     & .\tools\verify-release.ps1 @verifyArgs
 
-    Copy-Item -LiteralPath $installer.Path -Destination "C:\Users\23157\CODE\00TLAH\TLAHStudioSetup-$Version.exe" -Force
+    $distributionCopy = Join-Path (Split-Path -Parent $repo.Path) "TLAHStudioSetup-$Version.exe"
+    Copy-Item -LiteralPath $installer.Path -Destination $distributionCopy -Force
 
     if ($Upload) {
         # Stage every file under a temporary name first. Promote the versioned

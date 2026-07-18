@@ -23,6 +23,7 @@ public sealed partial class MainWindow : Window
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _paneLayoutTimer;
     private WorkbenchPaneKind _appliedPane = WorkbenchPaneKind.Uninitialized;
     private double _appliedPaneWidth = -1;
+    private int _capabilityWorkbenchOpen;
 
     private enum WorkbenchPaneKind
     {
@@ -44,6 +45,7 @@ public sealed partial class MainWindow : Window
     public PrivacyDataViewModel PrivacyDataVM { get; }
     public TeamWorkspaceViewModel TeamWorkspaceVM { get; }
     public ToolPlatformViewModel ToolPlatformVM { get; }
+    public CapabilityWorkbenchViewModel CapabilityWorkbenchVM { get; }
     public UpdateNotificationViewModel UpdateNotificationVM { get; }
     public IThemeService ThemeService { get; }
     public IBackgroundService BackgroundService { get; }
@@ -84,11 +86,13 @@ public sealed partial class MainWindow : Window
     public MainWindow(
         MainViewModel mvm, SidebarViewModel svm, ChatPageViewModel cvm,
         DebugPanelViewModel dvm, SettingsDialogViewModel sv, BackgroundSettingsDialogViewModel bv,
-        AgentFileDialogViewModel av, PrivacyDataViewModel pv, TeamWorkspaceViewModel twv, ToolPlatformViewModel tpv, UpdateNotificationViewModel uv, IThemeService ts,
+        AgentFileDialogViewModel av, PrivacyDataViewModel pv, TeamWorkspaceViewModel twv, ToolPlatformViewModel tpv,
+        CapabilityWorkbenchViewModel capabilityWorkbenchVM, UpdateNotificationViewModel uv, IThemeService ts,
         IBackgroundService bg, IUiDensityService density, IInteractionSoundService sound, IAppReleaseService release, ISandboxCommandService sandbox, WorkspaceReviewViewModel review)
     {
         ViewModel = mvm; SidebarVM = svm; ChatVM = cvm; DebugVM = dvm;
         SettingsVM = sv; BgSettingsVM = bv; AgentFileVM = av; PrivacyDataVM = pv; TeamWorkspaceVM = twv; ToolPlatformVM = tpv;
+        CapabilityWorkbenchVM = capabilityWorkbenchVM;
         UpdateNotificationVM = uv; ThemeService = ts; BackgroundService = bg;
         UiDensityService = density; SoundService = sound; AppReleaseService = release; SandboxCommandService = sandbox; WorkspaceReviewVM = review;
 
@@ -922,6 +926,7 @@ public sealed partial class MainWindow : Window
                 new("Search Chats", "Focus the sidebar search", "Chat", "focus-search", 0),
                 new("Toggle Theme", "Switch between light and dark", "App", "toggle-theme", 10),
                 new("Open Settings", "Configure provider, model, keys", "App", "settings", 20),
+                new("Create & Research", "Research evidence and create spreadsheets, documents, and diagrams", "App", "workbench", 15),
                 new("Changes & Preview", "Review local Git changes", "Workspace", "changes", 10),
                 new("Clear Conversation", "Remove all messages", "Chat", "clear", 30),
                 new("Toggle Agent Mode", "Enable or disable agent", "Chat", "agent", 30),
@@ -1000,6 +1005,9 @@ public sealed partial class MainWindow : Window
                     await TryShowDialogAsync(dlg);
                 }
                 break;
+            case "workbench":
+                await OpenCapabilityWorkbenchAsync();
+                break;
             case "clear":
                 ChatVM.Messages.Clear();
                 ChatVM.ErrorMessage = null;
@@ -1044,6 +1052,43 @@ public sealed partial class MainWindow : Window
     }
 
     public void FocusMessageInput() => MessageInputView.FocusMessageInput();
+
+    public async Task OpenCapabilityWorkbenchAsync(string? page = null)
+    {
+        if (Interlocked.Exchange(ref _capabilityWorkbenchOpen, 1) != 0)
+            return;
+
+        try
+        {
+            if (!CapabilityWorkbenchVM.HasCurrentChat)
+            {
+                await SidebarVM.LoadChatsAsync();
+                if (SidebarVM.Chats.FirstOrDefault() is { } existingChat)
+                    SidebarVM.SelectedChat = existingChat;
+                else
+                    await SidebarVM.CreateChatAsync();
+            }
+
+            SoundService.Play(InteractionSound.Navigate);
+            var dialog = new CapabilityWorkbenchDialog
+            {
+                DataContext = CapabilityWorkbenchVM,
+                RequestedTheme = Content is FrameworkElement root
+                    ? root.ActualTheme
+                    : Microsoft.UI.Xaml.ElementTheme.Default,
+                XamlRoot = RootGrid.XamlRoot
+            };
+            if (Content is FrameworkElement host)
+                dialog.PrepareForHost(host.ActualWidth, host.ActualHeight);
+            if (!string.IsNullOrWhiteSpace(page))
+                dialog.SelectPage(page);
+            await TryShowDialogAsync(dialog, waitForTurn: true);
+        }
+        finally
+        {
+            Volatile.Write(ref _capabilityWorkbenchOpen, 0);
+        }
+    }
 
     public void ToggleAgentActivityPanel(bool? open = null)
     {

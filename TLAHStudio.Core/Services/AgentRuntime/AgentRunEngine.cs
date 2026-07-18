@@ -8,6 +8,7 @@ using TLAHStudio.Core.Services.Plugins;
 using TLAHStudio.Core.Models;
 using TLAHStudio.Core.Services.Context;
 using TLAHStudio.Core.Services.SessionMemory;
+using TLAHStudio.Core.Services.Tooling;
 using TLAHStudio.Core.Services.Tools.Models;
 
 #pragma warning disable CA1416
@@ -69,6 +70,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private readonly ISessionMemoryService _sessionMemory;
     private readonly IOutputStyleService? _outputStyle;
     private readonly ISkillLoader? _skillLoader;
+    private readonly IToolContextSelector _toolSelector;
 
     public AgentRunEngineV2(
         DbContext db,
@@ -116,6 +118,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         _sessionMemory = sessionMemory ?? new SessionMemoryService();
         _outputStyle = outputStyle;
         _skillLoader = skillLoader;
+        _toolSelector = new ToolContextSelector(agentTools);
     }
 
     public async Task<AgentRunResult> RunAsync(
@@ -279,7 +282,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                             new MessagePayload("user", fileCtx));
                     // M4.8.0: Re-inject available tools summary so the agent
                     // doesn't lose track of its tool set after compaction.
-                    var toolsSummary = BuildPostCompactToolsSummary();
+                    var toolsSummary = BuildPostCompactToolsSummary(state);
                     if (!string.IsNullOrEmpty(toolsSummary))
                         state.Messages.Insert(prepared.Messages.Count - 1,
                             new MessagePayload("user", toolsSummary));
@@ -317,8 +320,15 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         Severity: AgentEventSeverities.Warning), events, ct);
                 }
 
+                // M4.14.0: expose a compact, task-relevant set instead of all
+                // registered schemas on every turn. tool_search promotions in
+                // state are guaranteed to be included on the next turn.
+                var selectedTools = SelectToolsForState(state);
+
                 // Protocol guard
-                var guard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
+                var guard = ToolProtocolGuard.RepairForProvider(
+                    state.Messages,
+                    selectedTools.Definitions);
                 if (guard.HasRepairs)
                 {
                     state.Messages = guard.Messages.ToList();
@@ -408,7 +418,7 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                                 state.Messages.Insert(forced.Messages.Count - 1,
                                     new MessagePayload("user", fctx));
                             // M4.8.0: Re-inject tools summary.
-                            var ftoolsSummary = BuildPostCompactToolsSummary();
+                            var ftoolsSummary = BuildPostCompactToolsSummary(state);
                             if (!string.IsNullOrEmpty(ftoolsSummary))
                                 state.Messages.Insert(forced.Messages.Count - 1,
                                     new MessagePayload("user", ftoolsSummary));
@@ -444,7 +454,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                                 step.Id,
                                 Severity: AgentEventSeverities.Warning), events, ct);
 
-                            var retryGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
+                            var retryGuard = ToolProtocolGuard.RepairForProvider(
+                                state.Messages,
+                                selectedTools.Definitions);
                             if (!retryGuard.IsRejected)
                             {
                                 var retryMessages = await BuildModelMessagesWithRuntimeContextAsync(
@@ -489,7 +501,9 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                         keep.AddRange(msgs.Skip(skip));
                         state.Messages = keep;
 
-                        var truncGuard = ToolProtocolGuard.RepairForProvider(state.Messages, _agentTools.Definitions);
+                        var truncGuard = ToolProtocolGuard.RepairForProvider(
+                            state.Messages,
+                            selectedTools.Definitions);
                         if (!truncGuard.IsRejected)
                         {
                             var truncMessages = await BuildModelMessagesWithRuntimeContextAsync(
@@ -1477,13 +1491,81 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         return totalChars > 0 ? sb.ToString() : null;
     }
 
+    private ToolSelectionResult SelectToolsForState(AgentRunState state)
+    {
+        const int maxRecentChars = 8_000;
+        var recent = new StringBuilder();
+        foreach (var message in state.Messages.TakeLast(8))
+        {
+            if (recent.Length >= maxRecentChars)
+                break;
+            var content = message.Content ?? string.Empty;
+            var remaining = maxRecentChars - recent.Length;
+            recent.AppendLine(content.Length <= remaining
+                ? content
+                : content[..remaining]);
+        }
+
+        return _toolSelector.Select(new ToolSelectionContext(
+            state.UserRequest,
+            recent.ToString(),
+            state.LoadedDeferredToolNames,
+            state.LastFailedToolName));
+    }
+
+    private void PromoteToolSearchResults(AgentRunState state, AgentToolResult result)
+    {
+        const int availableDeferredSlots =
+            ToolContextSelector.DefaultMaxTools - ToolContextSelector.AlwaysAvailableToolCount;
+        var promoted = ToolCatalogPromotion.ExtractRegisteredNames(
+            result,
+            _agentTools,
+            availableDeferredSlots);
+        state.LoadedDeferredToolNames.Clear();
+        foreach (var name in promoted)
+            state.LoadedDeferredToolNames.Add(name);
+    }
+
+    private AgentToolResult BuildCatalogSearchResult(
+        string argumentsJson,
+        AgentToolResult fallback)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(argumentsJson);
+            var root = document.RootElement;
+            var query = root.TryGetProperty("query", out var queryElement) &&
+                        queryElement.ValueKind == JsonValueKind.String
+                ? queryElement.GetString() ?? string.Empty
+                : string.Empty;
+            var limit = root.TryGetProperty("limit", out var limitElement) &&
+                        limitElement.ValueKind == JsonValueKind.Number &&
+                        limitElement.TryGetInt32(out var parsedLimit)
+                ? parsedLimit
+                : 12;
+            var matches = _toolSelector.Search(query, limit);
+            return fallback with
+            {
+                Output = JsonSerializer.Serialize(
+                    matches,
+                    new JsonSerializerOptions { WriteIndented = true }),
+                StructuredContent = matches
+            };
+        }
+        catch (JsonException)
+        {
+            return fallback;
+        }
+    }
+
     /// <summary>
     /// M4.8.0: After compaction, inject a summary of available tools so the
     /// agent doesn't lose track of its tool set. Capped at 2000 chars.
     /// </summary>
-    private string? BuildPostCompactToolsSummary()
+    private string? BuildPostCompactToolsSummary(AgentRunState state)
     {
-        var tools = _agentTools.Definitions;
+        var selected = SelectToolsForState(state);
+        var tools = selected.Definitions;
         if (tools.Count == 0)
             return null;
 
@@ -1509,6 +1591,12 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         }
 
         sb.AppendLine();
+        if (selected.DeferredDefinitions.Count > 0)
+        {
+            sb.AppendLine(
+                $"{selected.DeferredDefinitions.Count} additional tools are deferred. " +
+                "Use tool_search to load a relevant capability.");
+        }
         sb.AppendLine("[/post-compaction context]");
         return sb.ToString();
     }
@@ -1659,9 +1747,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             prompt += $"\n\n[project memory: {memoryPath}]\n{projectMemory[..Math.Min(projectMemory.Length, 12_000)]}";
         var taskSummary = await _agentTasks.BuildOpenTaskSummaryAsync(state.ChatId, ct: ct);
         prompt += $"\n\n[current tracked tasks]\n{taskSummary}";
+        var selectedTools = SelectToolsForState(state);
         prompt += BuildAgentInstructions(
             _sandboxCommandService.GetSandboxRoot(state.ChatId),
-            _agentTools.Definitions.Select(t => t.Name),
+            selectedTools.Definitions.Select(t => t.Name),
+            selectedTools.DeferredDefinitions.Count,
             permissionMode);
         // M4.9.0: Skill listing — inject available skills with budget control.
         if (_skillLoader != null)
@@ -1724,7 +1814,11 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         return prompt;
     }
 
-    private static string BuildAgentInstructions(string sandboxRoot, IEnumerable<string> toolNames, string permissionMode)
+    private static string BuildAgentInstructions(
+        string sandboxRoot,
+        IEnumerable<string> toolNames,
+        int deferredToolCount,
+        string permissionMode)
     {
         var tools = string.Join(", ", toolNames.OrderBy(t => t, StringComparer.OrdinalIgnoreCase));
         var normalizedMode = AgentPermissionModes.Normalize(permissionMode);
@@ -1741,13 +1835,16 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         return $"""
 
         TLAH Agent Mode is enabled.
-        Registered tools: {tools}
+        Tools loaded for this task: {tools}
+        Deferred tools not currently in the model context: {deferredToolCount}. Use tool_search to load a relevant deferred tool for the next turn.
         Workspace root: {sandboxRoot}
         {hostAccessLine}
         Use the workspace root as the default working directory.
         {safetyBoundaryLine}
         Prefer typed memory, file, code, Git, HTTP, search, browser, terminal, and MCP tools over ad-hoc shell commands.
         Tool map: code_read/code_grep/code_glob/code_symbols inspect code; code_edit/code_multi_edit/code_apply_patch change code; file_* manages sandbox artifacts; web_search/browser_read/http_request handle web and APIs; mcp_* discovers and calls configured MCP servers; todo_* and task_* keep durable plans; terminal_exec is the escape hatch for commands and host-level work in Full access mode.
+        For claims, current information, or multi-source verification, use research_verify when it is loaded; it produces an evidence pack and optional attached report.
+        For spreadsheet, document, PDF, or diagram requests, use spreadsheet_*, document_*, and diagram_create directly. These tools create real workspace files and attachments without asking the user to open an external app or enter a special command.
         For development work, prefer code_read, code_grep, code_glob, code_diff, code_edit, code_multi_edit, code_apply_patch, code_rollback, and code_diagnostics.
         For file work, prefer file_list, file_read, file_write, file_search, and file_send. When you create a file the user should see, preview, download, or use outside the workspace, call file_send before the final answer.
         For multi-step work, maintain a persistent task plan with todo_write, task_create, task_update, and task_list. Keep one current task in_progress when possible and mark completed tasks promptly.
@@ -2029,10 +2126,17 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         var failure = string.IsNullOrWhiteSpace(state.LastFailureSummary)
             ? "The latest tool invocation failed."
             : $"Latest failure: {state.LastFailureSummary}";
+        var classification = string.IsNullOrWhiteSpace(state.LastFailureCode)
+            ? string.Empty
+            : $" Failure category: {state.LastFailureCode}; retryable: {state.LastFailureRetryable.ToString().ToLowerInvariant()}.";
+        var guidance = ToolFailureClassifier.RecoveryGuidance(
+            state.LastFailureCode,
+            state.LastFailureRetryable);
         return $"""
         [failure recovery]
-        {attempted}{failure}
-        Do not repeat the identical failed invocation. Inspect the error and choose a materially different tool, command, argument set, or smaller step. If no safe alternative can make progress, call ask_user_question with concrete recovery choices. Do not claim the task is complete while this failure is unresolved.
+        {attempted}{failure}{classification}
+        {guidance}
+        Do not repeat the identical failed invocation. At most one retry is allowed for a failure classified as retryable; otherwise choose a materially different tool, argument set, or smaller step. If no safe alternative can make progress, call ask_user_question with concrete recovery choices. Do not claim the task is complete while this failure is unresolved.
         [/failure recovery]
         """;
     }
@@ -2698,6 +2802,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         state.LastFailedInvocationSignature = ComputeInvocationSignature(item.ToolCall);
         state.LastFailedToolName = AgentToolNames.Normalize(item.ToolCall.Name);
         state.LastFailureSummary = state.UnknownOutcomeSummary;
+        state.LastFailureCode = "unknown_outcome";
+        state.LastFailureRetryable = false;
         state.RecoveryDirectiveIssuedForFailureSignature = null;
         state.RecoveryDirectivePending = true;
 
@@ -2788,6 +2894,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
         state.ConsecutiveToolFailures = Math.Max(1, state.ConsecutiveToolFailures);
         state.LastFailedToolName ??= AgentToolNames.Normalize(invocation.ToolName);
         state.LastFailureSummary = state.UnknownOutcomeSummary;
+        state.LastFailureCode = "unknown_outcome";
+        state.LastFailureRetryable = false;
         state.RecoveryDirectivePending = true;
         SyncRunState(run, state);
         await _db.SaveChangesAsync(ct);
@@ -2812,6 +2920,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
     private async Task CompleteInvocationWithResultAsync(AgentRunState state, ToolBatchItem item, AgentStep step,
         AgentToolResult result, AgentEngineOptions options, List<AgentEvent> events, CancellationToken ct)
     {
+        var durationMs = item.Invocation.StartedAt is { } startedAt
+            ? Math.Max(0, (long)(DateTime.UtcNow - startedAt).TotalMilliseconds)
+            : (long?)null;
+        var isToolSearch = string.Equals(
+            AgentToolNames.Normalize(item.ToolCall.Name),
+            AgentToolNames.ToolSearch,
+            StringComparison.OrdinalIgnoreCase);
+        if (result.Success && isToolSearch)
+            result = BuildCatalogSearchResult(item.ToolCall.ArgumentsJson, result);
+        result = ToolFailureClassifier.Enrich(result, durationMs);
+        if (result.Success && isToolSearch)
+            PromoteToolSearchResults(state, result);
+
         item.Invocation.Status = result.Success ? ToolInvocationStatuses.Completed : ToolInvocationStatuses.Failed;
         if (step.Status != AgentStepStatuses.Denied)
             step.Status = result.Success ? AgentStepStatuses.Completed : AgentStepStatuses.Failed;
@@ -2834,6 +2955,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 state.LastFailedInvocationSignature = null;
                 state.LastFailedToolName = null;
                 state.LastFailureSummary = null;
+                state.LastFailureCode = null;
+                state.LastFailureRetryable = false;
                 state.RecoveryDirectivePending = false;
                 state.RecoveryDirectiveIssuedForFailureSignature = null;
             }
@@ -2862,6 +2985,8 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             state.LastFailureSummary = SecretRedactor.RedactText(TrimForContext(
                 result.Error ?? "Tool invocation failed without an error message.",
                 500));
+            state.LastFailureCode = result.ErrorCode;
+            state.LastFailureRetryable = result.Retryable;
             state.RecoveryDirectiveIssuedForFailureSignature = null;
             state.LastRecoveryCandidateInvocationSignature = null;
             state.RecoveryDirectivePending = true;
@@ -2927,7 +3052,12 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 contextResult.Success,
                 isTruncated = item.Tool.IsResultTruncated(contextResult),
                 error = contextResult.Error,
+                errorCode = contextResult.ErrorCode,
+                retryable = contextResult.Retryable,
+                durationMs = contextResult.DurationMs,
                 warning = contextResult.Warning,
+                hasStructuredContent = contextResult.StructuredContent != null,
+                sourceCount = contextResult.Sources?.Count ?? 0,
                 artifactCount = contextResult.Artifacts?.Count ?? 0,
                 render = resultRender
             },
@@ -2992,13 +3122,19 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
                 StringComparison.Ordinal))
             return false;
 
-        // Terminal/sandbox tools are conservatively registered as write-capable,
-        // even when this exact invocation is only inspecting state. Use the
-        // invocation-level safety preview as well so a successful diagnostic
-        // command cannot erase an unrelated unresolved failure.
-        if (item.Tool.Metadata.IsReadOnly || item.Safety.IsReadOnly ||
-            IsObviousHousekeepingInvocation(item.ToolCall))
+        if (IsObviousHousekeepingInvocation(item.ToolCall))
             return false;
+
+        // A different read-only tool can be the actual recovery for a failed
+        // read operation (for example, browser_read after web_search failed).
+        // Accept it only inside the same recovery family. This keeps unrelated
+        // diagnostics and housekeeping reads from erasing a write failure.
+        if (item.Tool.Metadata.IsReadOnly || item.Safety.IsReadOnly)
+        {
+            return IsReadOnlyRecoveryAlternative(
+                state.LastFailedToolName,
+                current);
+        }
 
         return current is not (
             AgentToolNames.TodoWrite or
@@ -3011,6 +3147,45 @@ public class AgentRunEngineV2 : IAgentRunEngineV2
             AgentToolNames.MemoryWrite or
             AgentToolNames.EnterPlanMode or
             AgentToolNames.ExitPlanMode);
+    }
+
+    private static bool IsReadOnlyRecoveryAlternative(
+        string? failedToolName,
+        string successfulToolName)
+    {
+        var failedFamily = ReadOnlyRecoveryFamily(failedToolName);
+        return failedFamily != null &&
+               string.Equals(
+                   failedFamily,
+                   ReadOnlyRecoveryFamily(successfulToolName),
+                   StringComparison.Ordinal);
+    }
+
+    private static string? ReadOnlyRecoveryFamily(string? toolName)
+    {
+        var normalized = string.IsNullOrWhiteSpace(toolName)
+            ? string.Empty
+            : AgentToolNames.Normalize(toolName);
+        return normalized switch
+        {
+            AgentToolNames.WebSearch or
+            AgentToolNames.BrowserRead or
+            AgentToolNames.HttpRequest or
+            AgentToolNames.ResearchVerify => "research",
+
+            AgentToolNames.FileList or
+            AgentToolNames.FileRead or
+            AgentToolNames.FileSearch or
+            AgentToolNames.FileInfo or
+            AgentToolNames.CodeRead or
+            AgentToolNames.CodeGrep or
+            AgentToolNames.CodeGlob or
+            AgentToolNames.CodeDiff or
+            AgentToolNames.CodeDiagnostics or
+            AgentToolNames.CodeSymbols => "workspace_read",
+
+            _ => null
+        };
     }
 
     private static bool IsObviousHousekeepingInvocation(LlmToolCall call)

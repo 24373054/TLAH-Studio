@@ -24,6 +24,19 @@ public class AnthropicProvider : ILlmProvider
 
     public string EndpointUrl => $"{_baseUrl}/v1/messages";
 
+    private bool IsOfficialAnthropic =>
+        Uri.TryCreate(_baseUrl, UriKind.Absolute, out var uri) &&
+        string.Equals(uri.Host, "api.anthropic.com", StringComparison.OrdinalIgnoreCase);
+
+    public LlmProviderCapabilities Capabilities => IsOfficialAnthropic
+        ? new(
+            StrictToolSchemas: true,
+            ParallelToolCalls: true,
+            ToolChoice: true,
+            ToolInputExamples: true,
+            DeferredTools: true)
+        : LlmProviderCapabilities.Compatible;
+
     public AnthropicProvider(HttpClient http, string apiKey, string baseUrl, string model)
     {
         _http = http;
@@ -53,12 +66,22 @@ public class AnthropicProvider : ILlmProvider
         };
         if (tools is { Count: > 0 })
         {
-            rawRequest["tools"] = tools.Select(t => new
+            rawRequest["tools"] = tools.Select(BuildToolDefinition).ToArray();
+            if (Capabilities.ToolChoice)
             {
-                name = t.Name,
-                description = t.Description,
-                input_schema = t.InputSchema
-            }).ToArray();
+                var safeParallel = tools.Count > 1 &&
+                    tools.All(t => t.Annotations is
+                    {
+                        ReadOnly: true,
+                        ConcurrencySafe: true,
+                        Destructive: false
+                    });
+                rawRequest["tool_choice"] = new
+                {
+                    type = "auto",
+                    disable_parallel_tool_use = !safeParallel
+                };
+            }
         }
         AddDeepSeekAnthropicReasoningOptions(rawRequest, reasoning);
 
@@ -189,6 +212,25 @@ public class AnthropicProvider : ILlmProvider
             ToolCalls: toolCalls,
             ReasoningText: reasoningText
         );
+    }
+
+    private object BuildToolDefinition(LlmToolDefinition tool)
+    {
+        var definition = new Dictionary<string, object>
+        {
+            ["name"] = tool.Name,
+            ["description"] = tool.Description,
+            ["input_schema"] = Capabilities.StrictToolSchemas && tool.Strict
+                ? LlmToolSchema.NormalizeForStrictProvider(tool.InputSchema)
+                : tool.InputSchema
+        };
+        if (Capabilities.StrictToolSchemas && tool.Strict)
+            definition["strict"] = true;
+        if (Capabilities.ToolInputExamples && tool.InputExamples is { Count: > 0 })
+            definition["input_examples"] = tool.InputExamples;
+        if (Capabilities.DeferredTools && tool.Deferred)
+            definition["defer_loading"] = true;
+        return definition;
     }
 
     private void AddDeepSeekAnthropicReasoningOptions(

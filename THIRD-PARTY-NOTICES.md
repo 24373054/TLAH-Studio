@@ -2,7 +2,7 @@
 
 TLAH Studio includes or depends on third-party software. Each component remains governed by its own license; the repository's proprietary license does not replace those terms.
 
-This inventory covers the principal direct build and runtime dependencies in version 4.13.0. Transitive NuGet packages and native runtime files may add further notices. The authoritative license is the one shipped with the relevant package or upstream source.
+This inventory covers the principal direct build and runtime dependencies in version 4.14.0. Transitive NuGet packages and native runtime files may add further notices. The authoritative license is the one shipped with the relevant package or upstream source.
 
 | Component | Version | Project | License / terms |
 |---|---:|---|---|
@@ -17,6 +17,13 @@ This inventory covers the principal direct build and runtime dependencies in ver
 | coverlet | 10.0.1 | [coverlet-coverage/coverlet](https://github.com/coverlet-coverage/coverlet) | MIT |
 | ColorCode.WinUI | 2.0.15 | [CommunityToolkit/ColorCode-Universal](https://github.com/CommunityToolkit/ColorCode-Universal) | MIT |
 | TextMateSharp | 2.0.4 | [danipen/TextMateSharp](https://github.com/danipen/TextMateSharp) | MIT |
+| AngleSharp | 1.5.2 | [AngleSharp/AngleSharp](https://github.com/AngleSharp/AngleSharp) | MIT |
+| ClosedXML | 0.105.0 | [ClosedXML/ClosedXML](https://github.com/ClosedXML/ClosedXML) | MIT |
+| CsvHelper | 33.1.0 | [JoshClose/CsvHelper](https://github.com/JoshClose/CsvHelper) | MS-PL OR Apache-2.0 |
+| Open XML SDK | 3.5.1 | [dotnet/Open-XML-SDK](https://github.com/dotnet/Open-XML-SDK) | MIT |
+| PDFsharp and MigraDoc | 6.2.4 | [empira/PDFsharp](https://github.com/empira/PDFsharp) | MIT |
+| PdfPig | 0.1.15 | [UglyToad/PdfPig](https://github.com/UglyToad/PdfPig) | Apache-2.0 |
+| SkiaSharp + Win32 native assets | 4.150.1 | [mono/SkiaSharp](https://github.com/mono/SkiaSharp) | MIT |
 | Inno Setup | 6 | [jrsoftware.org](https://jrsoftware.org/isinfo.php) | Inno Setup license |
 
 Bundled TextMate grammar files under `TLAHStudio.App/Assets/grammars/` may originate from language-specific upstream grammar projects. Their copyright and license headers, where present, must be preserved. Contributors adding a grammar, icon, font, copied algorithm, or other third-party asset must record its source, version/commit, and license in this file.

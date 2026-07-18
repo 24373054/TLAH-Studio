@@ -103,7 +103,7 @@ public sealed partial class MessageInputControl : UserControl
     private void OnInputRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         var compact = e.NewSize.Width < 620;
-        var showStateLabels = e.NewSize.Width >= 780;
+        var showStateLabels = e.NewSize.Width >= 920;
         InputRoot.Padding = compact
             ? new Thickness(12, 10, 12, 10)
             : new Thickness(20, 14, 20, 14);
@@ -113,6 +113,7 @@ public sealed partial class MessageInputControl : UserControl
         RoleButton.Margin = new Thickness(0);
         AgentModeButton.Margin = new Thickness(0);
         WorkspaceButton.Margin = new Thickness(0);
+        CapabilityButton.Margin = new Thickness(0);
         ReasoningDepthButton.Margin = new Thickness(0);
         PermissionModeButton.Margin = new Thickness(0);
         ActionGrid.Margin = new Thickness(0);
@@ -123,6 +124,7 @@ public sealed partial class MessageInputControl : UserControl
             : new Thickness(14, 10, 14, 10);
         AgentModeLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
         WorkspaceLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
+        CapabilityLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
         ReasoningDepthLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
         PermissionModeLabel.Visibility = showStateLabels ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -476,6 +478,14 @@ public sealed partial class MessageInputControl : UserControl
         }
     }
 
+    private async void CapabilityButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindow is not MainWindow window)
+            return;
+
+        await window.OpenCapabilityWorkbenchAsync();
+    }
+
     private async void ChooseWorkspace_Click(object sender, RoutedEventArgs e)
     {
         if (_vm == null || App.MainWindow == null)
@@ -646,6 +656,7 @@ public sealed partial class MessageInputControl : UserControl
         RoleButton.IsEnabled = !sending;
         AgentModeButton.IsEnabled = !sending;
         WorkspaceButton.IsEnabled = !sending;
+        CapabilityButton.IsEnabled = !sending;
         ReasoningDepthButton.IsEnabled = !sending;
         PermissionModeButton.IsEnabled = !sending;
 

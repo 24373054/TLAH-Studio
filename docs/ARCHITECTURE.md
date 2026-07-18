@@ -1,6 +1,6 @@
 # Architecture
 
-Verified against TLAH Studio 4.13.0.
+Verified against TLAH Studio 4.14.0.
 
 ## System Context
 
@@ -69,7 +69,9 @@ sequenceDiagram
 
 ## Tool Lifecycle and Safety
 
-Forty-four `IAgentTool` implementations are registered in the desktop host. They cover plan/user interaction, skills, tasks, file and code operations, Git, command execution, HTTP/web, MCP, and memory.
+Fifty-one `IAgentTool` implementations are registered in the desktop host. They cover plan/user interaction, skills, tasks, file and code operations, Git, command execution, HTTP/web, multi-source research, spreadsheets, documents, diagrams, MCP, and memory.
+
+The registry remains the source of truth, but a deterministic context selector sends no more than 15 initially callable tools on a normal turn. User intent, recent conversation/tool context, failed-tool recovery, and explicit catalog results choose the active subset. Deferred tools remain searchable, and catalog promotion accepts only names present in the live registry.
 
 ```mermaid
 flowchart LR
@@ -96,6 +98,25 @@ The immutable guard is deliberately narrow: catastrophic root-recursive deletion
 
 The restricted local backend uses command, path, protocol, resource, and approval policies. It does not create a hardened OS isolation boundary. WSL and Docker require local installation; remote execution requires an explicitly configured endpoint and credential. The default command runtime limit is 120 seconds unless settings or a tool request select another supported value.
 
+## Research and Artifact Workbench
+
+The same specialist services are available through agent tools and the visible **Create & Research** dialog. The expanded sidebar, compact sidebar, composer, and command palette open the dialog directly; no model call, slash command, or JSON is required to start a workflow.
+
+```mermaid
+flowchart LR
+    ENTRY[Visible workbench entry] --> UI[Research · Spreadsheet<br/>Document · Diagram · Quality]
+    AGENT[Selected agent tool] --> SERVICES[Specialist Core services]
+    UI --> SERVICES
+    SERVICES --> RESEARCH[Public HTTPS research<br/>HTML/PDF extraction]
+    SERVICES --> ARTIFACTS[XLSX · CSV · MD · DOCX · PDF<br/>SVG · high-DPI PNG]
+    ARTIFACTS --> VALIDATE[Reopen / decode validation]
+    VALIDATE --> WORKSPACE[(Active workspace<br/>or per-chat private sandbox)]
+```
+
+Research supports Quick, Balanced, and Deep modes, domain allow/block lists, recency, language, source limits, independent-domain evidence, conflicts, and partial retrieval failures. It permits public HTTPS destinations only and rejects loopback, private, and link-local targets even in Full access.
+
+Artifact writes are workspace-scoped, atomic, conflict-safe by default, and validated after creation. The workbench uses the active workspace or that chat's isolated `%LOCALAPPDATA%\TLAH Studio\sandboxes\<chat>` root, displays the full path, and provides preview/open actions. Agent-created outputs carry path, content type, size, and checksum metadata.
+
 ## Long-Run Recovery
 
 - Anthropic and OpenAI-compatible streaming adapters require a terminal marker. A truncated stream is a provider failure, not a successful partial answer.
@@ -116,7 +137,7 @@ The restricted local backend uses command, path, protocol, resource, and approva
 
 ## Providers, MCP, and Plugins
 
-- Provider adapters directly use `HttpClient` for Anthropic and OpenAI-compatible protocols. Streaming and non-streaming paths share persistence and redaction behavior; streamed responses additionally prove terminal completion before they are accepted.
+- Provider adapters directly use `HttpClient` for Anthropic and OpenAI-compatible protocols. Streaming and non-streaming paths share persistence and redaction behavior; streamed responses additionally prove terminal completion before they are accepted. Official OpenAI and Anthropic endpoints receive normalized strict schemas and safe read-only parallel-call hints, while compatible endpoints omit unsupported extensions.
 - MCP supports STDIO and Streamable HTTP, including tool discovery/calls and resource list/read.
 - Skills may be bundled, user-managed, project-scoped, or activated through trusted local plugin manifests.
 - Plugin support currently centers on skills and MCP activation; it should not be treated as a general marketplace or arbitrary managed-code extension boundary.

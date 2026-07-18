@@ -50,7 +50,9 @@ The app is local-first, not offline-only: chats and run records are persisted lo
 | Area | What is included |
 |---|---|
 | **Agent runtime** | Multi-step execution, bounded provider retry, failure-aware replanning, replay-fenced unknown outcomes, adaptive step budgets, pause/resume, checkpoints, artifacts, tasks, and Activity replay |
+| **Tool intelligence** | Deterministic context selection capped at 15 initially callable tools, live catalog search, strict schemas on official providers, structured results, and recovery-aware errors |
 | **Workspace tooling** | File and code operations, Git, PowerShell execution, private chat sandboxes, and a Changes review surface |
+| **Create & Research** | Visible research, spreadsheet, document, diagram, and local tool-quality pages with normal file/folder actions and no hidden commands |
 | **Reasoning and permissions** | Independent `Auto / Off / Low / Medium / High / Max` reasoning controls plus four tool permission modes |
 | **Providers and MCP** | Anthropic and OpenAI-compatible HTTP protocols; MCP over STDIO and Streamable HTTP with tools and resources |
 | **Context and memory** | Adaptive long-chain budgeting, reactive compaction, project/session memory, persistent large tool outputs, and slash commands |
@@ -75,12 +77,26 @@ The app is local-first, not offline-only: chats and run records are persisted lo
 
 Approval arguments are read-only by default. Advanced edits require explicit opt-in and must be a valid JSON object accepted by the target tool before they replace the persisted invocation. Restricted execution is policy- and backend-based; it is not a VM security boundary. Use Full access only with trusted prompts and workspaces.
 
+### Create & Research workbench
+
+Open **Create & Research** from the expanded sidebar, compact sidebar, message composer, or command palette. These are direct product surfaces—not prompt conventions.
+
+| Page | Direct workflow |
+|---|---|
+| Research | Run Quick, Balanced, or Deep public-source research; filter domains, recency, and language while depth selects the source budget; save a cited evidence report |
+| Spreadsheet | Paste CSV/TSV-style data and create a styled XLSX workbook with frozen headers, filters, automatic widths, and optional chart preview |
+| Document | Create Markdown, DOCX, or PDF files from normal text and structured sections |
+| Diagram & chart | Create flowcharts, architecture diagrams, bar charts, or line charts as SVG and high-DPI PNG |
+| Tool quality | Review local call outcomes, latency, shell fallback, catalog search, and per-tool success without reading prompt or file contents |
+
+Outputs are written to the active workspace. If no workspace is selected, TLAH Studio uses that chat's isolated `%LOCALAPPDATA%\TLAH Studio\sandboxes\<chat>` folder. The workbench displays the full path and exposes result preview, **Open result**, and **Open folder** actions, so users do not need to prepare anything outside the app.
+
 ## Project snapshot
 
 | Metric | Current repository state |
 |---|---:|
-| Stable release | `4.13.0` |
-| Registered agent tools | `44` |
+| Stable release | `4.14.0` |
+| Registered agent tools | `51` |
 | Bundled skills | `12` |
 | MCP transports | STDIO + Streamable HTTP |
 | Official artifact | Windows x64, self-contained installer |
@@ -96,12 +112,17 @@ Live repository activity:
 ```mermaid
 flowchart LR
     UI[WinUI 3 Views<br/>ViewModels] --> ORCH[LlmService]
+    UI --> WORKBENCH[Create & Research<br/>direct workbench]
     UI --> SETTINGS[Chat · Settings · Workspace services]
     SETTINGS --> DB[(EF Core + SQLite)]
-    ORCH --> PROVIDERS[HTTP provider adapters<br/>OpenAI-compatible · Anthropic]
+    ORCH --> SELECTOR[Tool context selector<br/>15 or fewer initially callable]
+    SELECTOR --> PROVIDERS[HTTP provider adapters<br/>OpenAI-compatible · Anthropic]
     ORCH --> ENGINE[AgentRunEngineV2]
     ENGINE --> CONTEXT[Token budget<br/>Compaction · Memory]
     ENGINE --> TOOLS[Tool registry<br/>Scheduler · Lifecycle hooks]
+    WORKBENCH --> SPECIALISTS[Research · spreadsheet<br/>document · diagram]
+    TOOLS --> SPECIALISTS
+    SPECIALISTS --> FILES[(Validated workspace artifacts)]
     TOOLS --> GUARD[Safety classification<br/>Permission gate · Protocol guard]
     GUARD --> EXEC[Workspace · PowerShell · Git<br/>WSL · Docker · Remote]
     TOOLS --> MCP[MCP<br/>STDIO · Streamable HTTP]
@@ -121,6 +142,7 @@ The primary dependency direction is `App → Core + Data`, `Data → Core`, and 
 | CommunityToolkit.Mvvm | `8.4.0` |
 | Entity Framework Core | `8.0.28` |
 | SQLite | Local embedded persistence |
+| Research and artifacts | AngleSharp/PdfPig, ClosedXML/CsvHelper, Open XML/PDFsharp, and SkiaSharp |
 | xUnit / coverlet | `2.9.3` / `10.0.1` |
 | Inno Setup | User-level x64 installer |
 
@@ -158,7 +180,7 @@ Open `TLAHStudio.sln` in Visual Studio and launch `TLAHStudio.App` for desktop d
 
 ```text
 TLAHStudio.App/          WinUI shell, views, view models, motion, and assets
-TLAHStudio.Core/         Agent runtime, providers, tools, MCP, context, security
+TLAHStudio.Core/         Agent runtime, providers, tools, research, artifacts, MCP, security
 TLAHStudio.Data/         EF Core model, SQLite initialization, forward migrations
 TLAHStudio.Updater/      Standalone update helper
 TLAHStudio.Installer/    Inno Setup and signed release metadata
@@ -174,6 +196,7 @@ deploy/download-page/    Download site assets and service configuration
 - Conversations, settings, run history, and audit records are stored in local SQLite by default.
 - Provider prompts/responses are transmitted to the endpoint selected by the user; web, HTTP, MCP, remote execution, and update operations also communicate externally when used.
 - Tool requests pass through centralized safety and authorization. `Full access` intentionally bypasses ordinary restrictions but never the immutable catastrophic-operation guard.
+- Tool Quality computes local aggregate metrics from tool names, statuses, and timestamps; it does not query prompts, tool arguments/results, or file contents.
 - Security reports should use [GitHub Private Vulnerability Reporting](https://github.com/24373054/TLAH-Studio/security/advisories/new), not a public issue.
 
 Read [SECURITY.md](./SECURITY.md) and [Privacy and data flows](./docs/PRIVACY.md) before using sensitive workspaces.

@@ -386,6 +386,14 @@ public sealed partial class SidebarPage : UserControl
         await w.SidebarVM.LoadChatsAsync();
     }
 
+    private async void CapabilityWorkbench_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindow is not MainWindow window)
+            return;
+
+        await window.OpenCapabilityWorkbenchAsync();
+    }
+
     private async void Tools_Click(object sender, RoutedEventArgs e)
     {
         if (App.MainWindow is not MainWindow w)

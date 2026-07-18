@@ -38,6 +38,8 @@ public sealed record AgentRunState
     public string? LastFailedInvocationSignature { get; set; }
     public string? LastFailedToolName { get; set; }
     public string? LastFailureSummary { get; set; }
+    public string? LastFailureCode { get; set; }
+    public bool LastFailureRetryable { get; set; }
     public bool RecoveryDirectivePending { get; set; }
     // A failure is resolved only by a materially different action taken after
     // the corresponding recovery directive. Persist both sides of that proof
@@ -71,6 +73,11 @@ public sealed record AgentRunState
     public bool? PrePlanAutoApproveTools { get; set; }
     // M4.9.0: Track sent skill names so they survive compaction/resume.
     public HashSet<string> SentSkillNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    // M4.14.0: tool_search results are promoted into the next provider turn.
+    // The set is checkpointed so approval, compaction, and app restart do not
+    // silently unload a capability the model already discovered.
+    public HashSet<string> LoadedDeferredToolNames { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 
     /// <summary>
@@ -85,7 +92,10 @@ public sealed record AgentRunState
         }).ToList(),
         DeferredToolCalls = DeferredToolCalls.Select(tc => tc with { }).ToList(),
         // M4.9.0: Deep-copy SentSkillNames so resume doesn't share state.
-        SentSkillNames = new HashSet<string>(SentSkillNames, SentSkillNames.Comparer)
+        SentSkillNames = new HashSet<string>(SentSkillNames, SentSkillNames.Comparer),
+        LoadedDeferredToolNames = new HashSet<string>(
+            LoadedDeferredToolNames,
+            LoadedDeferredToolNames.Comparer)
     };
 }
 

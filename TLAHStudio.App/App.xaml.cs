@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using TLAHStudio.Core.Llm;
 using TLAHStudio.Core.Services;
 using TLAHStudio.Core.Services.AgentRuntime;
+using TLAHStudio.Core.Services.Artifacts;
 using TLAHStudio.Core.Services.Background;
 using TLAHStudio.Core.Services.Context;
 using TLAHStudio.Core.Services.Lsp;
@@ -14,6 +15,7 @@ using TLAHStudio.Core.Services.Mcp;
 using TLAHStudio.Core.Services.Memory;
 using TLAHStudio.Core.Services.Observability;
 using TLAHStudio.Core.Services.Plugins;
+using TLAHStudio.Core.Services.Research;
 using TLAHStudio.Core.Services.Sandbox;
 using TLAHStudio.Core.Services.Sdk;
 using TLAHStudio.Core.Services.Tools;
@@ -99,6 +101,8 @@ public partial class App : Application
             services.AddScoped<IProjectMemoryService, ProjectMemoryService>();
             services.AddScoped<IToolResultPersistenceService, ToolResultPersistenceService>();
             services.AddScoped<IAgentTaskService, AgentTaskService>();
+            services.AddScoped<IResearchWorkbenchService, ResearchWorkbenchService>();
+            services.AddScoped<IArtifactWorkbenchService, ArtifactWorkbenchService>();
             // M4.9.0: Plan mode tools
             services.AddScoped<IAgentTool, EnterPlanModeAgentTool>();
             services.AddScoped<IAgentTool, ExitPlanModeAgentTool>();
@@ -131,6 +135,13 @@ public partial class App : Application
             services.AddScoped<IAgentTool, HttpRequestAgentTool>();
             services.AddScoped<IAgentTool, WebSearchAgentTool>();
             services.AddScoped<IAgentTool, BrowserReadAgentTool>();
+            services.AddScoped<IAgentTool, ResearchVerifyAgentTool>();
+            services.AddScoped<IAgentTool, SpreadsheetCreateAgentTool>();
+            services.AddScoped<IAgentTool, SpreadsheetInspectAgentTool>();
+            services.AddScoped<IAgentTool, SpreadsheetUpdateAgentTool>();
+            services.AddScoped<IAgentTool, DocumentCreateAgentTool>();
+            services.AddScoped<IAgentTool, DocumentInspectAgentTool>();
+            services.AddScoped<IAgentTool, DiagramCreateAgentTool>();
             services.AddScoped<IAgentTool, McpListToolsAgentTool>();
             services.AddScoped<IAgentTool, McpListResourcesAgentTool>();
             services.AddScoped<IAgentTool, McpReadResourceAgentTool>();
@@ -196,6 +207,7 @@ public partial class App : Application
 
             // M2.14.0: Observability & SDK
             services.AddSingleton<IRuntimeMetricsCollector, RuntimeMetricsCollector>();
+            services.AddScoped<IToolQualityService, ToolQualityService>();
             services.AddSingleton<IDiagnosticPackageExporter, DiagnosticPackageExporter>();
             services.AddSingleton<ILocalSdkHost, LocalSdkHost>();
 
@@ -221,6 +233,7 @@ public partial class App : Application
             services.AddTransient<PrivacyDataViewModel>();
             services.AddTransient<TeamWorkspaceViewModel>();
             services.AddTransient<ToolPlatformViewModel>();
+            services.AddTransient<CapabilityWorkbenchViewModel>();
             services.AddSingleton<UpdateNotificationViewModel>();
 
             // Window
