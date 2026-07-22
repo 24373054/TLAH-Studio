@@ -1,6 +1,6 @@
 # Architecture
 
-Verified against TLAH Studio 4.14.0.
+Verified against TLAH Studio 4.15.0.
 
 ## System Context
 
@@ -113,7 +113,7 @@ flowchart LR
     VALIDATE --> WORKSPACE[(Active workspace<br/>or per-chat private sandbox)]
 ```
 
-Research supports Quick, Balanced, and Deep modes, domain allow/block lists, recency, language, source limits, independent-domain evidence, conflicts, and partial retrieval failures. It permits public HTTPS destinations only and rejects loopback, private, and link-local targets even in Full access.
+Research supports Quick, Balanced, and Deep modes, domain allow/block lists, recency, language, source limits, independent-domain evidence, conflicts, and partial retrieval failures. Search starts with DuckDuckGo HTML; its adaptive fallback uses GDELT Project for non-language-constrained news or the matching `en`/`zh`/`ja`/`ko`/`de`/`fr` Wikipedia edition for timeless/entity lookup, then DuckDuckGo Lite. Each structured search endpoint gets one bounded attempt: 408/429/5xx, timeout, and network failures fall through to the next provider instead of multiplying tail latency. A GDELT request also activates a local five-second-or-`Retry-After` provider gate across query variants. Wikipedia uses the bounded `list=search` API; `ratelimited` and `maxlag` envelopes fall through immediately. Provider, provider URL, article URL, and applicable CC BY-SA 4.0 attribution survive into evidence, reports, agent source metadata, and the visible result preview. Page-content retrieval retains its independent bounded retry policy. Research permits public HTTPS destinations only and rejects loopback, private, and link-local targets even in Full access.
 
 Artifact writes are workspace-scoped, atomic, conflict-safe by default, and validated after creation. The workbench uses the active workspace or that chat's isolated `%LOCALAPPDATA%\TLAH Studio\sandboxes\<chat>` root, displays the full path, and provides preview/open actions. Agent-created outputs carry path, content type, size, and checksum metadata.
 

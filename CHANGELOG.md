@@ -2,6 +2,23 @@
 
 All notable user-visible changes are recorded here. The project follows semantic versioning for stable releases.
 
+## [4.15.0] - 2026-07-22
+
+### Added
+
+- Added an immersive living aquarium to the expanded sidebar, with a depth-authored local backdrop, layered water and glass, curved fish routes, articulated tails, bubbles, particles, plant sway, and organic caustics.
+- Added visible `Auto`, `Eco`, `Balanced`, and `High` aquarium quality profiles plus pointer and keyboard pause/resume with persisted preferences and accessible state text.
+
+### Changed
+
+- Moved the aquarium's continuous motion to grouped `Microsoft.UI.Composition` fields and shared decoded surfaces so resize scales one fixed scene instead of rebuilding animation state.
+- Improved zero-configuration web search with query-aware GDELT and language-matched Wikipedia fallbacks, bounded retry/cooldown behavior, and provider/license attribution carried into evidence and reports.
+
+### Fixed
+
+- Stop aquarium animation when the sidebar is collapsed, the window is inactive, Windows motion is disabled, High Contrast or Energy Saver is active, or the control is unloaded; a composed poster remains visible in every static state.
+- Prevent duplicate aquarium subscriptions and animation channels after navigation, theme changes, sidebar reopen, or window reactivation.
+
 ## [4.14.0] - 2026-07-16
 
 ### Added
@@ -84,6 +101,7 @@ All notable user-visible changes are recorded here. The project follows semantic
 
 Earlier milestones are retained as historical design records in [`docs/`](./docs/README.md). Release artifacts and notes are available on the [GitHub Releases page](https://github.com/24373054/TLAH-Studio/releases).
 
+[4.15.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.15.0
 [4.14.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.14.0
 [4.13.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.13.0
 [4.12.0]: https://github.com/24373054/TLAH-Studio/releases/tag/v4.12.0

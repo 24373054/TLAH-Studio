@@ -56,6 +56,7 @@ public sealed partial class MainWindow : Window
 
     public WorkspaceReviewViewModel WorkspaceReviewVM { get; }
     public Microsoft.UI.Xaml.ElementTheme CurrentAppTheme => RootGrid.ActualTheme;
+    public bool IsWindowActive { get; private set; } = true;
     public async Task<ContentDialogResult?> TryShowDialogAsync(ContentDialog dialog, bool waitForTurn = false)
     {
         if (waitForTurn)
@@ -88,13 +89,15 @@ public sealed partial class MainWindow : Window
         DebugPanelViewModel dvm, SettingsDialogViewModel sv, BackgroundSettingsDialogViewModel bv,
         AgentFileDialogViewModel av, PrivacyDataViewModel pv, TeamWorkspaceViewModel twv, ToolPlatformViewModel tpv,
         CapabilityWorkbenchViewModel capabilityWorkbenchVM, UpdateNotificationViewModel uv, IThemeService ts,
-        IBackgroundService bg, IUiDensityService density, IInteractionSoundService sound, IAppReleaseService release, ISandboxCommandService sandbox, WorkspaceReviewViewModel review)
+        IBackgroundService bg, IUiDensityService density, IInteractionSoundService sound,
+        IAppReleaseService release, ISandboxCommandService sandbox, WorkspaceReviewViewModel review)
     {
         ViewModel = mvm; SidebarVM = svm; ChatVM = cvm; DebugVM = dvm;
         SettingsVM = sv; BgSettingsVM = bv; AgentFileVM = av; PrivacyDataVM = pv; TeamWorkspaceVM = twv; ToolPlatformVM = tpv;
         CapabilityWorkbenchVM = capabilityWorkbenchVM;
         UpdateNotificationVM = uv; ThemeService = ts; BackgroundService = bg;
-        UiDensityService = density; SoundService = sound; AppReleaseService = release; SandboxCommandService = sandbox; WorkspaceReviewVM = review;
+        UiDensityService = density; SoundService = sound; AppReleaseService = release;
+        SandboxCommandService = sandbox; WorkspaceReviewVM = review;
 
         App.Log("MainWindow ctor entered.");
         this.InitializeComponent();
@@ -152,6 +155,8 @@ public sealed partial class MainWindow : Window
         RootGrid.Loaded += OnRootGridLoaded;
         RootGrid.SizeChanged += OnRootGridSizeChanged;
         RootGrid.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnGlobalKeyDown), true);
+        Activated += (_, args) =>
+            IsWindowActive = args.WindowActivationState != WindowActivationState.Deactivated;
         Activated += OnFirst;
         ApplyWorkbenchPanelTheme();
         UpdateAgentActivityPanelLayout();

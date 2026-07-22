@@ -1,0 +1,192 @@
+<UserControl
+    x:Class="TLAHStudio.App.Views.Controls.AquariumPortalControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Name="AquariumControl">
+
+    <ToggleButton
+        x:Name="AquariumButton"
+        IsChecked="True"
+        Click="AquariumButton_Click"
+        PointerEntered="AquariumButton_PointerEntered"
+        PointerExited="AquariumButton_PointerExited"
+        PointerPressed="AquariumButton_PointerPressed"
+        PointerReleased="AquariumButton_PointerReleased"
+        GotFocus="AquariumButton_GotFocus"
+        LostFocus="AquariumButton_LostFocus"
+        Padding="0"
+        HorizontalContentAlignment="Stretch"
+        VerticalContentAlignment="Stretch"
+        Background="Transparent"
+        BorderThickness="0"
+        UseSystemFocusVisuals="False"
+        AutomationProperties.Name="Living aquarium, playing. Activate to pause."
+        AutomationProperties.HelpText="Animated decorative aquarium. Press Enter or Space to pause or resume."
+        ToolTipService.ToolTip="Living aquarium · click to pause or resume">
+        <ToggleButton.Template>
+            <ControlTemplate TargetType="ToggleButton">
+                <ContentPresenter
+                    Content="{TemplateBinding Content}"
+                    ContentTemplate="{TemplateBinding ContentTemplate}"
+                    HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                    VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+            </ControlTemplate>
+        </ToggleButton.Template>
+        <Grid x:Name="AquariumRoot">
+        <Border
+            x:Name="OuterFrame"
+            Padding="7"
+            BorderBrush="#8FFFFFFF"
+            BorderThickness="1"
+            CornerRadius="19">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Offset="0" Color="#FFE8EDF4" />
+                    <GradientStop Offset="0.18" Color="#FF647386" />
+                    <GradientStop Offset="0.48" Color="#FF172332" />
+                    <GradientStop Offset="0.78" Color="#FF718297" />
+                    <GradientStop Offset="1" Color="#FFF4F6FA" />
+                </LinearGradientBrush>
+            </Border.Background>
+
+            <Border
+                x:Name="InnerFrame"
+                Background="#FF041522"
+                BorderBrush="#C90D1B29"
+                BorderThickness="3"
+                CornerRadius="14">
+                <Grid x:Name="Viewport" Background="#FF031522">
+                    <Grid x:Name="BackdropLayer" IsHitTestVisible="False">
+                        <Image
+                            x:Name="DepthPlate"
+                            Source="ms-appx:///Assets/Aquarium/aquarium-depth-plate-v2.png"
+                            Stretch="UniformToFill"
+                            AutomationProperties.AccessibilityView="Raw"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch" />
+                        <Rectangle x:Name="WaterTone" Opacity="0.34">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Offset="0" Color="#1547CFFF" />
+                                    <GradientStop Offset="0.42" Color="#0718A9C4" />
+                                    <GradientStop Offset="1" Color="#59000B1B" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                    </Grid>
+
+                    <Canvas x:Name="RearPlantCanvas" IsHitTestVisible="False" Opacity="0.76">
+                        <Grid x:Name="RearPlantLeft" Width="48" Height="82" Canvas.Left="2" Canvas.Top="42" RenderTransformOrigin="0.45,1">
+                            <Path Fill="#A61D776F" Data="M22,82 C21,64 16,51 8,39 C15,43 21,49 24,57 C25,43 22,28 16,16 C27,27 30,39 28,54 C33,43 39,35 46,31 C39,43 34,58 31,82 Z" />
+                            <Path Fill="#8D52A188" Data="M25,82 C25,62 30,45 39,25 C39,43 34,62 31,82 Z" />
+                            <Path Fill="#7FB9D6AE" Data="M20,68 C14,57 9,51 3,48 C10,48 18,53 23,60 Z" />
+                        </Grid>
+                        <Grid x:Name="RearPlantRight" Width="54" Height="88" Canvas.Left="218" Canvas.Top="36" RenderTransformOrigin="0.52,1">
+                            <Path Fill="#A01E746D" Data="M28,88 C27,69 21,50 10,35 C21,42 27,53 30,65 C31,48 28,29 21,13 C34,29 37,47 34,64 C40,50 47,40 53,35 C47,50 41,69 37,88 Z" />
+                            <Path Fill="#8859A98B" Data="M31,88 C32,66 39,48 49,29 C46,52 41,71 38,88 Z" />
+                            <Path Fill="#6EB5D3AA" Data="M26,70 C19,59 12,53 5,51 C14,51 22,55 29,63 Z" />
+                        </Grid>
+                    </Canvas>
+
+                    <Canvas x:Name="RearParticleCanvas" IsHitTestVisible="False" />
+                    <Grid x:Name="SceneHost" IsHitTestVisible="False" />
+                    <Canvas x:Name="BubbleCanvas" IsHitTestVisible="False" />
+
+                    <Canvas x:Name="FrontPlantCanvas" IsHitTestVisible="False">
+                        <Grid x:Name="FrontPlantLeft" Width="62" Height="94" Canvas.Left="-4" Canvas.Top="31" RenderTransformOrigin="0.5,1">
+                            <Path Fill="#D3165E59" Data="M29,94 C27,73 20,54 7,39 C20,46 28,57 32,71 C33,51 29,30 21,12 C36,30 40,51 36,72 C43,56 51,44 61,38 C51,54 44,75 40,94 Z" />
+                            <Path Fill="#B43F8B72" Data="M31,94 C31,71 37,47 48,20 C47,45 42,71 38,94 Z" />
+                            <Path Fill="#96A5C89A" Data="M27,76 C18,62 10,55 1,53 C13,52 23,58 31,68 Z" />
+                        </Grid>
+                        <Grid x:Name="FrontPlantRight" Width="58" Height="98" Canvas.Left="224" Canvas.Top="27" RenderTransformOrigin="0.48,1">
+                            <Path Fill="#D219625B" Data="M31,98 C30,75 23,57 11,42 C22,48 29,58 33,72 C34,51 31,30 24,9 C38,30 42,52 38,73 C45,57 51,46 57,41 C52,59 45,79 42,98 Z" />
+                            <Path Fill="#AE3E8B71" Data="M33,98 C34,75 40,52 51,26 C49,54 44,78 40,98 Z" />
+                            <Path Fill="#8EA8C99B" Data="M29,78 C22,65 14,58 5,55 C15,55 25,61 33,70 Z" />
+                        </Grid>
+                    </Canvas>
+
+                    <Grid x:Name="CausticLayer" IsHitTestVisible="False" Opacity="0.14">
+                        <Canvas x:Name="CausticFieldA" Width="360" Height="160" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path Stroke="#BDE9FBFF" StrokeThickness="1.4" Data="M3,31 C34,8 58,51 89,27 S147,7 178,30 S237,55 270,27 S328,9 357,32" />
+                            <Path Stroke="#89CFF5FF" StrokeThickness="1" Data="M-8,58 C24,32 51,78 82,54 S139,31 171,58 S229,82 262,55 S321,36 369,61" />
+                            <Path Stroke="#9DE7FFFF" StrokeThickness="1.2" Data="M4,89 C30,65 61,109 96,85 S155,63 187,91 S246,111 278,86 S330,68 360,91" />
+                            <Path Stroke="#74C5F2FF" StrokeThickness="0.9" Data="M-12,121 C22,96 52,140 87,116 S147,94 181,121 S240,143 274,118 S330,101 371,124" />
+                            <Path Stroke="#82FFFFFF" StrokeThickness="0.8" Data="M45,1 C64,22 32,41 55,61 S77,98 53,120 S37,145 50,160" />
+                            <Path Stroke="#75E0FAFF" StrokeThickness="0.9" Data="M142,-6 C159,18 132,38 151,60 S174,99 149,123 S137,148 151,166" />
+                            <Path Stroke="#69CFF7FF" StrokeThickness="0.8" Data="M247,-5 C266,17 237,41 258,62 S278,101 253,123 S241,150 258,166" />
+                        </Canvas>
+                        <Canvas x:Name="CausticFieldB" Width="344" Height="154" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.62">
+                            <Path Stroke="#9CFFFFFF" StrokeThickness="1" Data="M2,22 C26,47 55,7 82,29 S137,50 164,24 S220,6 247,31 S304,50 343,19" />
+                            <Path Stroke="#80BFEFFF" StrokeThickness="0.9" Data="M-5,72 C25,96 54,58 84,78 S143,96 174,70 S229,55 260,80 S316,98 351,66" />
+                            <Path Stroke="#74E2FAFF" StrokeThickness="1.1" Data="M4,128 C34,148 62,110 94,132 S151,150 181,124 S239,107 269,134 S319,150 345,121" />
+                        </Canvas>
+                    </Grid>
+
+                    <Border x:Name="WaterlineHighlight" Height="10" VerticalAlignment="Top" Margin="8,1,8,0" CornerRadius="8" Opacity="0.48">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Offset="0" Color="#B6E6FAFF" />
+                                <GradientStop Offset="0.38" Color="#3D8AD9FF" />
+                                <GradientStop Offset="1" Color="#001A7EA4" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <Border IsHitTestVisible="False" CornerRadius="11">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0.72">
+                                <GradientStop Offset="0" Color="#35FFFFFF" />
+                                <GradientStop Offset="0.17" Color="#0DFFFFFF" />
+                                <GradientStop Offset="0.48" Color="#00000000" />
+                                <GradientStop Offset="1" Color="#26000000" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                </Grid>
+            </Border>
+        </Border>
+
+        <Border
+            Height="8"
+            Margin="36,7,36,0"
+            VerticalAlignment="Top"
+            Background="#B9DDF8FF"
+            BorderBrush="#E6FFFFFF"
+            BorderThickness="1"
+            CornerRadius="8"
+            IsHitTestVisible="False"
+            Opacity="0.88" />
+
+        <Border
+            Margin="2"
+            BorderBrush="#52FFFFFF"
+            BorderThickness="1"
+            CornerRadius="18"
+            IsHitTestVisible="False" />
+
+        <Border
+            x:Name="InteractionSheen"
+            Margin="2"
+            CornerRadius="18"
+            IsHitTestVisible="False"
+            Opacity="0">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Offset="0" Color="#B8FFFFFF" />
+                    <GradientStop Offset="0.45" Color="#2E9DEBFF" />
+                    <GradientStop Offset="1" Color="#007ADFFF" />
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <Border
+            x:Name="FocusRing"
+            Margin="3"
+            BorderBrush="{ThemeResource AccentStrongBrush}"
+            BorderThickness="2"
+            CornerRadius="16"
+            IsHitTestVisible="False"
+            Opacity="0" />
+        </Grid>
+    </ToggleButton>
+</UserControl>

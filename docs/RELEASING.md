@@ -1,6 +1,6 @@
 # Release and Signing Guide
 
-Verified against the 4.14.0 release pipeline.
+Verified against the 4.15.0 release pipeline.
 
 This document describes the repository workflow; it does not grant access to production signing keys or deployment hosts.
 
@@ -31,7 +31,7 @@ Always pass release-specific notes; the script's fallback text is not a substitu
 
 `-AllowUntrustedCertificate` is required only for the project's current self-signed certificate. It does not make that certificate trusted. `-ForceSmokeTest` can replace an existing user install and must be used only on a disposable Windows VM. Do not use the build script's `-Upload` switch before the verified source and metadata have merged; deploy the immutable artifacts separately after tagging.
 
-For 4.14.0, the release gate must preserve the complete 4.13 permission/recovery matrix and additionally exercise the 15-tool context cap, deferred catalog promotion, official-provider strict schemas, compatible-provider fallbacks, structured tool failures, research partial success and private-address blocking, content-free quality metrics, and reopen validation for generated XLSX, DOCX, PDF, SVG, and PNG files. Manually confirm that **Create & Research** opens from the expanded sidebar, compact sidebar, composer, and command palette and that completed workflows expose normal open-file/open-folder actions. Do not record a final test count until the release gate has completed.
+For 4.15.0, the release gate must preserve the complete 4.13 permission/recovery and 4.14 tool-intelligence matrices. It additionally exercises query-aware GDELT/Wikipedia search fallback, retry pacing, language/recency filtering, and source attribution. Manually verify the aquarium in Light and Dark themes at 100–200% scale, all four quality profiles, persisted pause state, keyboard/accessibility behavior, lifecycle reopen, and the reduced-motion, High Contrast, Energy Saver, collapsed-sidebar, and inactive-window static states. Do not record a final test count until the release gate has completed.
 
 ## Release Files
 

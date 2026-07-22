@@ -279,6 +279,73 @@ public class UiDensityService : IUiDensityService
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Aquarium Preferences Service — rendering profile and user pause state
+// ─────────────────────────────────────────────────────────────────────
+
+public enum AquariumQuality
+{
+    Auto,
+    Eco,
+    Balanced,
+    High
+}
+
+public interface IAquariumPreferencesService
+{
+    AquariumQuality CurrentQuality { get; }
+    bool IsPaused { get; }
+    event EventHandler? PreferencesChanged;
+    void SetQuality(AquariumQuality quality);
+    void SetPaused(bool isPaused);
+}
+
+public sealed class AquariumPreferencesService : IAquariumPreferencesService
+{
+    private const string QualityStorageKey = "tlah-aquarium-quality";
+    private const string PausedStorageKey = "tlah-aquarium-paused";
+
+    public AquariumQuality CurrentQuality { get; private set; }
+    public bool IsPaused { get; private set; }
+    public event EventHandler? PreferencesChanged;
+
+    public AquariumPreferencesService()
+    {
+        CurrentQuality = Enum.TryParse<AquariumQuality>(
+            LocalStore.Get(QualityStorageKey),
+            ignoreCase: true,
+            out var quality) && Enum.IsDefined(quality)
+                ? quality
+                : AquariumQuality.Auto;
+        IsPaused = string.Equals(
+            LocalStore.Get(PausedStorageKey),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void SetQuality(AquariumQuality quality)
+    {
+        if (!Enum.IsDefined(quality))
+            quality = AquariumQuality.Auto;
+        if (CurrentQuality == quality)
+            return;
+
+        CurrentQuality = quality;
+        LocalStore.Set(QualityStorageKey, quality.ToString().ToLowerInvariant());
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetPaused(bool isPaused)
+    {
+        if (IsPaused == isPaused)
+            return;
+
+        IsPaused = isPaused;
+        LocalStore.Set(PausedStorageKey, isPaused ? "true" : "false");
+        PreferencesChanged?.Invoke(this, EventArgs.Empty);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Interaction Soundscape Service — small, generated local WAV accents
 // ─────────────────────────────────────────────────────────────────────
 

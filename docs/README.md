@@ -6,11 +6,12 @@ This directory separates current operational guidance from historical design rec
 
 | Guide | Scope | Verified against |
 |---|---|---|
-| [Architecture](./ARCHITECTURE.md) | Runtime, persistence, tool selection, research/artifacts, permissions, MCP, and updates | 4.14.0 |
-| [Development](./DEVELOPMENT.md) | Environment, commands, conventions, tool/workbench testing, and CI | 4.14.0 |
-| [Release and signing](./RELEASING.md) | Version sync, CI, Authenticode, manifest signing, and deployment | 4.14.0 |
-| [Privacy and data flows](./PRIVACY.md) | Local storage, research endpoints, quality metrics, permissions, export, and deletion | 4.14.0 |
+| [Architecture](./ARCHITECTURE.md) | Runtime, persistence, tool selection, research/artifacts, permissions, MCP, and updates | 4.15.0 |
+| [Development](./DEVELOPMENT.md) | Environment, commands, conventions, tool/workbench testing, and CI | 4.15.0 |
+| [Release and signing](./RELEASING.md) | Version sync, CI, Authenticode, manifest signing, and deployment | 4.15.0 |
+| [Privacy and data flows](./PRIVACY.md) | Local storage, research endpoints, quality metrics, permissions, export, and deletion | 4.15.0 |
 | [4.14 tool intelligence](./TLAH_4_14_TOOL_INTELLIGENCE.md) | Release contract and acceptance gates for dynamic tools and the professional workbench | 4.14.0 |
+| [4.15 immersive aquarium](./TLAH_4_15_IMMERSIVE_AQUARIUM.md) | Layered aquarium rendering, motion, accessibility, lifecycle, performance, and search reliability | 4.15.0 |
 | [Security policy](../SECURITY.md) | Supported versions and private reporting | Current stable |
 | [Contributing](../CONTRIBUTING.md) | Contribution workflow and quality gates | Current stable |
 

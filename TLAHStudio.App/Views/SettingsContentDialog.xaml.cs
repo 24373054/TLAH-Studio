@@ -154,6 +154,11 @@ public sealed partial class SettingsContentDialog : ContentDialog
         DensityCombo.Items.Add("Compact");
         DensityCombo.SelectedItem = (App.MainWindow as MainWindow)?.UiDensityService.CurrentDensity == UiDensity.Compact
             ? "Compact" : "Comfortable";
+        AquariumQualityCombo.ItemsSource = Enum.GetNames<AquariumQuality>();
+        AquariumQualityCombo.SelectedItem = App.Services
+            .GetRequiredService<IAquariumPreferencesService>()
+            .CurrentQuality
+            .ToString();
         // M4.9.0: Output style combo
         OutputStyleCombo.ItemsSource = _vm.OutputStyleOptions;
         OutputStyleCombo.SelectedItem = _vm.OutputStyle;
@@ -452,6 +457,18 @@ public sealed partial class SettingsContentDialog : ContentDialog
         var density = (sender as ComboBox)?.SelectedItem is "Compact"
             ? UiDensity.Compact : UiDensity.Comfortable;
         (App.MainWindow as MainWindow)?.UiDensityService.SetDensity(density);
+    }
+
+    private void AquariumQualityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isPopulating || _vm == null ||
+            sender is not ComboBox { SelectedItem: string selected } ||
+            !Enum.TryParse<AquariumQuality>(selected, ignoreCase: true, out var quality))
+        {
+            return;
+        }
+
+        App.Services.GetRequiredService<IAquariumPreferencesService>().SetQuality(quality);
     }
 
     // M4.9.0: Output style selector

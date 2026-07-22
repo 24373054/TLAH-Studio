@@ -60,3 +60,6 @@ tools/private_key.txt
 *.key
 *.pfx
 *.p12
+
+# Superseded local aquarium concept plate (4.15 ships v2 only)
+TLAHStudio.App/Assets/Aquarium/aquarium-depth-plate.png

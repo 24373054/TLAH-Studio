@@ -225,12 +225,23 @@ try {
             "Views\ChatPage.xbf",
             "Views\CapabilityWorkbenchDialog.xbf",
             "Views\WorkspaceReviewPanelControl.xbf",
-            "Views\MessageInputControl.xbf"
+            "Views\MessageInputControl.xbf",
+            "Views\Controls\AquariumPortalControl.xbf",
+            "Assets\Aquarium\aquarium-depth-plate-v2.png",
+            "Assets\Aquarium\Fish\goldfish-orange-white.png",
+            "Assets\Aquarium\Fish\tetra-silver-cyan.png",
+            "Assets\Aquarium\Fish\tropical-fish-coral-orange.png",
+            "Assets\Aquarium\Fish\angelfish-deep-blue.png"
         )) {
             $path = Join-Path $PublishDir $requiredFile
             if (-not (Test-Path -LiteralPath $path)) {
                 throw "Published app is missing required WinUI XAML resource: $path"
             }
+        }
+
+        $obsoleteDepthPlate = Join-Path $PublishDir "Assets\Aquarium\aquarium-depth-plate.png"
+        if (Test-Path -LiteralPath $obsoleteDepthPlate) {
+            throw "Published app contains the superseded aquarium depth plate: $obsoleteDepthPlate"
         }
     }
 

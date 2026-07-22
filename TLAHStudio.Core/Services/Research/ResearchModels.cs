@@ -83,7 +83,10 @@ public sealed record ResearchSearchSource(
     string Domain,
     string Snippet,
     DateTimeOffset? PublishedAt = null,
-    string SearchProvider = "DuckDuckGo");
+    string SearchProvider = "DuckDuckGo",
+    Uri? SearchProviderUrl = null,
+    string? LicenseName = null,
+    Uri? LicenseUrl = null);
 
 public sealed record ResearchSearchResult(
     string Query,
@@ -120,7 +123,11 @@ public sealed record ResearchEvidence(
     double RelevanceScore,
     double OverallScore,
     IReadOnlyList<string> AuthoritySignals,
-    ResearchContentKind ContentKind);
+    ResearchContentKind ContentKind,
+    string SearchProvider = "DuckDuckGo",
+    Uri? SearchProviderUrl = null,
+    string? LicenseName = null,
+    Uri? LicenseUrl = null);
 
 public sealed record ResearchConflict(
     string Kind,

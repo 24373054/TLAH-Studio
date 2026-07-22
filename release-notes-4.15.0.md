@@ -1,0 +1,30 @@
+# TLAH Studio 4.15.0
+
+Version 4.15.0 gives the workspace a more distinctive visual identity while keeping the aquarium respectful of accessibility, power, and application lifecycle state. It also strengthens the zero-configuration web-search path introduced in 4.14.
+
+## Immersive living aquarium
+
+- The top of the expanded sidebar is now a framed, depth-layered aquarium rather than a static decoration. A custom Imagegen-derived depth plate is combined with separate water tint, glass, waterline, caustic, plant, particle, bubble, and fish layers.
+- Fish follow deterministic curved routes with off-screen turns, depth-dependent scale and opacity, and selective articulated tails. Plants sway gently, suspended particles drift, bubbles rise from several source zones, and organic caustic lines move across the water.
+- The scene uses Microsoft.UI.Composition instead of a per-frame UI timer. Fish reuse decoded surfaces, ambient elements are grouped into a small number of fields, and resizing scales one fixed-design compositor root without rebuilding animation state.
+- Click the aquarium, or focus it and press Enter/Space, to pause or resume it. The preference is retained, and the Appearance settings expose Auto, Eco, Balanced, and High quality profiles.
+
+## Responsible motion and lifecycle
+
+- Animation stops when the sidebar is collapsed, the window is inactive, the aquarium is unloaded, the user pauses it, Windows animations are disabled, High Contrast is active, or Energy Saver is on.
+- A composed static poster remains visible whenever motion is unavailable, so the visual does not collapse into an empty panel.
+- Pause/play state and explanation are exposed through accessible names, help text, tooltips, keyboard focus, and a visible focus ring.
+- Scene subscriptions and compositor resources are paired across load/unload, avoiding duplicate animation channels after navigation, theme changes, or window reactivation.
+
+## More reliable web search
+
+- Public structured fallbacks now use GDELT only where it fits an unconstrained news query and use the query's language-matched Wikipedia edition only where undated results satisfy the requested recency.
+- A failed structured provider is attempted once before fallback on timeouts, network faults, HTTP 408/429/5xx, or Wikipedia `ratelimited`/`maxlag` responses. A local provider gate prevents query-variant request bursts.
+- Provider URLs and applicable Wikipedia CC BY-SA 4.0 attribution survive through evidence packs, saved reports, agent output, and visible previews. Cross-source research still reports insufficient or conflicting evidence instead of inventing certainty.
+
+## Validation
+
+- Release CI runs the NuGet vulnerability audit, xUnit regression suite, 60% line/50% branch coverage gates, and warning-free x64 App and Updater builds.
+- Manual verification covers Light/Dark themes, 100–200% display scale, narrow and maximized layouts, keyboard and screen-reader behavior, reduced motion, High Contrast, Energy Saver, pause persistence, sidebar collapse/reopen, and window deactivate/reactivate.
+
+The official artifact is a self-contained Windows x64 installer for Windows 10 build 19041+ and Windows 11. Update metadata is ECDSA-signed and the installer is protected by SHA-256 and Authenticode signing; the current Authenticode certificate remains self-signed, so Windows may display an untrusted-publisher warning.

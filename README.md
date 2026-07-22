@@ -52,13 +52,17 @@ The app is local-first, not offline-only: chats and run records are persisted lo
 | **Agent runtime** | Multi-step execution, bounded provider retry, failure-aware replanning, replay-fenced unknown outcomes, adaptive step budgets, pause/resume, checkpoints, artifacts, tasks, and Activity replay |
 | **Tool intelligence** | Deterministic context selection capped at 15 initially callable tools, live catalog search, strict schemas on official providers, structured results, and recovery-aware errors |
 | **Workspace tooling** | File and code operations, Git, PowerShell execution, private chat sandboxes, and a Changes review surface |
-| **Create & Research** | Visible research, spreadsheet, document, diagram, and local tool-quality pages with normal file/folder actions and no hidden commands |
+| **Create & Research** | Visible research, spreadsheet, document, diagram, and local tool-quality pages with normal file/folder actions, resilient public-source fallbacks, and no hidden commands |
 | **Reasoning and permissions** | Independent `Auto / Off / Low / Medium / High / Max` reasoning controls plus four tool permission modes |
 | **Providers and MCP** | Anthropic and OpenAI-compatible HTTP protocols; MCP over STDIO and Streamable HTTP with tools and resources |
 | **Context and memory** | Adaptive long-chain budgeting, reactive compaction, project/session memory, persistent large tool outputs, and slash commands |
 | **Debuggability** | Secret-redacted provider request/response capture, run events, diagnostics export, and local audit data |
-| **Desktop experience** | Light/dark themes, responsive right workbench, virtualized long conversations, settings search, sounds, and reduced-motion support |
+| **Desktop experience** | Light/dark themes, an immersive living aquarium, responsive right workbench, virtualized long conversations, settings search, sounds, and reduced-motion support |
 | **Updates** | ECDSA-signed update metadata, SHA-256 installer verification, staged rollout, minimum-version enforcement, and atomic deployment |
+
+### Immersive living aquarium
+
+The expanded sidebar opens with a framed, depth-layered aquarium composed from local artwork, articulated fish, water light, vegetation, particles, and bubbles. It uses GPU-composed motion with no per-frame UI timer, exposes `Auto`, `Eco`, `Balanced`, and `High` quality profiles in **Settings → Appearance**, and remembers pause/resume. Reduced motion, High Contrast, Energy Saver, a collapsed sidebar, or an inactive window automatically switches the scene to a deliberate still poster.
 
 ### Execution controls
 
@@ -83,7 +87,7 @@ Open **Create & Research** from the expanded sidebar, compact sidebar, message c
 
 | Page | Direct workflow |
 |---|---|
-| Research | Run Quick, Balanced, or Deep public-source research; filter domains, recency, and language while depth selects the source budget; save a cited evidence report |
+| Research | Run Quick, Balanced, or Deep public-source research; filter domains, recency, and language while query-aware fallbacks improve coverage; save a cited evidence report with provider and license attribution |
 | Spreadsheet | Paste CSV/TSV-style data and create a styled XLSX workbook with frozen headers, filters, automatic widths, and optional chart preview |
 | Document | Create Markdown, DOCX, or PDF files from normal text and structured sections |
 | Diagram & chart | Create flowcharts, architecture diagrams, bar charts, or line charts as SVG and high-DPI PNG |
@@ -95,7 +99,7 @@ Outputs are written to the active workspace. If no workspace is selected, TLAH S
 
 | Metric | Current repository state |
 |---|---:|
-| Stable release | `4.14.0` |
+| Stable release | `4.15.0` |
 | Registered agent tools | `51` |
 | Bundled skills | `12` |
 | MCP transports | STDIO + Streamable HTTP |

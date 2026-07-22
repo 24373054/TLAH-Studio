@@ -6,8 +6,8 @@ Security fixes are provided for the latest stable release line. Users should upd
 
 | Version | Supported |
 |---|---|
-| 4.14.x | Yes |
-| 4.13.x and earlier | No |
+| 4.15.x | Yes |
+| 4.14.x and earlier | No |
 
 ## Reporting a Vulnerability
 
@@ -25,7 +25,7 @@ The maintainers will acknowledge a report when received, investigate it privatel
 - `Full access` intentionally permits host and network access. It is not a sandbox.
 - Restricted execution uses command, path, protocol, permission, and backend policy. It is not equivalent to a hardened VM boundary.
 - Prompts and selected context are sent to the configured model provider. MCP, web, HTTP, remote execution, and update operations may contact additional endpoints.
-- Create & Research contacts DuckDuckGo HTML/Lite and selected public HTTPS pages. Its network boundary rejects loopback, private, and link-local destinations in every permission mode.
+- Create & Research tries DuckDuckGo HTML first. Depending on the query and filters, it may then use the [GDELT Project DOC API](https://www.gdeltproject.org/) for non-language-constrained news, or the language-matched Wikipedia Action API (`en`, `zh`, `ja`, `ko`, `de`, or `fr`) for undated/entity lookup, before DuckDuckGo Lite. Explicit language filters omit GDELT; non-`Any` recency filters omit undated Wikipedia results. Wikipedia snippets and linked article content are attributed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). The research network boundary rejects loopback, private, and link-local destinations in every permission mode.
 - API keys use Windows DPAPI-backed protection and diagnostic redaction, but a compromised user session can still access data available to that user.
 
 ## Release Trust Model

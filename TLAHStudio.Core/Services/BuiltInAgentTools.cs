@@ -1527,7 +1527,10 @@ public sealed partial class WebSearchAgentTool : IAgentTool
                     source.Domain,
                     source.Snippet,
                     publishedAt = source.PublishedAt?.ToString("O"),
-                    provider = source.SearchProvider
+                    provider = source.SearchProvider,
+                    providerUrl = source.SearchProviderUrl?.AbsoluteUri,
+                    license = source.LicenseName,
+                    licenseUrl = source.LicenseUrl?.AbsoluteUri
                 }),
                 failures = result.Failures.Select(failure => new
                 {
@@ -1542,14 +1545,16 @@ public sealed partial class WebSearchAgentTool : IAgentTool
             var output = JsonSerializer.Serialize(
                 structured,
                 new JsonSerializerOptions { WriteIndented = true });
-            var success = result.Sources.Count > 0 || result.Failures.Count == 0;
+            var success = result.Sources.Count > 0;
             var primaryFailure = result.Failures.FirstOrDefault();
+            var resultError = primaryFailure?.Message ?? "Web search returned no results.";
+            var errorCode = primaryFailure?.Kind.ToString().ToLowerInvariant() ?? "no_results";
             return new AgentToolResult(
                 success,
                 AgentToolSupport.Limit(output, context.MaxOutputChars),
-                success ? null : primaryFailure?.Message ?? "Web search failed.",
+                success ? null : resultError,
                 StructuredContent: structured,
-                ErrorCode: success ? null : primaryFailure?.Kind.ToString().ToLowerInvariant() ?? "search_failed",
+                ErrorCode: success ? null : errorCode,
                 Retryable: !success && primaryFailure?.Retryable == true,
                 Sources: result.Sources.Select((source, index) =>
                     new AgentToolSource(
@@ -1557,7 +1562,10 @@ public sealed partial class WebSearchAgentTool : IAgentTool
                         source.Title,
                         source.SearchProvider,
                         DateTime.UtcNow,
-                        $"search-{index + 1}")).ToArray(),
+                        $"search-{index + 1}",
+                        source.SearchProviderUrl?.AbsoluteUri,
+                        source.LicenseName,
+                        source.LicenseUrl?.AbsoluteUri)).ToArray(),
                 DurationMs: stopwatch.ElapsedMilliseconds,
                 Diagnostics: new Dictionary<string, object>
                 {

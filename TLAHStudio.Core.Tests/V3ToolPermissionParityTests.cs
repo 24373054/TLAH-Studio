@@ -115,6 +115,39 @@ public sealed class V3ToolPermissionParityTests
     }
 
     [Fact]
+    public async Task WebSearchV3_EffectPlanDeclaresEveryBuiltInProvider()
+    {
+        using var temp = new TemporaryDirectory();
+        var sandbox = new SandboxCommandService(Path.Combine(temp.Path, "sandbox"));
+        await using var db = TestDb.Create();
+        using var http = new HttpClient(new StubHttpMessageHandler(_ =>
+            JsonResponse(HttpStatusCode.OK, "{}")));
+        var tool = new WebSearchToolV3(
+            new ToolPlatformService(db),
+            new RecordingNetworkSecurityService(),
+            new StaticHttpClientFactory(http));
+
+        var plan = await tool.PlanEffectsAsync(
+            """{"query":"Kimi K3"}""",
+            Guid.NewGuid(),
+            sandbox);
+
+        Assert.Equal(
+            [
+                "html.duckduckgo.com",
+                "api.gdeltproject.org",
+                "en.wikipedia.org",
+                "zh.wikipedia.org",
+                "ja.wikipedia.org",
+                "ko.wikipedia.org",
+                "de.wikipedia.org",
+                "fr.wikipedia.org",
+                "lite.duckduckgo.com"
+            ],
+            plan.Domains);
+    }
+
+    [Fact]
     public async Task V3Lifecycle_PreservesBypassImmuneAndImmutableSafetyMetadata()
     {
         using var temp = new TemporaryDirectory();

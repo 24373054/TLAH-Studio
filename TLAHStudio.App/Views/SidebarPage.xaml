@@ -2,6 +2,7 @@
     x:Class="TLAHStudio.App.Views.SidebarPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:TLAHStudio.App.Views.Controls"
     xmlns:views="using:TLAHStudio.App.Views"
     x:Name="SidebarRoot"
     Width="296">
@@ -74,57 +75,50 @@
         <Grid
             x:Name="SidebarHeader"
             Grid.Row="0"
-            Padding="18,16,16,14"
+            Padding="10"
             BorderBrush="{ThemeResource BorderSubtleBrush}"
             BorderThickness="0,0,0,1">
-            <Grid x:Name="BrandHeaderGrid" ColumnSpacing="10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+            <Grid x:Name="BrandHeaderGrid">
+                <controls:AquariumPortalControl
+                    x:Name="AquariumPortal"
+                    Height="142"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Top" />
 
                 <Border
-                    Width="32"
-                    Height="32"
+                    x:Name="CompactBrandMark"
+                    Width="34"
+                    Height="34"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
                     Background="{ThemeResource BrandMarkBrush}"
                     BorderBrush="{ThemeResource AccentSecondaryBrush}"
                     BorderThickness="1"
-                    CornerRadius="9">
+                    CornerRadius="10"
+                    Visibility="Collapsed">
                     <Image
                         Source="ms-appx:///Assets/logo.png"
-                        Width="21"
-                        Height="21"
+                        Width="22"
+                        Height="22"
                         Stretch="Uniform"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center" />
                 </Border>
 
-                <StackPanel x:Name="BrandTextPanel" Grid.Column="1" Spacing="2">
-                    <TextBlock
-                        Text="TLAH Studio"
-                        FontSize="19"
-                        FontWeight="SemiBold"
-                        Foreground="{ThemeResource TextPrimaryBrush}" />
-                    <TextBlock
-                        Text="AGENT WORKSPACE"
-                        FontSize="10"
-                        FontWeight="SemiBold"
-                        CharacterSpacing="65"
-                        Foreground="{ThemeResource TextMutedBrush}" />
-                </StackPanel>
-
                 <Button
                     x:Name="CollapseButton"
-                    Grid.Column="2"
                     Click="Collapse_Click"
                     Width="32"
                     Height="32"
+                    Margin="0,4,4,0"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
                     Padding="0"
-                    Background="Transparent"
-                    Foreground="{ThemeResource TextMutedBrush}"
-                    BorderThickness="0"
-                    CornerRadius="8"
+                    Background="#A90A1524"
+                    Foreground="White"
+                    BorderBrush="#70FFFFFF"
+                    BorderThickness="1"
+                    CornerRadius="10"
                     ToolTipService.ToolTip="Collapse sidebar"
                     AutomationProperties.Name="Collapse sidebar">
                     <FontIcon x:Name="CollapseIcon" Glyph="&#xE72D;" Style="{StaticResource NocturneIconStyle}" />

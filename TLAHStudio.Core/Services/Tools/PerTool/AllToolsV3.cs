@@ -454,7 +454,19 @@ public class WebSearchToolV3 : AgentToolV3Base
     }
 
     public override Task<ToolEffectPlan> PlanEffectsAsync(string argumentsJson, Guid chatId, ISandboxCommandService sandbox, CancellationToken ct = default)
-        => Task.FromResult(ToolEffectPlan.Network(["html.duckduckgo.com"], "low"));
+        => Task.FromResult(ToolEffectPlan.Network(
+            [
+                "html.duckduckgo.com",
+                "api.gdeltproject.org",
+                "en.wikipedia.org",
+                "zh.wikipedia.org",
+                "ja.wikipedia.org",
+                "ko.wikipedia.org",
+                "de.wikipedia.org",
+                "fr.wikipedia.org",
+                "lite.duckduckgo.com"
+            ],
+            "low"));
     public override ToolHookTriggers SupportedHooks => ToolHookTriggers.None;
 }
 
