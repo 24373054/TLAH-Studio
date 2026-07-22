@@ -543,6 +543,206 @@ public class BuiltInAgentToolsTests
     }
 
     [Fact]
+    public async Task WebSearchDoesNotReportProviderChallengesAsSuccessfulEmptyResults()
+    {
+        await using var db = TestDb.Create();
+        var platform = new ToolPlatformService(db);
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "api.gdeltproject.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"unexpected":"provider maintenance"}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            if (request.RequestUri.IdnHost.EndsWith("wikipedia.org", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"error":{"code":"readonly"}}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Content = new StringContent(
+                    """<html><form id="challenge-form">Bots use DuckDuckGo too.</form></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        });
+        var tool = new WebSearchAgentTool(
+            platform,
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(handler)));
+
+        var result = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 5000),
+            """{"query":"artificial intelligence news today","mode":"quick","max_results":5}""");
+
+        Assert.False(result.Success);
+        Assert.Equal("ratelimited", result.ErrorCode);
+        Assert.Contains("automated-traffic challenge", result.Error);
+        Assert.NotNull(result.StructuredContent);
+    }
+
+    [Fact]
+    public async Task WebSearchReportsValidAllProviderEmptyResponseAsFailure()
+    {
+        await using var db = TestDb.Create();
+        var platform = new ToolPlatformService(db);
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "api.gdeltproject.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"articles":[]}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            if (request.RequestUri.IdnHost.EndsWith("wikipedia.org", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"batchcomplete":true}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<html><div class="result--no-result">No results.</div></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        });
+        var tool = new WebSearchAgentTool(
+            platform,
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(handler)));
+
+        var result = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 5000),
+            """{"query":"a genuinely absent phrase","mode":"quick","max_results":5}""");
+
+        Assert.False(result.Success);
+        Assert.Equal("no_results", result.ErrorCode);
+        Assert.Equal("Web search returned no results.", result.Error);
+        Assert.Contains("\"resultCount\": 0", result.Output);
+        Assert.Contains("\"failures\": []", result.Output);
+    }
+
+    [Fact]
+    public async Task WebSearchSucceedsOnGdeltFallbackAndRetainsProviderFailureDiagnostics()
+    {
+        await using var db = TestDb.Create();
+        var platform = new ToolPlatformService(db);
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "api.gdeltproject.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {"articles":[{
+                          "title":"Kimi K3 official",
+                          "url":"https://platform.kimi.com/docs/k3",
+                          "domain":"platform.kimi.com",
+                          "language":"English",
+                          "seendate":"20260718T120000Z"
+                        }]}
+                        """,
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Content = new StringContent(
+                    """<html><form id="challenge-form">Bots use DuckDuckGo too.</form></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        });
+        var tool = new WebSearchAgentTool(
+            platform,
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(handler)));
+
+        var result = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 8000),
+            """{"query":"Kimi K3 latest news","mode":"quick","max_results":5}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("Kimi K3 official", result.Output);
+        Assert.Contains("\"provider\": \"GDELT Project\"", result.Output);
+        Assert.Contains("\"providerUrl\": \"https://www.gdeltproject.org/\"", result.Output);
+        var source = Assert.Single(result.Sources!);
+        Assert.Equal("GDELT Project", source.Provider);
+        Assert.Equal("https://www.gdeltproject.org/", source.ProviderUri);
+        Assert.Contains("\"kind\": \"RateLimited\"", result.Output);
+    }
+
+    [Fact]
+    public async Task WebSearchCarriesWikipediaArticleLicenseAndProviderAttributionToAgentOutput()
+    {
+        await using var db = TestDb.Create();
+        var handler = new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"batchcomplete":true,"query":{"search":[{"pageid":123,"title":"月之暗面","snippet":"一家人工智能公司"}]}}""",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        });
+        var tool = new WebSearchAgentTool(
+            new ToolPlatformService(db),
+            new AllowNetworkSecurityService(),
+            new StaticHttpClientFactory(new HttpClient(handler)));
+
+        var result = await tool.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 10, 10_000),
+            """{"query":"月之暗面","mode":"quick","language":"zh-CN","max_results":5}""");
+
+        Assert.True(result.Success, result.Error);
+        Assert.Contains("\"url\": \"https://zh.wikipedia.org/wiki/", result.Output);
+        Assert.Contains("\"provider\": \"Wikipedia (zh)\"", result.Output);
+        Assert.Contains("\"providerUrl\": \"https://zh.wikipedia.org/\"", result.Output);
+        Assert.Contains("\"license\": \"CC BY-SA 4.0\"", result.Output);
+        Assert.Contains(
+            "\"licenseUrl\": \"https://creativecommons.org/licenses/by-sa/4.0/\"",
+            result.Output);
+        var source = Assert.Single(result.Sources!);
+        Assert.StartsWith("https://zh.wikipedia.org/wiki/", source.Uri);
+        Assert.Equal("Wikipedia (zh)", source.Provider);
+        Assert.Equal("CC BY-SA 4.0", source.License);
+        Assert.Equal(
+            "https://creativecommons.org/licenses/by-sa/4.0/",
+            source.LicenseUri);
+    }
+
+    [Fact]
     public void ToolPlatformV2MetadataClassifiesReadAndWriteTools()
     {
         var sandbox = new SandboxCommandService(

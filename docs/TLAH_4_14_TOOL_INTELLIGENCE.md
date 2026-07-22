@@ -38,6 +38,9 @@ The release must preserve the 4.13.0 permission model. Full access bypasses ordi
 - [x] Build evidence packs from multiple independent domains with excerpts and timestamps.
 - [x] Report insufficient evidence and conflicting sources explicitly.
 - [x] Support partial success when some pages fail.
+- [x] Use adaptive zero-key search fallbacks: GDELT Project only for non-language-constrained news, and bounded language-matched Wikipedia search only when undated results satisfy the recency filter.
+- [x] Give each structured search endpoint one attempt, falling through on 408/429/5xx, timeout, network failure, or Wikipedia `ratelimited`/`maxlag`; retain a local provider gate that prevents query-variant request bursts.
+- [x] Preserve provider URLs and applicable Wikipedia CC BY-SA 4.0 attribution through evidence, reports, agent output, and visible previews.
 - [x] Expose research directly in the workbench and as an agent tool.
 
 ### C. Spreadsheet

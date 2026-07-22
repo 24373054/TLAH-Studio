@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.Extensions.DependencyInjection;
 using TLAHStudio.App.ViewModels;
 using TLAHStudio.Core.Services;
 using Windows.Storage.Pickers;
@@ -26,8 +27,10 @@ public sealed partial class SidebarPage : UserControl
             "collapsed",
             StringComparison.OrdinalIgnoreCase);
         InitializeComponent();
+        AquariumPortal.BindPreferences(App.Services.GetRequiredService<IAquariumPreferencesService>());
         App.Log("SidebarPage XAML initialized.");
         Loaded += OnLoaded;
+        SizeChanged += OnSidebarSizeChanged;
     }
 
     private async void OnLoaded(object s, RoutedEventArgs e)
@@ -519,20 +522,25 @@ public sealed partial class SidebarPage : UserControl
         var compact = densityService.CurrentDensity == UiDensity.Compact;
         SidebarRoot.Width = _isCollapsed ? 92 : compact ? 288 : 312;
         DensityButtonText.Text = compact ? "Compact" : "Comfort";
+        UpdateAquariumSize(compact);
     }
 
     private void ApplyCollapsedState()
     {
         var visibility = _isCollapsed ? Visibility.Collapsed : Visibility.Visible;
-        BrandTextPanel.Visibility = visibility;
+        AquariumPortal.Visibility = visibility;
+        AquariumPortal.SetHostActive(!_isCollapsed);
+        CompactBrandMark.Visibility = _isCollapsed ? Visibility.Visible : Visibility.Collapsed;
         NewChatText.Visibility = visibility;
         SearchToolsGrid.Visibility = visibility;
         ExpandedFooter.Visibility = visibility;
         CompactFooter.Visibility = _isCollapsed ? Visibility.Visible : Visibility.Collapsed;
         SidebarHeader.Padding = _isCollapsed
             ? new Thickness(8, 14, 8, 12)
-            : new Thickness(20, 18, 18, 16);
-        BrandHeaderGrid.ColumnSpacing = _isCollapsed ? 4 : 10;
+            : new Thickness(10);
+        CollapseButton.Margin = _isCollapsed
+            ? new Thickness(0, 1, 0, 0)
+            : new Thickness(0, 4, 4, 0);
 
         CollapseIcon.Glyph = _isCollapsed ? "\uE72C" : "\uE72D";
         ToolTipService.SetToolTip(CollapseButton, _isCollapsed ? "Expand sidebar" : "Collapse sidebar");
@@ -555,6 +563,23 @@ public sealed partial class SidebarPage : UserControl
             ApplyDensity(window.UiDensityService);
         UpdateUndoPanel();
         UpdateSections();
+    }
+
+    private void OnSidebarSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (App.MainWindow is MainWindow window)
+            UpdateAquariumSize(window.UiDensityService.CurrentDensity == UiDensity.Compact);
+    }
+
+    private void UpdateAquariumSize(bool compactDensity)
+    {
+        if (_isCollapsed)
+            return;
+        AquariumPortal.Height = SidebarRoot.ActualHeight switch
+        {
+            < 780 => 116,
+            _ => compactDensity ? 130 : 142
+        };
     }
 
     private static ChatSummaryDto? GetChatFromSender(object sender) =>

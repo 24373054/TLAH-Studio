@@ -1,6 +1,6 @@
 # Privacy and Data Flows
 
-Verified against TLAH Studio 4.14.0.
+Verified against TLAH Studio 4.15.0.
 
 TLAH Studio is local-first: its database, settings, run history, sandboxes, logs, and diagnostic exports are stored on the user's Windows profile by default. Local-first does not mean that all processing stays offline.
 
@@ -24,7 +24,7 @@ API keys and protected credentials use Windows DPAPI-backed storage. Secrets are
 | Model request | Configured Anthropic or OpenAI-compatible endpoint | Prompt, selected conversation context, tool definitions/results, attachments |
 | MCP | Configured STDIO process or Streamable HTTP server | Tool arguments/results and requested resources |
 | Web / HTTP tools | Requested or configured web endpoint | Query, URL, headers allowed by policy, request/response content |
-| Create & Research | DuckDuckGo HTML/Lite search and selected public HTTPS pages | Search query, filters encoded in the request, requested URLs, and downloaded public page/PDF content |
+| Create & Research | DuckDuckGo HTML; [GDELT Project DOC API](https://www.gdeltproject.org/) for non-language-constrained news; language-matched Wikipedia Action API (`en`, `zh`, `ja`, `ko`, `de`, `fr`) for undated/entity lookup; DuckDuckGo Lite; selected public HTTPS pages | The query and applicable filters are sent only to providers actually attempted. Explicit language filters omit GDELT, and non-`Any` recency filters omit undated Wikipedia results. Selected page/PDF URLs and content are sent only to their source sites. Wikipedia snippets and article links carry [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) attribution. |
 | Remote execution | Configured backend | Command/task payload and returned output |
 | Update check/download | Official update host | App version, update request, installer download; staged rollout uses a local install identifier |
 
@@ -56,4 +56,4 @@ Use [GitHub Private Vulnerability Reporting](https://github.com/24373054/TLAH-St
 
 TLAH Studio 采用本地优先存储，会话、设置、运行记录、沙箱和日志默认保存在当前 Windows 用户目录中。但模型请求会把提示词和所选上下文发送到用户配置的模型端点；MCP、网页/HTTP、远程执行和更新功能在使用时也会连接外部服务。
 
-API Key 使用 Windows DPAPI 支持的保护机制，调试和导出路径会在已实现的位置进行脱敏，但这不能抵御当前 Windows 用户会话已经被攻破的情况。Create & Research 会把查询发送到 DuckDuckGo HTML/Lite，并下载用户选择的公开 HTTPS 页面；它始终拒绝环回、私有和链路本地地址。Tool Quality 只读取本地工具名、状态和时间戳，不读取提示词、参数、结果或文件内容。Ask 批准只授权已持久化的精确工具调用；审批参数默认只读，显式编辑后必须通过 JSON 与工具输入校验。`完全访问` 会按设计绕过普通的策略、宿主机路径、网络允许列表与敏感文件限制，仅保留灾难级操作硬阻断、研究网络边界和必要的用户交互等待。分享诊断导出前必须人工检查，隐私或安全问题请通过私密漏洞报告提交。
+API Key 使用 Windows DPAPI 支持的保护机制，调试和导出路径会在已实现的位置进行脱敏，但这不能抵御当前 Windows 用户会话已经被攻破的情况。Create & Research 首先尝试 DuckDuckGo HTML；随后按查询和筛选条件选择 GDELT Project DOC API（无显式语言约束的新闻查询）或对应语言的 Wikipedia Action API（`en`、`zh`、`ja`、`ko`、`de`、`fr`，仅用于不要求时效日期的实体检索），最后才尝试 DuckDuckGo Lite。显式语言筛选不会调用 GDELT，非 `Any` 时效筛选不会接纳无日期的 Wikipedia 结果。查询与筛选提示只会发送给实际尝试的提供方；Wikipedia 摘要和文章链接附带 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) 归因。页面内容仅从用户选择的公开 HTTPS 来源下载，研究网络始终拒绝环回、私有和链路本地地址。Tool Quality 只读取本地工具名、状态和时间戳，不读取提示词、参数、结果或文件内容。Ask 批准只授权已持久化的精确工具调用；审批参数默认只读，显式编辑后必须通过 JSON 与工具输入校验。`完全访问` 会按设计绕过普通的策略、宿主机路径、网络允许列表与敏感文件限制，仅保留灾难级操作硬阻断、研究网络边界和必要的用户交互等待。分享诊断导出前必须人工检查，隐私或安全问题请通过私密漏洞报告提交。

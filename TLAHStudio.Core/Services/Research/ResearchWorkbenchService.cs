@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
@@ -14,9 +15,16 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
 {
     private const int MaxRedirects = 5;
     private const int MaxAttempts = 3;
+    private static readonly TimeSpan StructuredProviderMinimumInterval = TimeSpan.FromSeconds(5);
+    private static readonly Uri DuckDuckGoProviderUrl = new("https://duckduckgo.com/");
+    private static readonly Uri GdeltProviderUrl = new("https://www.gdeltproject.org/");
+    private static readonly Uri WikipediaLicenseUrl = new("https://creativecommons.org/licenses/by-sa/4.0/");
     private readonly IToolPlatformService _platform;
     private readonly INetworkSecurityService _network;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly object _providerThrottleSync = new();
+    private readonly Dictionary<string, DateTimeOffset> _providerBlockedUntil =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public ResearchWorkbenchService(
         IToolPlatformService platform,
@@ -57,20 +65,86 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
         foreach (var searchQuery in BuildQueryVariants(query, mode))
         {
             var foundForVariant = false;
-            foreach (var searchUrl in BuildSearchUrls(searchQuery, filters))
+            foreach (var endpoint in BuildSearchEndpoints(searchQuery, filters))
             {
+                if (!TryReserveSearchProvider(endpoint, out var retryAt))
+                {
+                    failures.Add(new ResearchFailure(
+                        ResearchErrorKind.RateLimited,
+                        $"{endpoint.Provider} was skipped by the local provider throttle until {retryAt:O}; trying another provider.",
+                        new Uri(endpoint.Url),
+                        Retryable: true,
+                        Attempts: 0));
+                    continue;
+                }
+
                 try
                 {
                     var fetched = await FetchAsync(
-                        searchUrl,
-                        "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+                        endpoint.Url,
+                        endpoint.ResponseKind == SearchResponseKind.Html
+                            ? "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"
+                            : "application/json;q=1.0,*/*;q=0.2",
                         settings,
                         workspace,
                         Math.Clamp(settings.MaxFileBytes, 1_024, 2 * 1024 * 1024),
-                        ct);
+                        ct,
+                        retryRateLimited: endpoint.ResponseKind == SearchResponseKind.Html,
+                        maxAttempts: endpoint.ResponseKind == SearchResponseKind.Html ? MaxAttempts : 1);
                     attempts += fetched.Attempts;
-                    var html = DecodeText(fetched.Bytes, fetched.Charset);
-                    var parsed = ParseSearchResults(html, fetched.FinalUri, filters.MaxResults * 2);
+                    var payload = DecodeText(fetched.Bytes, fetched.Charset);
+                    if (IsSearchProviderChallenge(endpoint, fetched.StatusCode, payload))
+                    {
+                        failures.Add(new ResearchFailure(
+                            ResearchErrorKind.RateLimited,
+                            $"{endpoint.Provider} returned an automated-traffic challenge; trying another search provider.",
+                            fetched.FinalUri,
+                            fetched.StatusCode,
+                            true,
+                            fetched.Attempts));
+                        continue;
+                    }
+
+                    var parsedPayload = endpoint.ResponseKind switch
+                    {
+                        SearchResponseKind.GdeltJson => ParseGdeltSearchResults(
+                            payload,
+                            filters.MaxResults * 2,
+                            endpoint),
+                        SearchResponseKind.WikimediaJson => ParseWikimediaSearchResults(
+                            payload,
+                            fetched.FinalUri,
+                            filters.MaxResults * 2,
+                            endpoint,
+                            fetched.RetryAfter),
+                        _ => new SearchPayloadParseResult(
+                            ParseSearchResults(
+                                payload,
+                                fetched.FinalUri,
+                                filters.MaxResults * 2,
+                                endpoint),
+                            IsExplicitEmptySearchResponse(payload))
+                    };
+                    if (parsedPayload.Failure != null)
+                    {
+                        failures.Add(parsedPayload.Failure);
+                        ApplyProviderCooldown(endpoint, parsedPayload.RetryAfter);
+                        continue;
+                    }
+                    var parsed = parsedPayload.Sources;
+                    if (parsed.Count == 0 && !parsedPayload.IsRecognizedEmpty)
+                    {
+                        failures.Add(new ResearchFailure(
+                            ResearchErrorKind.Parse,
+                            $"{endpoint.Provider} returned a search response, but its result format was not recognized; trying another provider.",
+                            fetched.FinalUri,
+                            fetched.StatusCode,
+                            true,
+                            fetched.Attempts));
+                        if (endpoint.ResponseKind != SearchResponseKind.Html)
+                            ApplyProviderCooldown(endpoint, fetched.RetryAfter);
+                        continue;
+                    }
                     foreach (var result in parsed)
                     {
                         if (!PassesDomainFilters(result.Url, filters))
@@ -88,6 +162,8 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                 {
                     attempts += ex.Failure.Attempts;
                     failures.Add(ex.Failure);
+                    if (endpoint.ResponseKind != SearchResponseKind.Html && ex.Failure.Retryable)
+                        ApplyProviderCooldown(endpoint, ex.RetryAfter);
                 }
 
                 if (foundForVariant || sources.Count >= filters.MaxResults)
@@ -254,7 +330,11 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                 relevance,
                 Math.Round(authority * 0.35 + relevance * 0.45 + recency * 0.20, 3),
                 signals,
-                page.ContentKind));
+                page.ContentKind,
+                item.Source.SearchProvider,
+                item.Source.SearchProviderUrl,
+                item.Source.LicenseName,
+                item.Source.LicenseUrl));
         }
 
         evidence = evidence
@@ -290,8 +370,11 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
         ToolPlatformSettings settings,
         ResearchWorkspace workspace,
         int maxBytes,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool retryRateLimited = true,
+        int maxAttempts = MaxAttempts)
     {
+        maxAttempts = Math.Clamp(maxAttempts, 1, MaxAttempts);
         Uri requested;
         try
         {
@@ -317,7 +400,7 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
         {
             HttpResponseMessage? response = null;
             var responseDeadline = DateTimeOffset.MinValue;
-            for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
             {
                 totalAttempts++;
                 var requestTimeout = TimeSpan.FromSeconds(Math.Clamp(
@@ -335,7 +418,7 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                     request.Headers.AcceptLanguage.ParseAdd("en-US,en;q=0.8,zh-CN;q=0.7,zh;q=0.6");
                     response = await _httpClientFactory.CreateClient("Tools")
                         .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-                    if (IsRetryableStatus(response.StatusCode) && attempt < MaxAttempts)
+                    if (ShouldRetryStatus(response.StatusCode, retryRateLimited) && attempt < maxAttempts)
                     {
                         var delay = RetryDelay(response, attempt);
                         response.Dispose();
@@ -348,7 +431,7 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
-                    if (attempt == MaxAttempts)
+                    if (attempt == maxAttempts)
                     {
                         throw new ResearchServiceException(new ResearchFailure(
                             ResearchErrorKind.Timeout,
@@ -361,7 +444,7 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                 }
                 catch (HttpRequestException ex)
                 {
-                    if (attempt == MaxAttempts)
+                    if (attempt == maxAttempts)
                         throw new ResearchServiceException(ClassifyNetworkFailure(current, ex, attempt), ex);
                     await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt), ct);
                 }
@@ -422,7 +505,8 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                         current,
                         (int)response.StatusCode,
                         IsRetryableStatus(response.StatusCode),
-                        totalAttempts));
+                        totalAttempts),
+                        retryAfter: ReadRetryAfter(response));
                 }
 
                 if (response.Content.Headers.ContentLength is > 0 &&
@@ -476,7 +560,8 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                     response.Content.Headers.ContentType?.MediaType ?? string.Empty,
                     response.Content.Headers.ContentType?.CharSet,
                     bytes,
-                    totalAttempts);
+                    totalAttempts,
+                    ReadRetryAfter(response));
             }
         }
 
@@ -551,8 +636,13 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
         };
     }
 
-    private static IEnumerable<string> BuildSearchUrls(string query, ResearchFilters filters)
+    private static IEnumerable<SearchEndpoint> BuildSearchEndpoints(string query, ResearchFilters filters)
     {
+        var providerQuery = query;
+        var hasExplicitLanguage = !string.IsNullOrWhiteSpace(filters.Language);
+        var effectiveLanguage = !hasExplicitLanguage
+            ? InferSearchLanguage(providerQuery)
+            : filters.Language!;
         if (filters.AllowedDomains is { Count: > 0 })
         {
             var sites = string.Join(" OR ", filters.AllowedDomains.Select(domain => $"site:{domain}"));
@@ -567,10 +657,68 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
             ResearchRecency.Year => "&df=y",
             _ => string.Empty
         };
-        var language = LanguageParameter(filters.Language);
-        yield return $"https://html.duckduckgo.com/html/?q={escaped}{recency}{language}";
-        yield return $"https://lite.duckduckgo.com/lite/?q={escaped}{recency}{language}";
+        var language = LanguageParameter(effectiveLanguage);
+        yield return new SearchEndpoint(
+            $"https://html.duckduckgo.com/html/?q={escaped}{recency}{language}",
+            "DuckDuckGo",
+            SearchResponseKind.Html,
+            DuckDuckGoProviderUrl);
+
+        // DuckDuckGo can return an anti-automation page after only a few requests.
+        // GDELT and Wikimedia expose public, structured JSON APIs, providing
+        // independent zero-configuration fallbacks without scraping another HTML
+        // result page. Domain restrictions are enforced again after parsing.
+        var structuredQuery = Uri.EscapeDataString(providerQuery);
+        var gdeltRecency = GdeltTimespanParameter(filters.Recency);
+        var gdeltEndpoint = new SearchEndpoint(
+            $"https://api.gdeltproject.org/api/v2/doc/doc?query={structuredQuery}&mode=artlist&maxrecords={Math.Clamp(filters.MaxResults * 2, 1, 40)}&format=json&sort=HybridRel{gdeltRecency}",
+            "GDELT Project",
+            SearchResponseKind.GdeltJson,
+            GdeltProviderUrl);
+
+        var wikipediaHost = WikimediaHost(effectiveLanguage);
+        var wikipediaLanguage = wikipediaHost.Split('.', 2)[0];
+        var wikimediaEndpoint = new SearchEndpoint(
+            $"https://{wikipediaHost}/w/api.php?action=query&list=search&srsearch={structuredQuery}&srnamespace=0&srlimit={Math.Clamp(filters.MaxResults * 2, 1, 20)}&srprop=snippet&utf8=1&maxlag=5&format=json&formatversion=2",
+            $"Wikipedia ({wikipediaLanguage})",
+            SearchResponseKind.WikimediaJson,
+            new Uri($"https://{wikipediaHost}/"),
+            "CC BY-SA 4.0",
+            WikipediaLicenseUrl);
+
+        var canUseGdelt = !hasExplicitLanguage;
+        var canUseWikipedia = filters.Recency == ResearchRecency.Any &&
+                              (!hasExplicitLanguage || SupportsWikimediaLanguage(effectiveLanguage));
+        if (ShouldPreferGdelt(providerQuery, filters.Recency))
+        {
+            if (canUseGdelt)
+                yield return gdeltEndpoint;
+            if (canUseWikipedia)
+                yield return wikimediaEndpoint;
+        }
+        else
+        {
+            if (canUseWikipedia)
+                yield return wikimediaEndpoint;
+            if (canUseGdelt)
+                yield return gdeltEndpoint;
+        }
+
+        yield return new SearchEndpoint(
+            $"https://lite.duckduckgo.com/lite/?q={escaped}{recency}{language}",
+            "DuckDuckGo Lite",
+            SearchResponseKind.Html,
+            DuckDuckGoProviderUrl);
     }
+
+    private static string GdeltTimespanParameter(ResearchRecency recency) => recency switch
+    {
+        ResearchRecency.Day => "&timespan=1day",
+        ResearchRecency.Week => "&timespan=1week",
+        ResearchRecency.Month => "&timespan=1month",
+        ResearchRecency.Year => "&timespan=1year",
+        _ => string.Empty
+    };
 
     private static string LanguageParameter(string? language)
     {
@@ -584,6 +732,7 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
             "zh" or "zh-cn" or "cn" => "cn-zh",
             "zh-tw" => "tw-zh",
             "ja" or "ja-jp" => "jp-jp",
+            "ko" or "ko-kr" => "kr-kr",
             "de" or "de-de" => "de-de",
             "fr" or "fr-fr" => "fr-fr",
             _ => normalized
@@ -591,10 +740,97 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
         return $"&kl={Uri.EscapeDataString(region)}";
     }
 
+    private static string WikimediaHost(string language)
+    {
+        var normalized = language.Trim().ToLowerInvariant();
+        var primary = normalized.Split(['-', '_'], 2)[0];
+        return primary switch
+        {
+            "zh" or "cn" => "zh.wikipedia.org",
+            "ja" => "ja.wikipedia.org",
+            "ko" => "ko.wikipedia.org",
+            "de" => "de.wikipedia.org",
+            "fr" => "fr.wikipedia.org",
+            _ => "en.wikipedia.org"
+        };
+    }
+
+    private static bool SupportsWikimediaLanguage(string language)
+    {
+        var primary = language.Trim().ToLowerInvariant().Split(['-', '_'], 2)[0];
+        return primary is "en" or "zh" or "cn" or "ja" or "ko" or "de" or "fr";
+    }
+
+    private bool TryReserveSearchProvider(SearchEndpoint endpoint, out DateTimeOffset retryAt)
+    {
+        retryAt = DateTimeOffset.MinValue;
+        if (endpoint.ResponseKind == SearchResponseKind.Html)
+            return true;
+
+        var key = ProviderThrottleKey(endpoint);
+        lock (_providerThrottleSync)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (_providerBlockedUntil.TryGetValue(key, out retryAt) && retryAt > now)
+                return false;
+
+            // GDELT is deliberately paced even after a successful response. This
+            // prevents balanced/deep query variants from issuing a burst of DOC
+            // API requests when earlier providers return no results.
+            if (endpoint.ResponseKind == SearchResponseKind.GdeltJson)
+                _providerBlockedUntil[key] = retryAt = now + StructuredProviderMinimumInterval;
+            return true;
+        }
+    }
+
+    private void ApplyProviderCooldown(SearchEndpoint endpoint, TimeSpan? retryAfter)
+    {
+        if (endpoint.ResponseKind == SearchResponseKind.Html)
+            return;
+        var duration = retryAfter is { } requested && requested > StructuredProviderMinimumInterval
+            ? requested
+            : StructuredProviderMinimumInterval;
+        lock (_providerThrottleSync)
+        {
+            var until = DateTimeOffset.UtcNow + duration;
+            var key = ProviderThrottleKey(endpoint);
+            if (!_providerBlockedUntil.TryGetValue(key, out var current) || until > current)
+                _providerBlockedUntil[key] = until;
+        }
+    }
+
+    private static string ProviderThrottleKey(SearchEndpoint endpoint) =>
+        new Uri(endpoint.Url).IdnHost;
+
+    private static string InferSearchLanguage(string query)
+    {
+        if (query.Any(character => character is >= '\u3040' and <= '\u30ff'))
+            return "ja-JP";
+        if (query.Any(character => character is >= '\uac00' and <= '\ud7af'))
+            return "ko-KR";
+        if (query.Any(character => character is >= '\u3400' and <= '\u9fff'))
+            return "zh-CN";
+        return "en-US";
+    }
+
+    private static bool ShouldPreferGdelt(string query, ResearchRecency recency)
+    {
+        if (recency != ResearchRecency.Any)
+            return true;
+        var signals = new[]
+        {
+            "news", "latest", "today", "current", "recent", "update", "release",
+            "announcement", "breaking", "新闻", "最新", "今日", "今天", "动态", "近况",
+            "更新", "发布", "公告", "消息", "ニュース", "오늘", "최신", "뉴스"
+        };
+        return signals.Any(signal => query.Contains(signal, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static IReadOnlyList<ResearchSearchSource> ParseSearchResults(
         string html,
         Uri searchPage,
-        int maxResults)
+        int maxResults,
+        SearchEndpoint endpoint)
     {
         var document = new HtmlParser().ParseDocument(html);
         var results = new List<ResearchSearchSource>();
@@ -624,12 +860,207 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                 url,
                 url.IdnHost,
                 snippet,
-                ParseSnippetDate(snippet)));
+                ParseSnippetDate(snippet),
+                endpoint.Provider,
+                endpoint.ProviderUrl,
+                endpoint.LicenseName,
+                endpoint.LicenseUrl));
             if (results.Count >= maxResults)
                 break;
         }
         return results;
     }
+
+    private static SearchPayloadParseResult ParseGdeltSearchResults(
+        string json,
+        int maxResults,
+        SearchEndpoint endpoint)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = 32
+            });
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("articles", out var articles) ||
+                articles.ValueKind != JsonValueKind.Array)
+                return new SearchPayloadParseResult([], false);
+
+            var results = new List<ResearchSearchSource>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var article in articles.EnumerateArray())
+            {
+                if (article.ValueKind != JsonValueKind.Object)
+                    continue;
+                var title = CleanText(JsonString(article, "title"));
+                var rawUrl = CleanText(JsonString(article, "url"));
+                if (title.Length == 0 ||
+                    !Uri.TryCreate(rawUrl, UriKind.Absolute, out var url) ||
+                    !IsUsefulResult(url))
+                    continue;
+                url = ResearchText.CanonicalizeUrl(url);
+                if (!seen.Add(url.AbsoluteUri))
+                    continue;
+                var snippet = BuildGdeltSnippet(article);
+                var publishedAt = TryParseGdeltDate(JsonString(article, "seendate"));
+                results.Add(new ResearchSearchSource(
+                    title,
+                    url,
+                    url.IdnHost,
+                    snippet,
+                    publishedAt,
+                    endpoint.Provider,
+                    endpoint.ProviderUrl,
+                    endpoint.LicenseName,
+                    endpoint.LicenseUrl));
+                if (results.Count >= maxResults)
+                    break;
+            }
+            return new SearchPayloadParseResult(results, articles.GetArrayLength() == 0);
+        }
+        catch (JsonException)
+        {
+            return new SearchPayloadParseResult([], false);
+        }
+    }
+
+    private static SearchPayloadParseResult ParseWikimediaSearchResults(
+        string json,
+        Uri searchPage,
+        int maxResults,
+        SearchEndpoint endpoint,
+        TimeSpan? retryAfter)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = 32
+            });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return new SearchPayloadParseResult([], false);
+            if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
+            {
+                var code = CleanText(JsonString(error, "code"));
+                var info = CleanText(JsonString(error, "info"));
+                var rateLimited = code.Equals("ratelimited", StringComparison.OrdinalIgnoreCase) ||
+                                  code.Equals("maxlag", StringComparison.OrdinalIgnoreCase);
+                var kind = rateLimited ? ResearchErrorKind.RateLimited : ResearchErrorKind.Parse;
+                var message = $"{endpoint.Provider} returned API error {code}: {info}".TrimEnd(' ', ':');
+                return new SearchPayloadParseResult(
+                    [],
+                    false,
+                    new ResearchFailure(
+                        kind,
+                        message,
+                        searchPage,
+                        (int)HttpStatusCode.OK,
+                        rateLimited,
+                        1),
+                    rateLimited ? retryAfter ?? StructuredProviderMinimumInterval : null);
+            }
+            if (!root.TryGetProperty("batchcomplete", out _))
+                return new SearchPayloadParseResult([], false);
+            if (!root.TryGetProperty("query", out var query))
+                return new SearchPayloadParseResult([], true);
+            if (query.ValueKind != JsonValueKind.Object ||
+                !query.TryGetProperty("search", out var search) ||
+                search.ValueKind != JsonValueKind.Array)
+                return new SearchPayloadParseResult([], false);
+
+            var results = new List<ResearchSearchSource>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var page in search.EnumerateArray())
+            {
+                if (page.ValueKind != JsonValueKind.Object)
+                    continue;
+                var title = CleanText(JsonString(page, "title"));
+                var rawUrl = title.Length == 0
+                    ? string.Empty
+                    : $"https://{searchPage.IdnHost}/wiki/{Uri.EscapeDataString(title.Replace(' ', '_'))}";
+                if (title.Length == 0 ||
+                    !Uri.TryCreate(rawUrl, UriKind.Absolute, out var url) ||
+                    !IsUsefulResult(url))
+                    continue;
+                url = ResearchText.CanonicalizeUrl(url);
+                if (!seen.Add(url.AbsoluteUri))
+                    continue;
+                results.Add(new ResearchSearchSource(
+                    title,
+                    url,
+                    url.IdnHost,
+                    CleanWikipediaSnippet(JsonString(page, "snippet")),
+                    null,
+                    endpoint.Provider,
+                    endpoint.ProviderUrl,
+                    endpoint.LicenseName,
+                    endpoint.LicenseUrl));
+                if (results.Count >= maxResults)
+                    break;
+            }
+            return new SearchPayloadParseResult(results, search.GetArrayLength() == 0);
+        }
+        catch (JsonException)
+        {
+            return new SearchPayloadParseResult([], false);
+        }
+    }
+
+    private static string JsonString(JsonElement parent, string propertyName) =>
+        parent.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+
+    private static string BuildGdeltSnippet(JsonElement article)
+    {
+        var values = new[]
+        {
+            CleanText(JsonString(article, "domain")),
+            CleanText(JsonString(article, "language")),
+            CleanText(JsonString(article, "sourcecountry"))
+        };
+        return string.Join(" · ", values.Where(value => value.Length > 0));
+    }
+
+    private static string CleanWikipediaSnippet(string value) =>
+        CleanText(HtmlTagRegex().Replace(value, string.Empty));
+
+    private static DateTimeOffset? TryParseGdeltDate(string value)
+    {
+        var formats = new[] { "yyyyMMdd'T'HHmmss'Z'", "yyyyMMddHHmmss" };
+        return DateTimeOffset.TryParseExact(
+            value,
+            formats,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static bool IsSearchProviderChallenge(
+        SearchEndpoint endpoint,
+        int statusCode,
+        string payload)
+    {
+        if (!endpoint.Provider.StartsWith("DuckDuckGo", StringComparison.Ordinal))
+            return false;
+        return statusCode == 202 ||
+               payload.Contains("anomaly-modal", StringComparison.OrdinalIgnoreCase) ||
+               payload.Contains("challenge-form", StringComparison.OrdinalIgnoreCase) ||
+               payload.Contains("duckduckgo.com/anomaly.js", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsExplicitEmptySearchResponse(string payload) =>
+        payload.Contains("No results.", StringComparison.OrdinalIgnoreCase) ||
+        payload.Contains("No more results", StringComparison.OrdinalIgnoreCase) ||
+        payload.Contains("result--no-result", StringComparison.OrdinalIgnoreCase);
 
     private static Uri? NormalizeSearchResultUrl(string? value, Uri searchPage)
     {
@@ -856,6 +1287,8 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
                 .AppendLine()
                 .AppendLine($"- URL: {item.Url}")
                 .AppendLine($"- Domain: {item.Domain}")
+                .AppendLine($"- Discovered via: {item.SearchProvider}{(item.SearchProviderUrl == null ? string.Empty : $" ({item.SearchProviderUrl})")}")
+                .AppendLine($"- License: {(item.LicenseName == null ? "source-site terms apply" : $"{item.LicenseName}{(item.LicenseUrl == null ? string.Empty : $" ({item.LicenseUrl})")}")}")
                 .AppendLine($"- Published: {(item.PublishedAt?.ToString("O") ?? "unknown")}")
                 .AppendLine($"- Content: {item.ContentKind.ToString().ToLowerInvariant()}")
                 .AppendLine($"- Signals: authority {item.AuthoritySignalScore:0.000}, recency {item.RecencyScore:0.000}, relevance {item.RelevanceScore:0.000}, combined {item.OverallScore:0.000}")
@@ -932,7 +1365,7 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
             .Select(group =>
             {
                 var first = group.First();
-                return first with { Attempts = group.Sum(item => Math.Max(1, item.Attempts)) };
+                return first with { Attempts = group.Sum(item => Math.Max(0, item.Attempts)) };
             })
             .ToArray();
 
@@ -1003,11 +1436,27 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
             HttpStatusCode.ServiceUnavailable or
             HttpStatusCode.GatewayTimeout;
 
+    private static bool ShouldRetryStatus(HttpStatusCode status, bool retryRateLimited) =>
+        IsRetryableStatus(status) &&
+        (status != HttpStatusCode.TooManyRequests || retryRateLimited);
+
     private static TimeSpan RetryDelay(HttpResponseMessage response, int attempt)
     {
         if (response.Headers.RetryAfter?.Delta is { } requested)
             return requested > TimeSpan.FromSeconds(2) ? TimeSpan.FromSeconds(2) : requested;
         return TimeSpan.FromMilliseconds(100 * attempt);
+    }
+
+    private static TimeSpan? ReadRetryAfter(HttpResponseMessage response)
+    {
+        if (response.Headers.RetryAfter?.Delta is { } delta)
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+        if (response.Headers.RetryAfter?.Date is { } date)
+        {
+            var duration = date - DateTimeOffset.UtcNow;
+            return duration < TimeSpan.Zero ? TimeSpan.Zero : duration;
+        }
+        return null;
     }
 
     private static string NormalizeContentType(string contentType, Uri uri, byte[] bytes)
@@ -1084,10 +1533,35 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
         string ContentType,
         string? Charset,
         byte[] Bytes,
-        int Attempts);
+        int Attempts,
+        TimeSpan? RetryAfter);
+
+    private sealed record SearchEndpoint(
+        string Url,
+        string Provider,
+        SearchResponseKind ResponseKind,
+        Uri ProviderUrl,
+        string? LicenseName = null,
+        Uri? LicenseUrl = null);
+
+    private sealed record SearchPayloadParseResult(
+        IReadOnlyList<ResearchSearchSource> Sources,
+        bool IsRecognizedEmpty,
+        ResearchFailure? Failure = null,
+        TimeSpan? RetryAfter = null);
+
+    private enum SearchResponseKind
+    {
+        Html,
+        GdeltJson,
+        WikimediaJson
+    }
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex(@"<[^>]+>")]
+    private static partial Regex HtmlTagRegex();
 
     [GeneratedRegex(
         @"(?<number>\d+(?:\.\d+)?)\s*(?<unit>%|percent|million|billion|ms|milliseconds?|seconds?|minutes?|hours?|days?|years?)\b",
@@ -1102,11 +1576,16 @@ public sealed partial class ResearchWorkbenchService : IResearchWorkbenchService
 
 public sealed class ResearchServiceException : Exception
 {
-    public ResearchServiceException(ResearchFailure failure, Exception? innerException = null)
+    public ResearchServiceException(
+        ResearchFailure failure,
+        Exception? innerException = null,
+        TimeSpan? retryAfter = null)
         : base(failure.Message, innerException)
     {
         Failure = failure;
+        RetryAfter = retryAfter;
     }
 
     public ResearchFailure Failure { get; }
+    public TimeSpan? RetryAfter { get; }
 }

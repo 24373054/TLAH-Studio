@@ -1,6 +1,6 @@
 # Development Guide
 
-Verified against TLAH Studio 4.14.0.
+Verified against TLAH Studio 4.15.0.
 
 ## Prerequisites
 
@@ -36,13 +36,14 @@ Launch `TLAHStudio.App` from Visual Studio for a reliable WinUI debug environmen
 | `.\tools\ci.ps1 -Configuration Release -Platform x64` | Restore, vulnerability audit, tests with Cobertura coverage, App build, Updater build |
 | `dotnet build .\TLAHStudio.App\TLAHStudio.App.csproj -c Release -p:Platform=x64 --no-restore` | Compile the release desktop app only |
 
-The CI gate must remain warning-free. Each run writes at least one
+The CI gate must remain warning-free and requires at least 60% line coverage
+and 50% branch coverage. Each run writes at least one
 `artifacts/test-results/coverage/**/coverage.cobertura.xml` report and fails if
-the collector produces no coverable lines. The test build enables portable
-symbols and isolates its binaries under `artifacts/test-results/build`, leaving
-release-package outputs unchanged. GitHub Actions retains the reports as the
-`coverage-cobertura` artifact for 14 days. The gate does not currently enforce
-a numeric code-coverage percentage.
+the collector produces no coverable lines or every report misses either floor.
+The test build enables portable symbols and isolates its binaries under
+`artifacts/test-results/build`, leaving release-package outputs unchanged.
+GitHub Actions retains the reports as the `coverage-cobertura` artifact for 14
+days.
 
 ## Style
 
@@ -79,6 +80,9 @@ WinUI-only behavior should also receive a manual checklist covering:
 - Research cancellation, source links, evidence report, partial failure, and active-workspace output
 - Spreadsheet, document, and diagram creation with preview plus open-file/open-folder actions
 - Tool Quality with empty history and populated local history
+- Aquarium Auto, Eco, Balanced, and High quality profiles
+- Aquarium pause/resume persistence across navigation and restart
+- Aquarium static-poster fallback with reduced motion, High Contrast, Energy Saver, a collapsed sidebar, and a deactivated window
 
 ## Local Data
 

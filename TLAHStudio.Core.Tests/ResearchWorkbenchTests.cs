@@ -134,6 +134,943 @@ public sealed class ResearchWorkbenchTests
     }
 
     [Fact]
+    public async Task SearchAsync_StopsBeforeSlowFallbacksWhenRequestedResultCountIsSatisfied()
+    {
+        await using var db = TestDb.Create();
+        var requestedHosts = new List<string>();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedHosts.Add(request.RequestUri!.IdnHost);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    <div class="result"><a class="result__a" href="https://one.example/a">One</a></div>
+                    <div class="result"><a class="result__a" href="https://two.example/b">Two</a></div>
+                    """,
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "latest AI news",
+            ResearchMode.Deep,
+            new ResearchFilters(MaxResults: 2),
+            AuthorizedWorkspace());
+
+        Assert.Equal(2, result.Sources.Count);
+        Assert.Equal(["html.duckduckgo.com"], requestedHosts);
+    }
+
+    [Fact]
+    public async Task SearchAsync_FallsBackToGdeltWhenDuckDuckGoReturnsChallenge()
+    {
+        await using var db = TestDb.Create();
+        var requestedHosts = new List<string>();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedHosts.Add(request.RequestUri!.IdnHost);
+            if (request.RequestUri.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent(
+                        """<html><form id="challenge-form"><div class="anomaly-modal">Bots use DuckDuckGo too.</div></form></html>""",
+                        Encoding.UTF8,
+                        "text/html")
+                };
+            }
+
+            var json = """
+                {"articles":[
+                  {
+                    "title":"Kimi K3 official guide",
+                    "url":"https://platform.kimi.com/docs/guide/kimi-k3-quickstart?utm_source=gdelt",
+                    "domain":"platform.kimi.com",
+                    "language":"Chinese",
+                    "sourcecountry":"China",
+                    "seendate":"20260717T100000Z"
+                  },
+                  {
+                    "title":"Independent K3 report",
+                    "url":"https://example.org/research/kimi-k3",
+                    "domain":"example.org",
+                    "language":"English",
+                    "sourcecountry":"United States",
+                    "seendate":"20260716T083000Z"
+                  }
+                ]}
+                """;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "Kimi K3 latest news",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Equal(["html.duckduckgo.com", "api.gdeltproject.org"], requestedHosts);
+        Assert.Equal(2, result.Sources.Count);
+        Assert.All(result.Sources, source =>
+        {
+            Assert.Equal("GDELT Project", source.SearchProvider);
+            Assert.Equal("https://www.gdeltproject.org/", source.SearchProviderUrl?.AbsoluteUri);
+        });
+        Assert.Equal(
+            "https://platform.kimi.com/docs/guide/kimi-k3-quickstart",
+            result.Sources[0].Url.AbsoluteUri);
+        Assert.Equal(
+            new DateTimeOffset(2026, 7, 17, 10, 0, 0, TimeSpan.Zero),
+            result.Sources[0].PublishedAt);
+        Assert.Contains("English", result.Sources[1].Snippet);
+        Assert.Contains(result.Failures, failure =>
+            failure.Kind == ResearchErrorKind.RateLimited &&
+            failure.HttpStatus == (int)HttpStatusCode.Accepted);
+        Assert.Equal(2, result.Attempts);
+    }
+
+    [Fact]
+    public async Task SearchAsync_AppliesDomainFiltersToStructuredFallbackResults()
+    {
+        await using var db = TestDb.Create();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {"articles":[
+                      {"title":"Allowed","url":"https://docs.example.com/latest","seendate":"20260718T120000Z"},
+                      {"title":"Blocked","url":"https://blocked.example.com/latest","seendate":"20260718T120000Z"},
+                      {"title":"Outside","url":"https://outside.test/latest","seendate":"20260718T120000Z"}
+                    ]}
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "product latest news",
+            ResearchMode.Quick,
+            new ResearchFilters(
+                AllowedDomains: ["example.com"],
+                BlockedDomains: ["blocked.example.com"],
+                MaxResults: 5),
+            AuthorizedWorkspace());
+
+        var source = Assert.Single(result.Sources);
+        Assert.Equal("Allowed", source.Title);
+        Assert.Equal("docs.example.com", source.Domain);
+    }
+
+    [Fact]
+    public async Task SearchAsync_FallsBackToChineseWikipediaWhenGdeltIsRateLimited()
+    {
+        await using var db = TestDb.Create();
+        var requestedHosts = new List<string>();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedHosts.Add(request.RequestUri!.IdnHost);
+            if (request.RequestUri.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent(
+                        """<html><script src="https://duckduckgo.com/anomaly.js"></script></html>""",
+                        Encoding.UTF8,
+                        "text/html")
+                };
+            }
+            if (request.RequestUri.IdnHost == "api.gdeltproject.org")
+                return new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {"batchcomplete":true,"query":{"search":[{
+                      "pageid":123,
+                      "title":"Kimi",
+                      "snippet":"Kimi 是月之暗面开发的<span class=\"searchmatch\">人工智能助手</span>。"
+                    }]}}
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "Kimi 最新消息",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        var source = Assert.Single(result.Sources);
+        Assert.Equal("Wikipedia (zh)", source.SearchProvider);
+        Assert.Equal("zh.wikipedia.org", source.Domain);
+        Assert.Contains("人工智能助手", source.Snippet);
+        Assert.Equal("CC BY-SA 4.0", source.LicenseName);
+        Assert.Equal(
+            "https://creativecommons.org/licenses/by-sa/4.0/",
+            source.LicenseUrl?.AbsoluteUri);
+        Assert.StartsWith("https://zh.wikipedia.org/wiki/", source.Url.AbsoluteUri);
+        Assert.Equal(
+            [
+                "html.duckduckgo.com",
+                "api.gdeltproject.org",
+                "zh.wikipedia.org"
+            ],
+            requestedHosts);
+        Assert.Contains(result.Failures, failure =>
+            failure.Kind == ResearchErrorKind.RateLimited &&
+            failure.HttpStatus == (int)HttpStatusCode.TooManyRequests &&
+            failure.Attempts == 1);
+        Assert.Equal(3, result.Attempts);
+    }
+
+    [Fact]
+    public async Task SearchAsync_GdeltRateLimitIsNotRetriedAndThrottlesLaterQueryVariants()
+    {
+        await using var db = TestDb.Create();
+        var gdeltCalls = 0;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            var host = request.RequestUri!.IdnHost;
+            if (host == "api.gdeltproject.org")
+            {
+                gdeltCalls++;
+                return new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            }
+            if (host.EndsWith("wikipedia.org", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"batchcomplete":true,"query":{"search":[]}}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<html><div class="result--no-result">No results.</div></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "latest artificial intelligence news",
+            ResearchMode.Deep,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(result.Sources);
+        Assert.Equal(1, gdeltCalls);
+        Assert.Contains(result.Failures, failure =>
+            failure.Kind == ResearchErrorKind.RateLimited &&
+            failure.HttpStatus == (int)HttpStatusCode.TooManyRequests &&
+            failure.Attempts == 1);
+        Assert.Contains(result.Failures, failure =>
+            failure.Message.Contains("local provider throttle", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task SearchAsync_Gdelt5xxIsAttemptedOnceBeforeWikipediaFallback()
+    {
+        await using var db = TestDb.Create();
+        var gdeltCalls = 0;
+        var wikipediaCalls = 0;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            var host = request.RequestUri!.IdnHost;
+            if (host == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            if (host == "api.gdeltproject.org")
+            {
+                gdeltCalls++;
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+            if (host == "en.wikipedia.org")
+            {
+                wikipediaCalls++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"batchcomplete":true,"query":{"search":[{"pageid":7,"title":"Artificial intelligence","snippet":"Current AI research"}]}}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            throw new InvalidOperationException($"Unexpected host {host}");
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "latest artificial intelligence news",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        var source = Assert.Single(result.Sources);
+        Assert.Equal("Wikipedia (en)", source.SearchProvider);
+        Assert.Equal(1, gdeltCalls);
+        Assert.Equal(1, wikipediaCalls);
+        Assert.Equal(3, result.Attempts);
+        Assert.Contains(result.Failures, failure =>
+            failure.Url?.IdnHost == "api.gdeltproject.org" &&
+            failure.HttpStatus == (int)HttpStatusCode.ServiceUnavailable &&
+            failure.Attempts == 1);
+    }
+
+    [Fact]
+    public async Task SearchAsync_Wikipedia5xxIsAttemptedOnceBeforeGdeltFallback()
+    {
+        await using var db = TestDb.Create();
+        var wikipediaCalls = 0;
+        var gdeltCalls = 0;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            var host = request.RequestUri!.IdnHost;
+            if (host == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            if (host == "en.wikipedia.org")
+            {
+                wikipediaCalls++;
+                return new HttpResponseMessage(HttpStatusCode.BadGateway);
+            }
+            if (host == "api.gdeltproject.org")
+            {
+                gdeltCalls++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"articles":[{"title":"Moonshot AI","url":"https://example.org/moonshot","seendate":"20260718T120000Z"}]}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            throw new InvalidOperationException($"Unexpected host {host}");
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "Moonshot AI",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        var source = Assert.Single(result.Sources);
+        Assert.Equal("GDELT Project", source.SearchProvider);
+        Assert.Equal(1, wikipediaCalls);
+        Assert.Equal(1, gdeltCalls);
+        Assert.Equal(3, result.Attempts);
+        Assert.Contains(result.Failures, failure =>
+            failure.Url?.IdnHost == "en.wikipedia.org" &&
+            failure.HttpStatus == (int)HttpStatusCode.BadGateway &&
+            failure.Attempts == 1);
+    }
+
+    [Fact]
+    public async Task SearchAsync_DeepModeDoesNotRepeatFailingStructuredProviderAcrossQueryVariants()
+    {
+        await using var db = TestDb.Create();
+        var wikipediaCalls = 0;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            var host = request.RequestUri!.IdnHost;
+            if (host == "en.wikipedia.org")
+            {
+                wikipediaCalls++;
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+            if (host == "api.gdeltproject.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"articles":[]}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<html><div class="result--no-result">No results.</div></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "Moonshot AI",
+            ResearchMode.Deep,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(result.Sources);
+        Assert.Equal(1, wikipediaCalls);
+        Assert.Contains(result.Failures, failure =>
+            failure.Url?.IdnHost == "en.wikipedia.org" &&
+            failure.HttpStatus == (int)HttpStatusCode.ServiceUnavailable);
+        Assert.Contains(result.Failures, failure =>
+            failure.Message.Contains("local provider throttle", StringComparison.OrdinalIgnoreCase) &&
+            failure.Url?.IdnHost == "en.wikipedia.org");
+    }
+
+    [Fact]
+    public async Task SearchAsync_GdeltTimeoutIsAttemptedOnceBeforeWikipediaFallback()
+    {
+        await using var db = TestDb.Create();
+        var gdeltCalls = 0;
+        using var http = new HttpClient(new AsyncMapHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            var host = request.RequestUri!.IdnHost;
+            if (host == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            if (host == "api.gdeltproject.org")
+            {
+                gdeltCalls++;
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            if (host == "en.wikipedia.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"batchcomplete":true,"query":{"search":[{"pageid":7,"title":"Artificial intelligence","snippet":"Current AI research"}]}}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            throw new InvalidOperationException($"Unexpected host {host}");
+        }));
+        var service = CreateService(db, http);
+        var stopwatch = Stopwatch.StartNew();
+
+        var result = await service.SearchAsync(
+            "latest artificial intelligence news",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace() with { TimeoutSeconds = 1 });
+
+        stopwatch.Stop();
+        Assert.Single(result.Sources);
+        Assert.Equal(1, gdeltCalls);
+        Assert.InRange(stopwatch.Elapsed, TimeSpan.FromMilliseconds(700), TimeSpan.FromSeconds(4));
+        Assert.Contains(result.Failures, failure =>
+            failure.Url?.IdnHost == "api.gdeltproject.org" &&
+            failure.Kind == ResearchErrorKind.Timeout &&
+            failure.Attempts == 1);
+    }
+
+    [Theory]
+    [InlineData("maxlag")]
+    [InlineData("ratelimited")]
+    public async Task SearchAsync_WikipediaApiRateEnvelopeFallsBackWithoutRetry(string errorCode)
+    {
+        await using var db = TestDb.Create();
+        var wikipediaCalls = 0;
+        var gdeltCalls = 0;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            var host = request.RequestUri!.IdnHost;
+            if (host == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            if (host.EndsWith("wikipedia.org", StringComparison.Ordinal))
+            {
+                wikipediaCalls++;
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"error\":{\"code\":\"" + errorCode + "\",\"info\":\"Please retry later\"}}",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+                response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(12));
+                return response;
+            }
+            if (host == "api.gdeltproject.org")
+            {
+                gdeltCalls++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"articles":[{"title":"Moonshot AI","url":"https://example.org/moonshot","seendate":"20260718T120000Z"}]}""",
+                        Encoding.UTF8,
+                    "application/json")
+                };
+            }
+            if (host == "lite.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """<html><div class="result--no-result">No results.</div></html>""",
+                        Encoding.UTF8,
+                        "text/html")
+                };
+            }
+            throw new InvalidOperationException($"Unexpected host {host}");
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "Moonshot AI",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Single(result.Sources);
+        Assert.Equal(1, wikipediaCalls);
+        Assert.Equal(1, gdeltCalls);
+        Assert.Contains(result.Failures, failure =>
+            failure.Kind == ResearchErrorKind.RateLimited &&
+            failure.Message.Contains(errorCode, StringComparison.OrdinalIgnoreCase));
+
+        var followUp = await service.SearchAsync(
+            "Moonshot AI follow-up",
+            ResearchMode.Quick,
+            new ResearchFilters(Language: "en-US", MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(followUp.Sources);
+        Assert.Equal(1, wikipediaCalls);
+        Assert.Contains(followUp.Failures, failure =>
+            failure.Message.Contains("local provider throttle", StringComparison.OrdinalIgnoreCase) &&
+            failure.Attempts == 0);
+    }
+
+    [Fact]
+    public async Task SearchAsync_GenericEntityQueryPrefersLanguageAwareWikimediaBeforeGdelt()
+    {
+        await using var db = TestDb.Create();
+        var requestedHosts = new List<string>();
+        Uri? wikipediaRequest = null;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedHosts.Add(request.RequestUri!.IdnHost);
+            if (request.RequestUri.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            wikipediaRequest = request.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {"batchcomplete":true,"query":{"search":[{
+                      "pageid":123,"title":"月之暗面",
+                      "snippet":"一家<span class=\"searchmatch\">人工智能</span>公司。"
+                    }]}}
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "月之暗面",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        var source = Assert.Single(result.Sources);
+        Assert.Equal("Wikipedia (zh)", source.SearchProvider);
+        Assert.Equal(["html.duckduckgo.com", "zh.wikipedia.org"], requestedHosts);
+        Assert.NotNull(wikipediaRequest);
+        Assert.Contains("list=search", wikipediaRequest!.Query, StringComparison.Ordinal);
+        Assert.Contains("srprop=snippet", wikipediaRequest.Query, StringComparison.Ordinal);
+        Assert.Contains("maxlag=5", wikipediaRequest.Query, StringComparison.Ordinal);
+        Assert.DoesNotContain("extract", wikipediaRequest.Query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("月之暗面", "zh-CN", "zh.wikipedia.org", "Wikipedia (zh)")]
+    [InlineData("月の裏側 AI", "ja-JP", "ja.wikipedia.org", "Wikipedia (ja)")]
+    [InlineData("Moonshot AI", "ko-KR", "ko.wikipedia.org", "Wikipedia (ko)")]
+    [InlineData("Moonshot AI", "de-DE", "de.wikipedia.org", "Wikipedia (de)")]
+    [InlineData("Moonshot AI", "fr-FR", "fr.wikipedia.org", "Wikipedia (fr)")]
+    [InlineData("Moonshot AI", "en-US", "en.wikipedia.org", "Wikipedia (en)")]
+    public async Task SearchAsync_ExplicitLanguageUsesMatchingWikipediaEditionAndSkipsGdelt(
+        string query,
+        string language,
+        string expectedHost,
+        string expectedProvider)
+    {
+        await using var db = TestDb.Create();
+        var requestedHosts = new List<string>();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedHosts.Add(request.RequestUri!.IdnHost);
+            if (request.RequestUri.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"batchcomplete":true,"query":{"search":[{"pageid":7,"title":"Moonshot AI","snippet":"Artificial intelligence company"}]}}""",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            query,
+            ResearchMode.Quick,
+            new ResearchFilters(Language: language, MaxResults: 5),
+            AuthorizedWorkspace());
+
+        var source = Assert.Single(result.Sources);
+        Assert.Equal(expectedHost, source.Domain);
+        Assert.Equal(expectedProvider, source.SearchProvider);
+        Assert.Equal(["html.duckduckgo.com", expectedHost], requestedHosts);
+        Assert.DoesNotContain("api.gdeltproject.org", requestedHosts);
+    }
+
+    [Fact]
+    public async Task SearchAsync_UnsupportedExplicitLanguageDoesNotSilentlyUseEnglishWikipedia()
+    {
+        await using var db = TestDb.Create();
+        var requestedHosts = new List<string>();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedHosts.Add(request.RequestUri!.IdnHost);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<html><div class="result--no-result">No results.</div></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "Moonshot AI",
+            ResearchMode.Quick,
+            new ResearchFilters(Language: "es-ES", MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(result.Sources);
+        Assert.Equal(["html.duckduckgo.com", "lite.duckduckgo.com"], requestedHosts);
+        Assert.DoesNotContain(requestedHosts, host => host.EndsWith("wikipedia.org", StringComparison.Ordinal));
+        Assert.DoesNotContain("api.gdeltproject.org", requestedHosts);
+    }
+
+    [Fact]
+    public async Task SearchAsync_RecencyFilterNeverAcceptsUndatedWikipediaResults()
+    {
+        await using var db = TestDb.Create();
+        var requestedHosts = new List<string>();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedHosts.Add(request.RequestUri!.IdnHost);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<html><div class="result--no-result">No results.</div></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "月の裏側 最新情報",
+            ResearchMode.Quick,
+            new ResearchFilters(
+                Recency: ResearchRecency.Month,
+                Language: "ja-JP",
+                MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(result.Sources);
+        Assert.Equal(["html.duckduckgo.com", "lite.duckduckgo.com"], requestedHosts);
+        Assert.DoesNotContain(requestedHosts, host => host.EndsWith("wikipedia.org", StringComparison.Ordinal));
+        Assert.DoesNotContain("api.gdeltproject.org", requestedHosts);
+    }
+
+    [Theory]
+    [InlineData("Moonshot AI", "kl=us-en")]
+    [InlineData("月之暗面", "kl=cn-zh")]
+    [InlineData("月之暗面のモデル", "kl=jp-jp")]
+    [InlineData("문샷 AI", "kl=kr-kr")]
+    public async Task SearchAsync_InfersProviderLocaleFromQueryScript(
+        string query,
+        string expectedLocale)
+    {
+        await using var db = TestDb.Create();
+        Uri? requestedUri = null;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            requestedUri = request.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<a class="result__a" href="https://example.org/result">Result</a>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            query,
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 3),
+            AuthorizedWorkspace());
+
+        Assert.Single(result.Sources);
+        Assert.NotNull(requestedUri);
+        Assert.Equal("html.duckduckgo.com", requestedUri!.IdnHost);
+        Assert.Contains(expectedLocale, requestedUri.Query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SearchAsync_DistinguishesRecognizedEmptyAndMalformedStructuredResponses()
+    {
+        await using var db = TestDb.Create();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """<html><div class="result--no-result">No results.</div></html>""",
+                        Encoding.UTF8,
+                        "text/html")
+                };
+            }
+            if (request.RequestUri.IdnHost == "api.gdeltproject.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"articles":[]}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            if (request.RequestUri.IdnHost.EndsWith("wikipedia.org", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"batchcomplete":true,"query":{"search":"not-an-array"}}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<html><div class="result--no-result">No results.</div></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "a genuinely absent phrase",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(result.Sources);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(ResearchErrorKind.Parse, failure.Kind);
+        Assert.Equal("en.wikipedia.org", failure.Url?.IdnHost);
+        Assert.Equal(4, result.Attempts);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ReportsMalformedGdeltJsonAndContinuesToWikimedia()
+    {
+        await using var db = TestDb.Create();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            if (request.RequestUri.IdnHost == "api.gdeltproject.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"articles\":[", Encoding.UTF8, "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"batchcomplete":true}""", Encoding.UTF8, "application/json")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "malformed provider payload latest news",
+            ResearchMode.Quick,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(result.Sources);
+        Assert.Contains(result.Failures, failure =>
+            failure.Kind == ResearchErrorKind.Parse &&
+            failure.Url?.IdnHost == "api.gdeltproject.org");
+        Assert.DoesNotContain(result.Failures, failure => failure.Url?.IdnHost == "en.wikipedia.org");
+    }
+
+    [Fact]
+    public async Task SearchAsync_DeepModeDoesNotRepeatMalformedWikimediaPayloadAcrossQueryVariants()
+    {
+        await using var db = TestDb.Create();
+        var wikipediaCalls = 0;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            var host = request.RequestUri!.IdnHost;
+            if (host == "en.wikipedia.org")
+            {
+                wikipediaCalls++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"batchcomplete":true,"query":{"search":"not-an-array"}}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            if (host == "api.gdeltproject.org")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"articles":[]}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """<html><div class="result--no-result">No results.</div></html>""",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "Moonshot AI",
+            ResearchMode.Deep,
+            new ResearchFilters(MaxResults: 5),
+            AuthorizedWorkspace());
+
+        Assert.Empty(result.Sources);
+        Assert.Equal(1, wikipediaCalls);
+        Assert.Contains(result.Failures, failure =>
+            failure.Kind == ResearchErrorKind.Parse &&
+            failure.Url?.IdnHost == "en.wikipedia.org");
+        Assert.Contains(result.Failures, failure =>
+            failure.Message.Contains("local provider throttle", StringComparison.OrdinalIgnoreCase) &&
+            failure.Url?.IdnHost == "en.wikipedia.org");
+    }
+
+    [Fact]
+    public async Task ExistingNetworkAllowlistIsPreservedWithoutSilentProviderMigration()
+    {
+        await using var db = TestDb.Create();
+        var existing = await db.ToolPlatformSettings.FindAsync(1);
+        Assert.NotNull(existing);
+        existing.NetworkAllowlist = "html.duckduckgo.com\nwww.bing.com\nlite.duckduckgo.com";
+        await db.SaveChangesAsync();
+
+        var settings = await new ToolPlatformService(db).GetSettingsAsync();
+
+        Assert.Equal(
+            "html.duckduckgo.com\nwww.bing.com\nlite.duckduckgo.com",
+            settings.NetworkAllowlist);
+        Assert.True(ToolPlatformService.MatchesDomainList(settings.NetworkAllowlist, "www.bing.com"));
+        Assert.False(ToolPlatformService.MatchesDomainList(settings.NetworkAllowlist, "api.gdeltproject.org"));
+    }
+
+    [Fact]
+    public void NewToolPlatformSettingsIncludeEveryLanguageAwareSearchProvider()
+    {
+        var allowlist = new ToolPlatformSettings().NetworkAllowlist;
+
+        foreach (var host in new[]
+                 {
+                     "html.duckduckgo.com",
+                     "api.gdeltproject.org",
+                     "en.wikipedia.org",
+                     "zh.wikipedia.org",
+                     "ja.wikipedia.org",
+                     "ko.wikipedia.org",
+                     "de.wikipedia.org",
+                     "fr.wikipedia.org",
+                     "lite.duckduckgo.com"
+                 })
+        {
+            Assert.True(ToolPlatformService.MatchesDomainList(allowlist, host), host);
+        }
+    }
+
+    [Fact]
     public async Task SearchAsync_AppliesRecencyAndLanguageToProviderRequest()
     {
         await using var db = TestDb.Create();
@@ -164,6 +1101,62 @@ public sealed class ResearchWorkbenchTests
         Assert.NotNull(requestedUri);
         Assert.Contains("df=m", requestedUri!.Query, StringComparison.Ordinal);
         Assert.Contains("kl=cn-zh", requestedUri.Query, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ResearchRecency.Day, "1day")]
+    [InlineData(ResearchRecency.Week, "1week")]
+    [InlineData(ResearchRecency.Month, "1month")]
+    [InlineData(ResearchRecency.Year, "1year")]
+    public async Task SearchAsync_GdeltFallbackCarriesSupportedRecencyTimespan(
+        ResearchRecency recency,
+        string expectedTimespan)
+    {
+        await using var db = TestDb.Create();
+        Uri? gdeltUri = null;
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            if (request.RequestUri!.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent(
+                        """<html><form id="challenge-form"></form></html>""",
+                        Encoding.UTF8,
+                        "text/html")
+                };
+            }
+            gdeltUri = request.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {"articles":[{
+                      "title":"Current result",
+                      "url":"https://example.org/current",
+                      "seendate":"20260718T120000Z"
+                    }]}
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.SearchAsync(
+            "current release policy",
+            ResearchMode.Quick,
+            new ResearchFilters(
+                Recency: recency,
+                MaxResults: 3),
+            AuthorizedWorkspace());
+
+        Assert.Single(result.Sources);
+        Assert.NotNull(gdeltUri);
+        Assert.Equal("api.gdeltproject.org", gdeltUri!.IdnHost);
+        Assert.Contains($"timespan={expectedTimespan}", gdeltUri.Query, StringComparison.Ordinal);
+        Assert.Contains("format=json", gdeltUri.Query, StringComparison.Ordinal);
+        Assert.Contains("sort=HybridRel", gdeltUri.Query, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -237,6 +1230,60 @@ public sealed class ResearchWorkbenchTests
             if (Directory.Exists(artifactRoot))
                 Directory.Delete(artifactRoot, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task ResearchAsync_PreservesWikipediaProviderAndLicenseAttributionInReport()
+    {
+        await using var db = TestDb.Create();
+        using var http = new HttpClient(new MapHttpMessageHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            if (uri.IdnHost == "html.duckduckgo.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent("<form id=\"challenge-form\"></form>")
+                };
+            }
+            if (uri.AbsolutePath == "/w/api.php")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"batchcomplete":true,"query":{"search":[{"pageid":123,"title":"月之暗面","snippet":"一家人工智能公司"}]}}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "<article><h1>月之暗面</h1><p>月之暗面是一家人工智能公司，开发了 Kimi 助手。</p></article>",
+                    Encoding.UTF8,
+                    "text/html")
+            };
+        }));
+        var service = CreateService(db, http);
+
+        var result = await service.ResearchAsync(
+            "月之暗面",
+            ResearchMode.Quick,
+            new ResearchFilters(Language: "zh-CN", MaxResults: 5),
+            AuthorizedWorkspace());
+
+        var source = Assert.Single(result.Sources);
+        Assert.Equal("Wikipedia (zh)", source.SearchProvider);
+        Assert.Equal("https://zh.wikipedia.org/", source.SearchProviderUrl?.AbsoluteUri);
+        Assert.Equal("CC BY-SA 4.0", source.LicenseName);
+        Assert.Equal(
+            "https://creativecommons.org/licenses/by-sa/4.0/",
+            source.LicenseUrl?.AbsoluteUri);
+        Assert.Contains("Discovered via: Wikipedia (zh) (https://zh.wikipedia.org/)", result.ReportMarkdown);
+        Assert.Contains(
+            "License: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)",
+            result.ReportMarkdown);
+        Assert.Contains("URL: https://zh.wikipedia.org/wiki/", result.ReportMarkdown);
     }
 
     [Fact]
@@ -481,6 +1528,16 @@ public sealed class ResearchWorkbenchTests
                 throw new InvalidOperationException("A valid absolute URL is required.");
             return Task.FromResult(uri);
         }
+    }
+
+    private sealed class AsyncMapHttpMessageHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            handler(request, cancellationToken);
     }
 
     private sealed class NeverCompletingReadStream : Stream

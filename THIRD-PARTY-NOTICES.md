@@ -2,7 +2,7 @@
 
 TLAH Studio includes or depends on third-party software. Each component remains governed by its own license; the repository's proprietary license does not replace those terms.
 
-This inventory covers the principal direct build and runtime dependencies in version 4.14.0. Transitive NuGet packages and native runtime files may add further notices. The authoritative license is the one shipped with the relevant package or upstream source.
+This inventory covers the principal direct build and runtime dependencies in version 4.15.0. Transitive NuGet packages and native runtime files may add further notices. The authoritative license is the one shipped with the relevant package or upstream source.
 
 | Component | Version | Project | License / terms |
 |---|---:|---|---|
@@ -27,5 +27,7 @@ This inventory covers the principal direct build and runtime dependencies in ver
 | Inno Setup | 6 | [jrsoftware.org](https://jrsoftware.org/isinfo.php) | Inno Setup license |
 
 Bundled TextMate grammar files under `TLAHStudio.App/Assets/grammars/` may originate from language-specific upstream grammar projects. Their copyright and license headers, where present, must be preserved. Contributors adding a grammar, icon, font, copied algorithm, or other third-party asset must record its source, version/commit, and license in this file.
+
+The aquarium depth plate and fish sprites under `TLAHStudio.App/Assets/Aquarium/` are original, project-owned generated artwork. They are packaged local assets and do not introduce an image-generation service or other third-party runtime dependency.
 
 If you believe a notice is missing or inaccurate, open an issue with the component name, upstream URL, version, and supporting license information.

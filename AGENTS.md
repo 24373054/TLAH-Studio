@@ -19,7 +19,7 @@ Use four-space indentation, file-scoped namespaces, nullable reference types, an
 
 ## Testing Guidelines
 
-Tests use xUnit and coverlet. Add focused `*Tests.cs` files and descriptive underscore-separated methods such as `VerifySignature_TamperedData_ReturnsFalse`. Run a subset with `dotnet test ... --filter "FullyQualifiedName~UpdateCryptoTests"`. There is no numeric coverage threshold; cover new branches and regressions, especially in agent runtime, persistence, privacy, tool safety, and update verification.
+Tests use xUnit and coverlet. Add focused `*Tests.cs` files and descriptive underscore-separated methods such as `VerifySignature_TamperedData_ReturnsFalse`. Run a subset with `dotnet test ... --filter "FullyQualifiedName~UpdateCryptoTests"`. The full CI gate requires at least 60% line coverage and 50% branch coverage; cover new branches and regressions, especially in agent runtime, persistence, privacy, tool safety, and update verification.
 
 ## Commit & Pull Request Guidelines
 

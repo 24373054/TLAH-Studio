@@ -646,7 +646,10 @@ public sealed record AgentToolSource(
     string? Title = null,
     string? Provider = null,
     DateTime? RetrievedAt = null,
-    string? CitationId = null);
+    string? CitationId = null,
+    string? ProviderUri = null,
+    string? License = null,
+    string? LicenseUri = null);
 
 internal static class AgentToolInputValidator
 {

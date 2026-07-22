@@ -12,7 +12,7 @@ When documents conflict, prefer this order:
 4. README files
 5. Historical milestone plans under `docs/`
 
-Current stable version: **4.14.0**. Official release automation produces a self-contained Windows x64 installer.
+Current stable version: **4.15.0**. Official release automation produces a self-contained Windows x64 installer.
 
 ## Commands
 

@@ -223,7 +223,11 @@ public sealed class ResearchVerifyAgentTool : IAgentTool
                     source.RecencyScore,
                     source.RelevanceScore,
                     source.OverallScore,
-                    contentKind = source.ContentKind.ToString().ToLowerInvariant()
+                    contentKind = source.ContentKind.ToString().ToLowerInvariant(),
+                    provider = source.SearchProvider,
+                    providerUrl = source.SearchProviderUrl?.AbsoluteUri,
+                    license = source.LicenseName,
+                    licenseUrl = source.LicenseUrl?.AbsoluteUri
                 }),
                 result.Conflicts,
                 result.Failures,
@@ -234,9 +238,12 @@ public sealed class ResearchVerifyAgentTool : IAgentTool
                 new AgentToolSource(
                     source.Url.AbsoluteUri,
                     source.Title,
-                    "research_workbench",
+                    source.SearchProvider,
                     DateTime.UtcNow,
-                    $"source-{index + 1}")).ToArray();
+                    $"source-{index + 1}",
+                    source.SearchProviderUrl?.AbsoluteUri,
+                    source.LicenseName,
+                    source.LicenseUrl?.AbsoluteUri)).ToArray();
             return new AgentToolResult(
                 result.Sources.Count > 0,
                 AgentToolSupport.Limit(result.ReportMarkdown, context.MaxOutputChars),

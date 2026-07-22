@@ -48,7 +48,7 @@ public class ToolPlatformSettings
     public string DefaultBackend { get; set; } = ToolExecutionBackends.RestrictedLocal;
 
     public string NetworkAllowlist { get; set; } =
-        "api.github.com\ngithub.com\nraw.githubusercontent.com\nhtml.duckduckgo.com\nlite.duckduckgo.com";
+        "api.github.com\ngithub.com\nraw.githubusercontent.com\nhtml.duckduckgo.com\napi.gdeltproject.org\nen.wikipedia.org\nzh.wikipedia.org\nja.wikipedia.org\nko.wikipedia.org\nde.wikipedia.org\nfr.wikipedia.org\nlite.duckduckgo.com";
 
     public int MaxRuntimeSeconds { get; set; } = 120;
     public int MaxOutputChars { get; set; } = 20000;

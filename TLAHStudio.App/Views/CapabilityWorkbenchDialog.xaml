@@ -168,7 +168,7 @@
                             <TextBlock Text="Search, read, deduplicate, and compare independent sources. The result reports weak or conflicting evidence instead of inventing certainty." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                             <TextBlock Text="Research question" Style="{StaticResource WorkbenchLabelStyle}" />
                             <TextBox
-                                Text="{Binding ResearchQuery, Mode=TwoWay}"
+                                Text="{Binding ResearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 PlaceholderText="What should TLAH Studio investigate?"
                                 AcceptsReturn="True"
                                 MinHeight="72"
@@ -202,7 +202,7 @@
                                 <StackPanel x:Name="ResearchLanguageField" Grid.Column="2">
                                     <TextBlock Text="Language hint" Style="{StaticResource WorkbenchLabelStyle}" />
                                     <TextBox
-                                        Text="{Binding ResearchLanguage, Mode=TwoWay}"
+                                        Text="{Binding ResearchLanguage, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         PlaceholderText="Optional, e.g. zh-CN"
                                         AutomationProperties.Name="Research language hint" />
                                 </StackPanel>
@@ -219,7 +219,7 @@
                                 <StackPanel x:Name="ResearchAllowedDomainsField">
                                     <TextBlock Text="Only these domains" Style="{StaticResource WorkbenchLabelStyle}" />
                                     <TextBox
-                                        Text="{Binding ResearchAllowedDomains, Mode=TwoWay}"
+                                        Text="{Binding ResearchAllowedDomains, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         PlaceholderText="Optional; one domain per line"
                                         AcceptsReturn="True"
                                         MinHeight="54"
@@ -228,7 +228,7 @@
                                 <StackPanel x:Name="ResearchBlockedDomainsField" Grid.Column="1">
                                     <TextBlock Text="Exclude domains" Style="{StaticResource WorkbenchLabelStyle}" />
                                     <TextBox
-                                        Text="{Binding ResearchBlockedDomains, Mode=TwoWay}"
+                                        Text="{Binding ResearchBlockedDomains, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         PlaceholderText="Optional; one domain per line"
                                         AcceptsReturn="True"
                                         MinHeight="54"
@@ -282,20 +282,20 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel x:Name="SpreadsheetTitleField">
                                     <TextBlock Text="Workbook title" Style="{StaticResource WorkbenchLabelStyle}" />
-                                    <TextBox Text="{Binding SpreadsheetTitle, Mode=TwoWay}" AutomationProperties.Name="Workbook title" />
+                                    <TextBox Text="{Binding SpreadsheetTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Workbook title" />
                                 </StackPanel>
                                 <StackPanel x:Name="SpreadsheetFileNameField" Grid.Column="1">
                                     <TextBlock Text="File name" Style="{StaticResource WorkbenchLabelStyle}" />
-                                    <TextBox Text="{Binding SpreadsheetFileName, Mode=TwoWay}" AutomationProperties.Name="Spreadsheet file name" />
+                                    <TextBox Text="{Binding SpreadsheetFileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Spreadsheet file name" />
                                 </StackPanel>
                                 <StackPanel x:Name="SpreadsheetSheetNameField" Grid.Column="2">
                                     <TextBlock Text="Sheet" Style="{StaticResource WorkbenchLabelStyle}" />
-                                    <TextBox Text="{Binding SpreadsheetSheetName, Mode=TwoWay}" AutomationProperties.Name="Worksheet name" />
+                                    <TextBox Text="{Binding SpreadsheetSheetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Worksheet name" />
                                 </StackPanel>
                             </Grid>
                             <TextBlock Text="Table data" Style="{StaticResource WorkbenchLabelStyle}" />
                             <TextBox
-                                Text="{Binding SpreadsheetData, Mode=TwoWay}"
+                                Text="{Binding SpreadsheetData, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 AcceptsReturn="True"
                                 TextWrapping="NoWrap"
                                 FontFamily="Cascadia Mono"
@@ -346,11 +346,11 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel x:Name="DocumentTitleField">
                                     <TextBlock Text="Title" Style="{StaticResource WorkbenchLabelStyle}" />
-                                    <TextBox Text="{Binding DocumentTitle, Mode=TwoWay}" AutomationProperties.Name="Document title" />
+                                    <TextBox Text="{Binding DocumentTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Document title" />
                                 </StackPanel>
                                 <StackPanel x:Name="DocumentFileNameField" Grid.Column="1">
                                     <TextBlock Text="File name" Style="{StaticResource WorkbenchLabelStyle}" />
-                                    <TextBox Text="{Binding DocumentFileName, Mode=TwoWay}" AutomationProperties.Name="Document file name" />
+                                    <TextBox Text="{Binding DocumentFileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Document file name" />
                                 </StackPanel>
                                 <StackPanel x:Name="DocumentFormatField" Grid.Column="2">
                                     <TextBlock Text="Format" Style="{StaticResource WorkbenchLabelStyle}" />
@@ -362,12 +362,12 @@
                             </Grid>
                             <TextBlock Text="Author" Style="{StaticResource WorkbenchLabelStyle}" />
                             <TextBox
-                                Text="{Binding DocumentAuthor, Mode=TwoWay}"
+                                Text="{Binding DocumentAuthor, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 PlaceholderText="Optional"
                                 AutomationProperties.Name="Document author" />
                             <TextBlock Text="Content" Style="{StaticResource WorkbenchLabelStyle}" />
                             <TextBox
-                                Text="{Binding DocumentContent, Mode=TwoWay}"
+                                Text="{Binding DocumentContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 AcceptsReturn="True"
                                 TextWrapping="Wrap"
                                 MinHeight="260"
@@ -406,11 +406,11 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel x:Name="DiagramTitleField">
                                     <TextBlock Text="Title" Style="{StaticResource WorkbenchLabelStyle}" />
-                                    <TextBox Text="{Binding DiagramTitle, Mode=TwoWay}" AutomationProperties.Name="Diagram title" />
+                                    <TextBox Text="{Binding DiagramTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Diagram title" />
                                 </StackPanel>
                                 <StackPanel x:Name="DiagramFileNameField" Grid.Column="1">
                                     <TextBlock Text="File name" Style="{StaticResource WorkbenchLabelStyle}" />
-                                    <TextBox Text="{Binding DiagramFileName, Mode=TwoWay}" AutomationProperties.Name="Diagram file name" />
+                                    <TextBox Text="{Binding DiagramFileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Diagram file name" />
                                 </StackPanel>
                                 <StackPanel x:Name="DiagramTypeField" Grid.Column="2">
                                     <TextBlock Text="Type" Style="{StaticResource WorkbenchLabelStyle}" />
@@ -429,7 +429,7 @@
                             </Grid>
                             <TextBlock Text="Relationships or chart values" Style="{StaticResource WorkbenchLabelStyle}" />
                             <TextBox
-                                Text="{Binding DiagramData, Mode=TwoWay}"
+                                Text="{Binding DiagramData, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 AcceptsReturn="True"
                                 TextWrapping="NoWrap"
                                 FontFamily="Cascadia Mono"

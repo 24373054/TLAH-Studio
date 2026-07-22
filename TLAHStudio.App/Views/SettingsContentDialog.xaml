@@ -215,7 +215,7 @@
                     x:Name="SettingsFooterHint"
                     Grid.Row="4"
                     Margin="12,0,8,0"
-                    Text="Changes are applied when you save. Theme and density preview immediately."
+                    Text="Changes are applied when you save. Theme, density, and aquarium preview immediately."
                     FontSize="11"
                     Foreground="{ThemeResource TextMutedBrush}"
                     TextWrapping="Wrap" />
@@ -269,7 +269,7 @@
                         <Border
                             x:Name="AppearanceSection"
                             Style="{StaticResource SettingsSectionStyle}"
-                            Tag="appearance theme light dark density compact comfortable output style assistant">
+                            Tag="appearance theme light dark density compact comfortable output style assistant aquarium rendering quality auto eco balanced high motion power">
                             <StackPanel Spacing="16">
                                 <StackPanel Spacing="3">
                                     <TextBlock Text="Appearance" FontSize="17" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
@@ -281,6 +281,7 @@
                                         <ColumnDefinition x:Name="AppearanceControlColumn" Width="180" />
                                     </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
@@ -317,6 +318,17 @@
                                         HorizontalAlignment="Stretch"
                                         SelectionChanged="OutputStyleCombo_SelectionChanged"
                                         AutomationProperties.Name="Output style selector" />
+                                    <StackPanel Grid.Row="3" Spacing="2">
+                                        <TextBlock Text="Aquarium rendering" FontWeight="SemiBold" Foreground="{ThemeResource TextPrimaryBrush}" />
+                                        <TextBlock Text="Auto adapts to power state; Eco reduces motion; Balanced favors detail; High renders the richest scene." Style="{StaticResource SettingsFieldLabelStyle}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ComboBox
+                                        x:Name="AquariumQualityCombo"
+                                        Grid.Row="3"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Stretch"
+                                        SelectionChanged="AquariumQualityCombo_SelectionChanged"
+                                        AutomationProperties.Name="Aquarium rendering quality" />
                                 </Grid>
                             </StackPanel>
                         </Border>
