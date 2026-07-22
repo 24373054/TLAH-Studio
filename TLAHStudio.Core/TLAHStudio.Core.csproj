@@ -28,6 +28,6 @@
     <PackageReference Include="SkiaSharp" Version="4.150.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.150.1" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
   </ItemGroup>
 </Project>
